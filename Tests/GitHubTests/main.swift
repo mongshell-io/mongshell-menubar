@@ -733,6 +733,12 @@ do {
     check("head 바뀜 메시지 → headChanged", merge(200, moved) == .headChanged, "\(merge(200, moved))")
     let refused = #"{"data":{"mergePullRequest":null},"errors":[{"type":"UNPROCESSABLE","message":"Pull Request is not mergeable"}]}"#
     check("머지 불가 → GitHub 메시지", merge(200, refused) == .notMergeable("Pull Request is not mergeable"))
+    let badVar = #"{"errors":[{"message":"Variable $expectedHeadOid of type GitObjectID! was provided invalid value"}]}"#
+    check("expectedHeadOid 변수 오류 → head 바뀜 아님 (GitHub 원문)",
+          merge(200, badVar) == .notMergeable("Variable $expectedHeadOid of type GitObjectID! was provided invalid value"),
+          "\(merge(200, badVar))")
+    let movedLower = #"{"errors":[{"message":"head branch was modified"}]}"#
+    check("head 바뀜 문구는 대소문자 무시", merge(200, movedLower) == .headChanged)
     check("머지 불가 사유 문구에 GitHub 메시지", GitHubMergeResult.notMergeable("x y").failureReason?.contains("x y") == true)
     let protected = #"{"errors":[{"message":"Repository rule violations found\n\nRequired status check \"build\" is expected."}]}"#
     check("여러 줄 메시지 → 한 줄",
@@ -751,6 +757,12 @@ do {
     check("errors + data(MERGED) 동반 → merged (머지는 일어났다)", merge(200, both) == .merged)
     let open = #"{"data":{"mergePullRequest":{"pullRequest":{"number":57,"state":"OPEN"}}}}"#
     check("errors 없이 OPEN → 머지 아님", { if case .notMergeable = merge(200, open) { return true }; return false }())
+    let oddState = #"{"data":{"mergePullRequest":{"pullRequest":{"number":57,"state":"QUEUED\n ghp_abcdef123 \#(String(repeating: "x", count: 200))"}}}}"#
+    let oddReason: String = { if case .notMergeable(let why) = merge(200, oddState) { return why }; return "" }()
+    check("서버 state 도 정규화 (한 줄·마스킹·자르기)",
+          !oddReason.contains("\n") && !oddReason.contains("ghp_") && oddReason.contains("•••")
+              && oddReason.count == GitHubAPIClient.mergeMessageMaxLength + 1 && oddReason.hasSuffix("…"),
+          oddReason)
     check("깨진 JSON → failed(badResponse)", merge(200, "<html>") == .failed(.badResponse))
     check("data·errors 둘 다 없음 → failed(badResponse)", merge(200, "{}") == .failed(.badResponse))
     check("502 → failed(http(502))", merge(502) == .failed(.http(502)))
@@ -827,6 +839,35 @@ do {
     check("시스템 간격이 아주 길어도 상한 — 확정할 틈이 남는다",
           minimum(5) == GitHubMergePolicy.confirmCeilingSeconds
               && GitHubMergePolicy.confirmCeilingSeconds < window)
+}
+
+print("▸ 머지 요청 판정 (GitHubMergePolicy.gate)")
+do {
+    let ready = pr("mongshell/bookdam", 57, merge: .clean, nodeID: "PR_57", headSHA: "abc")
+    let loaded = GitHubLoadState.loaded(.pat)
+    func gate(_ mine: [GitHubPullRequest]?, head: String = "abc", state: GitHubLoadState = loaded,
+              activity: PRMergeActivity? = nil, id: String? = nil) -> GitHubMergePolicy.Gate {
+        GitHubMergePolicy.gate(id: id ?? ready.id, expectedHead: head, mine: mine, state: state, activity: activity)
+    }
+    check("현재 목록의 머지 가능 PR, 같은 head → 보냄", gate([ready]) == .send(nodeID: "PR_57"))
+    check("확인한 head 와 목록의 head 가 다름 → headMoved", gate([ready], head: "old") == .headMoved)
+    // The row's copy said CLEAN; the list now says BLOCKED — the list wins.
+    let nowBlocked = pr("mongshell/bookdam", 57, merge: .blocked, nodeID: "PR_57", headSHA: "abc")
+    check("목록에서 다시 꺼낸 PR 이 더는 머지 불가 → 무시", gate([nowBlocked]) == .ignore)
+    let newNode = pr("mongshell/bookdam", 57, merge: .clean, nodeID: "PR_57b", headSHA: "abc")
+    check("node id 는 목록의 것", gate([newNode]) == .send(nodeID: "PR_57b"))
+    check("목록에 없음 → 무시", gate([pr("mongshell/bookdam", 58, merge: .clean, nodeID: "x", headSHA: "abc")]) == .ignore)
+    check("스냅샷 없음 → 무시", gate(nil) == .ignore)
+    check("진행 중 → 무시", gate([ready], activity: .merging) == .ignore)
+    check("머지됨 → 무시", gate([ready], activity: .merged) == .ignore)
+    check("실패 후 재시도 → 보냄", gate([ready], activity: .failed("x")) == .send(nodeID: "PR_57"))
+    let retry = Date(timeIntervalSince1970: 0)
+    for state in [GitHubLoadState.loaded(.ghCLI(account: "a")), .loading, .rateLimited(retryAt: retry)] {
+        check("\(state) → 보낼 수 있음", GitHubMergePolicy.allowsMerge(in: state) && gate([ready], state: state) == .send(nodeID: "PR_57"))
+    }
+    for state in [GitHubLoadState.off, .noToken, .keychainDenied, .unauthorized, .patSaveFailed(-1), .error("x")] {
+        check("\(state) → 보내지 않음", !GitHubMergePolicy.allowsMerge(in: state) && gate([ready], state: state) == .ignore)
+    }
 }
 
 // MARK: - 12. gh Keychain 값 디코딩

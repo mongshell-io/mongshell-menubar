@@ -183,19 +183,21 @@ final class GitHubModel: ObservableObject {
 
     /// Squash-merges one of my PRs, sending the head SHA the first click
     /// saw as `expectedHeadOid`. The view only calls this after the second
-    /// click. Judged on the PR as the current list holds it, not as the row
-    /// last drew it: a click while that PR's merge is out, or after it went
-    /// through, is ignored, and so is a PR the list doesn't hold as mine and
-    /// mergeable. A head that moved since the first click is refused here,
+    /// click. What `GitHubMergePolicy.gate` says of the current list and
+    /// state decides: nothing goes out in a stopped state (a 401 among
+    /// them), and a head that moved since the first click is refused here,
     /// before GitHub is asked.
     func merge(_ id: String, expectedHead: String) {
-        guard prefs.githubEnabled,
-              mergeActivity[id] != .merging, mergeActivity[id] != .merged,
-              let current = snapshot?.mine.first(where: { $0.id == id }),
-              GitHubMergePolicy.canOffer(current, section: .mine),
-              let nodeID = current.nodeID else { return }
-        guard current.headSHA == expectedHead else {
+        guard prefs.githubEnabled else { return }
+        let nodeID: String
+        switch GitHubMergePolicy.gate(id: id, expectedHead: expectedHead, mine: snapshot?.mine,
+                                      state: loadState, activity: mergeActivity[id]) {
+        case .send(let node):
+            nodeID = node
+        case .headMoved:
             mergeActivity[id] = .failed(GitHubMergePolicy.headMovedReason)
+            return
+        case .ignore:
             return
         }
         let token: String
@@ -223,7 +225,10 @@ final class GitHubModel: ObservableObject {
         switch result {
         case .merged:
             mergeActivity[id] = .merged
-            refreshNow()
+            // The list catches up at once — unless backing off, or stopped:
+            // then the next regular wake does, and the row stays "머지됨"
+            // (carried over while listed) so it can't be clicked again.
+            if GitHubPollPolicy.refreshesOnOpen(after: loadState, backoff: backoff) { refreshNow() }
         case .unauthorized:
             mergeActivity[id] = nil
             // The same stop as a polled 401 — unless the token was swapped

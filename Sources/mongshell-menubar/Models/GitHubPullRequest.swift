@@ -189,6 +189,41 @@ enum GitHubMergePolicy {
     /// click and the second: nothing was sent.
     static let headMovedReason = "그 사이 새 커밋이 올라왔어요 — 다시 확인해 주세요"
 
+    /// Whether the region's state lets a merge go out: only while a snapshot
+    /// speaks for the token in use — loaded, or loading / rate-limited on
+    /// an earlier answer (the same states `GitHubGlance` reads one in). A
+    /// rejected token, a failed PAT save, an error, no token, a refused
+    /// Keychain or a region switched off sends nothing.
+    static func allowsMerge(in state: GitHubLoadState) -> Bool {
+        switch state {
+        case .loaded, .loading, .rateLimited: return true
+        case .off, .noToken, .keychainDenied, .unauthorized, .patSaveFailed, .error: return false
+        }
+    }
+
+    /// What the model does with a confirmed click.
+    enum Gate: Equatable, Sendable {
+        case send(nodeID: String)
+        /// The list now holds another head than the one confirmed.
+        case headMoved
+        /// Nothing to send and nothing to say: a merge already out or done,
+        /// a stopped state, or a PR the list no longer offers a merge on.
+        case ignore
+    }
+
+    /// Judged on the PR as `mine` holds it now — looked up by id, never the
+    /// copy the row drew from — so the node id, the head and `canOffer` all
+    /// come from the current list.
+    static func gate(id: String, expectedHead: String, mine: [GitHubPullRequest]?,
+                     state: GitHubLoadState, activity: PRMergeActivity?) -> Gate {
+        guard allowsMerge(in: state), activity != .merging, activity != .merged,
+              let current = mine?.first(where: { $0.id == id }),
+              canOffer(current, section: .mine),
+              let nodeID = current.nodeID else { return .ignore }
+        guard current.headSHA == expectedHead else { return .headMoved }
+        return .send(nodeID: nodeID)
+    }
+
     /// How long the armed "확인 — #N 머지" waits for the second click.
     static let confirmWindowSeconds = 3
     /// The least time between the first click and a second that counts:

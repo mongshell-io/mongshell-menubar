@@ -297,19 +297,20 @@ struct GitHubAPIClient: Sendable {
             }
             // An answer without errors that still isn't MERGED (a queue, a
             // state we don't know) is not a merge.
-            if pullRequest != nil { return .notMergeable("GitHub 이 머지하지 않았어요 (\(state ?? "상태 없음"))") }
+            if pullRequest != nil {
+                return .notMergeable(mergeMessage("GitHub 이 머지하지 않았어요 (\(state ?? "상태 없음"))"))
+            }
             return .failed(.badResponse)
         default:
             return .failed(.http(statusCode))
         }
     }
 
-    /// GitHub words a moved head as "Head branch was modified…"; the input
-    /// name may show up in it too. Anything else stays GitHub's own message.
+    /// GitHub words a moved head as "Head branch was modified…". Only that:
+    /// other errors that name the input (a malformed `expectedHeadOid`) are
+    /// not a moved head, and stay GitHub's own message.
     private static func isHeadChanged(_ message: String) -> Bool {
-        let m = message.lowercased()
-        return m.contains("head branch was modified") || m.contains("expectedheadoid")
-            || m.contains("expected head") || m.contains("head oid")
+        message.lowercased().contains("head branch was modified")
     }
 
     /// The one line under a row: whitespace folded, anything shaped like a
