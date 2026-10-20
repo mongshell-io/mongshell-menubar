@@ -320,17 +320,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         regionFrameOnScreen(region)?.contains(NSEvent.mouseLocation) ?? false
     }
 
-    /// Routes the button's click to the region under the cursor, judged the
-    /// same way the hover watchdog judges it: the cursor's screen position
-    /// against the region's frame on screen. Routing by the click event's
-    /// location in the button sent clicks on the GitHub region to the Claude
-    /// popover on a real menu bar (Decision #45). The cursor is only read for
-    /// a mouse click: keyboard or accessibility activation opens `.claude`
-    /// wherever the cursor happens to rest. A mouse click away from the
-    /// GitHub region, or on one with no width, opens `.claude` too.
+    /// Routes the button's click to the region under the cursor by the
+    /// cursor's screen x against the GitHub region's leading edge on screen
+    /// (`RegionClickRouting`, #58). Routing by the click event's location in
+    /// the button sent clicks on the GitHub region to the Claude popover on a
+    /// real menu bar (Decision #45), and so did a containment test against the
+    /// region's rect, for clicks above, below or beside it. The cursor is only
+    /// read for a mouse click: keyboard or accessibility activation opens
+    /// `.claude` wherever the cursor happens to rest. A GitHub region with no
+    /// width opens `.claude` too.
     @objc private func statusItemClicked() {
         let isMouseClick = NSApp.currentEvent.map { Self.mouseClickTypes.contains($0.type) } ?? false
-        togglePopover(isMouseClick && isCursorOver(.github) ? .github : .claude)
+        let github = regionFrameOnScreen(.github)
+        let toGitHub = isMouseClick && RegionClickRouting.clickGoesToGitHub(
+            cursorX: NSEvent.mouseLocation.x, githubMinX: github?.minX, githubWidth: github?.width ?? 0)
+        togglePopover(toGitHub ? .github : .claude)
     }
 
     private static let mouseClickTypes: Set<NSEvent.EventType> = [
