@@ -79,9 +79,11 @@ echo "▶ running auth tests"
 # The GitHub region (Decision #45): the pure judgements and the GraphQL
 # client's decoding, with the constants and formatter they read. The
 # @MainActor model is left out, as above. `GitHubCredentials` is compiled for
-# its pure gh-value decoding; nothing here touches the Keychain.
+# its pure gh-value decoding; nothing here touches the Keychain. The click
+# split between the two status-item regions (#58) rides along here.
 echo "▶ compiling github tests"
 swiftc -o "$OUT/github-tests" \
+  "$APP/App/RegionClickRouting.swift" \
   "$APP/Design/Palette.swift" \
   "$APP/Models/GitHubState.swift" \
   "$APP/Models/GitHubPullRequest.swift" \

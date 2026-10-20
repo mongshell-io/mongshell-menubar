@@ -1149,6 +1149,19 @@ do {
     check("StatusContext nil → queued", ctx(nil) == .queued)
 }
 
+// MARK: - 영역 클릭 판정 (#58)
+// 메뉴바는 버튼보다 높고 아이템 옆 여백 클릭도 버튼에 온다 — 판정은 경계 x 하나다.
+
+do {
+    let go = RegionClickRouting.clickGoesToGitHub
+    check("경계 바로 오른쪽 → GitHub", go(200.5, 200, 52))
+    check("경계 위 → GitHub (헤어라인 칸은 GitHub 영역)", go(200, 200, 52))
+    check("경계 바로 왼쪽 → Claude", !go(199.5, 200, 52))
+    check("영역 오른쪽 끝 바깥 여백 → GitHub (사각형 밖이어도)", go(260, 200, 52))
+    check("영역 폭 0 (꺼짐) → Claude", !go(260, 200, 0))
+    check("영역 프레임 없음 → Claude", !go(260, nil, 52))
+}
+
 print("")
 if failures.isEmpty {
     print("✓ \(caseCount) cases passed")
