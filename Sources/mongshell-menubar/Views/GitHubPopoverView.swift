@@ -84,7 +84,7 @@ struct GitHubPopoverView: View {
         case .keychainDenied: return (Palette.textTertiary, "거부됨")
         case .rateLimited:    return (Palette.amber, "제한됨")
         case .unauthorized:   return (Palette.red, "권한 부족")
-        case .error:          return (Palette.red, "오류")
+        case .patSaveFailed, .error: return (Palette.red, "오류")
         }
     }
 
@@ -134,6 +134,8 @@ struct GitHubPopoverView: View {
             PopoverBanner(text: "토큰이 거부되었어요 (401) — 권한 확인 필요", tint: Palette.red) {
                 retryButton
             }
+        case .patSaveFailed:
+            PopoverBanner(text: model.loadState.hoverLabel, tint: Palette.red) { retryButton }
         case .error(let message):
             PopoverBanner(text: message, tint: Palette.red) { retryButton }
         }

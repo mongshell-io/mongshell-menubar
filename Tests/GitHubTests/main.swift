@@ -141,7 +141,7 @@ do {
     let noToken = GitHubGlance.of(snap(review: [r1], mine: [blocked]), state: .noToken, hidden: [])
     check("noToken → 회색·0 (스냅샷이 있어도)", noToken.count == 0 && noToken.dot == .grey
               && noToken.hoverLine1 == "GitHub 토큰 없음", "\(noToken)")
-    for state: GitHubLoadState in [.off, .keychainDenied, .unauthorized, .error("x")] {
+    for state: GitHubLoadState in [.off, .keychainDenied, .unauthorized, .patSaveFailed(-25299), .error("x")] {
         let g = GitHubGlance.of(snap(review: [r1]), state: state, hidden: [])
         check("\(state) → 회색·0", g.count == 0 && g.dot == .grey)
     }
@@ -197,6 +197,9 @@ do {
     let noLines = GitHubGlance.of(snap(review: [r1]), state: .unauthorized, hidden: [])
     check("스냅샷을 읽지 않는 상태 → lines 없음·stateLabel 만",
           noLines.lines == nil && noLines.stateLabel == "토큰이 거부되었어요 (401)")
+    let saveFailed = GitHubGlance.of(snap(review: [r1]), state: .patSaveFailed(-25299), hidden: [])
+    check("PAT 저장 실패 → stateLabel 에 상태 코드, 토큰 값 없음",
+          saveFailed.stateLabel == "PAT 를 Keychain 에 저장하지 못했어요 (-25299)", saveFailed.stateLabel)
 }
 
 // MARK: - 6. 검사 칩 접기
@@ -277,15 +280,25 @@ do {
     check("401 이후엔 열림 + 진행중이어도 자동 대기 없음", auto(.unauthorized, open: true, pending: true) == nil)
     check("401 이후엔 백오프 중이어도 자동 대기 없음", auto(.unauthorized, backoff: 2) == nil)
     check("성공 후 → base", auto(.loaded(.pat)) == 180)
-    check("다른 오류 후 → base (정지는 401 만)", auto(.error("x")) == 180)
+    check("PAT 저장 실패 후 자동 대기 없음 (다른 토큰으로 나가지 않음)", auto(.patSaveFailed(-25299)) == nil)
+    check("PAT 저장 실패 후엔 열림 + 진행중이어도 자동 대기 없음",
+          auto(.patSaveFailed(-25299), open: true, pending: true) == nil)
+    check("다른 오류 후 → base (정지는 401·PAT 저장 실패만)", auto(.error("x")) == 180)
     check("한도 초과 후 → 백오프 대기", auto(.rateLimited(retryAt: now), backoff: 1) == 360)
     check("성공 후 열림 + 진행중 → 30", auto(.loaded(.pat), open: true, pending: true) == 30)
 }
 
 print("▸ GitHubPollPolicy.refreshesOnOpen")
 do {
-    check("백오프 없음 → 열면 즉시 갱신", GitHubPollPolicy.refreshesOnOpen(backoff: 0))
-    check("백오프 중 → 열어도 요청 안 함", !GitHubPollPolicy.refreshesOnOpen(backoff: 1))
+    func opens(_ state: GitHubLoadState, backoff: Int = 0) -> Bool {
+        GitHubPollPolicy.refreshesOnOpen(after: state, backoff: backoff)
+    }
+    check("백오프 없음 → 열면 즉시 갱신", opens(.loaded(.pat)))
+    check("오류 후 → 열면 즉시 갱신", opens(.error("x")))
+    check("백오프 중 → 열어도 요청 안 함", !opens(.loaded(.pat), backoff: 1))
+    check("401 상태 → 열어도 요청 안 함", !opens(.unauthorized))
+    check("백오프 + 401 → 열어도 요청 안 함", !opens(.unauthorized, backoff: 1))
+    check("PAT 저장 실패 → 열어도 요청 안 함", !opens(.patSaveFailed(-25299)))
 }
 
 // MARK: - 9. parse 관대함

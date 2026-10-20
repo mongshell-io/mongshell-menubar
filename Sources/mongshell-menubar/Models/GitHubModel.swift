@@ -111,18 +111,20 @@ final class GitHubModel: ObservableObject {
     /// Opening refreshes at once and, with a check still running, keeps the
     /// fast cadence; closing only lets the loop fall back to the base
     /// interval at its next wake — no extra request for a close. While
-    /// backing off, opening only records the flag.
+    /// backing off, or after a 401 or a failed PAT save, opening only
+    /// records the flag.
     func setPopoverOpen(_ open: Bool) {
         guard open != popoverOpen else { return }
         popoverOpen = open
-        guard open, GitHubPollPolicy.refreshesOnOpen(backoff: backoff) else { return }
+        guard open, GitHubPollPolicy.refreshesOnOpen(after: loadState, backoff: backoff) else { return }
         refreshNow()
     }
 
     /// Saves a pasted classic PAT and reads with it at once. Empty input is
     /// ignored — clearing is `clearPAT()`. A failed save is a banner, and
-    /// nothing is requested: whatever the Keychain holds now is not the
-    /// token the user just gave.
+    /// nothing is requested until the user acts again — not by the loop's
+    /// next poll, not by opening the popover: whatever the Keychain holds
+    /// now is not the token the user just gave.
     func applyPAT(_ raw: String) {
         let token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else { return }
@@ -132,7 +134,10 @@ final class GitHubModel: ObservableObject {
         generation += 1
         guard status == errSecSuccess else {
             guard prefs.githubEnabled else { return }
-            loadState = .error("PAT 를 Keychain 에 저장하지 못했어요 (\(status))")
+            // A follow-up asked for before the failure would send the old
+            // token right after the request in flight.
+            refreshRequested = false
+            loadState = .patSaveFailed(status)
             updateGlance()
             return
         }
@@ -194,16 +199,26 @@ final class GitHubModel: ObservableObject {
     private func pollLoop() async {
         while !Task.isCancelled {
             await refreshOnce()
-            await nap(seconds: GitHubPollPolicy.nextAutoWait(
-                after: loadState, base: prefs.githubPollSeconds, backoff: backoff,
-                popoverOpen: popoverOpen, hasPendingChecks: snapshot?.hasPendingChecks ?? false))
+            let ranOut = await nap(seconds: autoWait())
+            // A state set while asleep can withdraw the wait it started
+            // with — a failed PAT save lands between polls. Then only a
+            // wake from `refreshNow()` ends the nap.
+            if ranOut, autoWait() == nil, !Task.isCancelled { await nap(seconds: nil) }
         }
+    }
+
+    private func autoWait() -> Int? {
+        GitHubPollPolicy.nextAutoWait(
+            after: loadState, base: prefs.githubPollSeconds, backoff: backoff,
+            popoverOpen: popoverOpen, hasPendingChecks: snapshot?.hasPendingChecks ?? false)
     }
 
     /// Sleeps in a task of its own so `refreshNow()` can cut it short while
     /// the loop carries on; cancelling the loop cancels the nap too. nil
-    /// sleeps until woken.
-    private func nap(seconds: Int?) async {
+    /// sleeps until woken. Returns whether the wait ran its full length
+    /// rather than being cut short.
+    @discardableResult
+    private func nap(seconds: Int?) async -> Bool {
         let nap = Task<Void, Never> {
             if let seconds {
                 try? await Task.sleep(for: .seconds(seconds))
@@ -214,6 +229,7 @@ final class GitHubModel: ObservableObject {
         napTask = nap
         await withTaskCancellationHandler { await nap.value } onCancel: { nap.cancel() }
         if napTask == nap { napTask = nil }
+        return !nap.isCancelled
     }
 
     private func refreshOnce() async {
@@ -277,8 +293,8 @@ final class GitHubModel: ObservableObject {
         } catch {
             outcome = .failure(error)
         }
-        // The token was swapped or the region switched off meanwhile; the
-        // follow-up refresh `refreshNow()` queued speaks for the new state.
+        // The generation moved on meanwhile: drop the answer. A new state
+        // that wants a refresh schedules one itself through `refreshNow()`.
         guard requestedIn == generation, prefs.githubEnabled else { return }
 
         switch outcome {

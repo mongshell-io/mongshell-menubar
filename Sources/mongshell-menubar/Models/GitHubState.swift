@@ -26,6 +26,10 @@ enum GitHubLoadState: Equatable, Sendable {
     case rateLimited(retryAt: Date)
     /// 401 — the token was rejected.
     case unauthorized
+    /// The pasted PAT could not be stored. Whatever the Keychain holds now
+    /// is not the token the user just gave, so nothing is sent until they
+    /// act again.
+    case patSaveFailed(OSStatus)
     case error(String)
 
     /// Hover text while the region shows a grey dot. Empty when the region is
@@ -38,6 +42,7 @@ enum GitHubLoadState: Equatable, Sendable {
         case .loading:        return "확인 중…"
         case .rateLimited:    return "API 한도 초과"
         case .unauthorized:   return "토큰이 거부되었어요 (401)"
+        case .patSaveFailed(let status): return "PAT 를 Keychain 에 저장하지 못했어요 (\(status))"
         case .error(let s):   return s
         }
     }
@@ -102,23 +107,35 @@ enum GitHubPollPolicy {
         return base
     }
 
-    /// The wait before the next automatic poll, or nil for none: after a
-    /// 401 the same rejected token would only be resent, and GitHub may
-    /// answer repeated failures by refusing that user's valid credentials
-    /// too (gh, the browser). Polling then resumes only on a user gesture —
-    /// refresh, PAT change, switching on, opening the popover — and stops
-    /// again if that also gets a 401.
+    /// The wait before the next automatic poll, or nil for none (see
+    /// `waitsForUser`).
     static func nextAutoWait(after state: GitHubLoadState, base: Int, backoff: Int,
                              popoverOpen: Bool, hasPendingChecks: Bool) -> Int? {
-        if state == .unauthorized { return nil }
+        if waitsForUser(state) { return nil }
         return nextWait(base: base, backoff: backoff, popoverOpen: popoverOpen,
                         hasPendingChecks: hasPendingChecks)
     }
 
     /// Whether opening the popover asks GitHub at once. Not while backing
     /// off — looking at the popover must not add requests to a budget that
-    /// is already short; the loop's backed-off wait stands.
-    static func refreshesOnOpen(backoff: Int) -> Bool {
-        backoff == 0
+    /// is already short; the loop's backed-off wait stands. Not while
+    /// waiting for the user either: opening the popover to read the banner
+    /// is not a request to resend.
+    static func refreshesOnOpen(after state: GitHubLoadState, backoff: Int) -> Bool {
+        backoff == 0 && !waitsForUser(state)
+    }
+
+    /// States that stop automatic requests. After a 401 the same rejected
+    /// token would only be resent, and GitHub may answer repeated failures
+    /// by refusing that user's valid credentials too (gh, the browser).
+    /// After a failed PAT save the stored token is not the one the user
+    /// just gave. Requests resume only on a user gesture — refresh/retry,
+    /// PAT apply or clear, retrying gh's item, switching on — and stop
+    /// again if that lands here too.
+    private static func waitsForUser(_ state: GitHubLoadState) -> Bool {
+        switch state {
+        case .unauthorized, .patSaveFailed: return true
+        default: return false
+        }
     }
 }

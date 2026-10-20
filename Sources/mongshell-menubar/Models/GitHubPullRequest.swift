@@ -202,7 +202,7 @@ struct GitHubGlance: Equatable, Sendable {
         case .loading, .rateLimited:
             if let snapshot { return of(snapshot.hiding(hidden)) }
             return GitHubGlance(count: 0, dot: .grey, lines: nil, stateLabel: state.hoverLabel)
-        case .off, .noToken, .keychainDenied, .unauthorized, .error:
+        case .off, .noToken, .keychainDenied, .unauthorized, .patSaveFailed, .error:
             return GitHubGlance(count: 0, dot: .grey, lines: nil, stateLabel: state.hoverLabel)
         }
     }
