@@ -191,11 +191,17 @@ enum GitHubMergePolicy {
     /// click and the second: nothing was sent.
     static let headMovedReason = "그 사이 새 커밋이 올라왔어요 — 다시 확인해 주세요"
 
-    /// Whether the region's state lets a merge go out: only while a snapshot
-    /// speaks for the token in use — loaded, or loading / rate-limited on
-    /// an earlier answer (the same states `GitHubGlance` reads one in). A
-    /// rejected token, a failed PAT save, an error, no token, a refused
-    /// Keychain or a region switched off sends nothing.
+    /// The row's line when the token changed after the list on screen was
+    /// fetched: nothing was sent, and the new token's list is on its way.
+    static let listStaleReason = "토큰이 바뀌어 목록을 다시 받는 중이에요 — 받은 뒤 다시 눌러 주세요"
+
+    /// Whether the region's state lets a merge go out: loaded, or loading /
+    /// rate-limited on an earlier answer (the same states `GitHubGlance`
+    /// reads a snapshot in). A rejected token, a failed PAT save, an error,
+    /// no token, a refused Keychain or a region switched off sends nothing.
+    /// The state alone doesn't say the list came from the token in use — a
+    /// token swap leaves `.loaded` standing until the next answer — so
+    /// `gate` also compares the list's generation with the current one.
     static func allowsMerge(in state: GitHubLoadState) -> Bool {
         switch state {
         case .loaded, .loading, .rateLimited: return true
@@ -208,6 +214,9 @@ enum GitHubMergePolicy {
         case send(nodeID: String)
         /// The list now holds another head than the one confirmed.
         case headMoved
+        /// The list was fetched before the token last changed, so it speaks
+        /// for another token than the one the merge would go out with.
+        case listStale
         /// Nothing to send and nothing to say: a merge already out or done,
         /// a stopped state, or a PR the list no longer offers a merge on.
         case ignore
@@ -215,13 +224,16 @@ enum GitHubMergePolicy {
 
     /// Judged on the PR as `mine` holds it now — looked up by id, never the
     /// copy the row drew from — so the node id, the head and `canOffer` all
-    /// come from the current list.
+    /// come from the current list. `listGeneration` is the model's
+    /// generation when that list arrived, `generation` its generation now.
     static func gate(id: String, expectedHead: String, mine: [GitHubPullRequest]?,
+                     listGeneration: Int, generation: Int,
                      state: GitHubLoadState, activity: PRMergeActivity?) -> Gate {
         guard allowsMerge(in: state), activity != .merging, activity != .merged,
               let current = mine?.first(where: { $0.id == id }),
               canOffer(current, section: .mine),
               let nodeID = current.nodeID else { return .ignore }
+        guard listGeneration == generation else { return .listStale }
         guard current.headSHA == expectedHead else { return .headMoved }
         return .send(nodeID: nodeID)
     }

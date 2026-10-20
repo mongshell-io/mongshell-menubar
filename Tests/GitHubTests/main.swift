@@ -865,8 +865,11 @@ do {
     let ready = pr("mongshell/bookdam", 57, merge: .clean, nodeID: "PR_57", headSHA: "abc")
     let loaded = GitHubLoadState.loaded(.pat)
     func gate(_ mine: [GitHubPullRequest]?, head: String = "abc", state: GitHubLoadState = loaded,
-              activity: PRMergeActivity? = nil, id: String? = nil) -> GitHubMergePolicy.Gate {
-        GitHubMergePolicy.gate(id: id ?? ready.id, expectedHead: head, mine: mine, state: state, activity: activity)
+              activity: PRMergeActivity? = nil, id: String? = nil,
+              listGeneration: Int = 2, generation: Int = 2) -> GitHubMergePolicy.Gate {
+        GitHubMergePolicy.gate(id: id ?? ready.id, expectedHead: head, mine: mine,
+                               listGeneration: listGeneration, generation: generation,
+                               state: state, activity: activity)
     }
     check("현재 목록의 머지 가능 PR, 같은 head → 보냄", gate([ready]) == .send(nodeID: "PR_57"))
     check("확인한 head 와 목록의 head 가 다름 → headMoved", gate([ready], head: "old") == .headMoved)
@@ -880,6 +883,12 @@ do {
     check("진행 중 → 무시", gate([ready], activity: .merging) == .ignore)
     check("머지됨 → 무시", gate([ready], activity: .merged) == .ignore)
     check("실패 후 재시도 → 보냄", gate([ready], activity: .failed("x")) == .send(nodeID: "PR_57"))
+    // A PAT applied or cleared bumps the generation; `.loaded` and the old
+    // list stay up until the new token answers.
+    check("토큰을 바꾼 뒤 아직 옛 목록 (세대가 다름) → 보내지 않고 사유", gate([ready], generation: 3) == .listStale)
+    check("옛 목록에서 head 도 바뀜 → 세대 사유가 먼저", gate([ready], head: "old", generation: 3) == .listStale)
+    check("세대가 달라도 이미 나간 머지 → 무시", gate([ready], activity: .merging, generation: 3) == .ignore)
+    check("세대가 달라도 정지 상태 → 무시", gate([ready], state: .patSaveFailed(-1), generation: 3) == .ignore)
     let retry = Date(timeIntervalSince1970: 0)
     for state in [GitHubLoadState.loaded(.ghCLI(account: "a")), .loading, .rateLimited(retryAt: retry)] {
         check("\(state) → 보낼 수 있음", GitHubMergePolicy.allowsMerge(in: state) && gate([ready], state: state) == .send(nodeID: "PR_57"))

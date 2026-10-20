@@ -47,6 +47,11 @@ final class GitHubModel: ObservableObject {
     /// applied only under the generation it was requested in, so an old
     /// token's answer never lands over what the new token is about to show.
     private var generation = 0
+    /// The generation `snapshot` arrived under. A token swap bumps
+    /// `generation` but keeps the list on screen until the new token's
+    /// answer, so the two differ exactly while the list speaks for a token
+    /// no longer in use — `GitHubMergePolicy.gate` refuses a merge then.
+    private var snapshotGeneration = 0
     private var backoff = 0
     private var popoverOpen = false
     /// The user refused the Keychain prompt for gh's item. Remembered for the
@@ -185,17 +190,21 @@ final class GitHubModel: ObservableObject {
     /// saw as `expectedHeadOid`. The view only calls this after the second
     /// click. What `GitHubMergePolicy.gate` says of the current list and
     /// state decides: nothing goes out in a stopped state (a 401 among
-    /// them), and a head that moved since the first click is refused here,
-    /// before GitHub is asked.
+    /// them) or on a list fetched before the token changed, and a head that
+    /// moved since the first click is refused here, before GitHub is asked.
     func merge(_ id: String, expectedHead: String) {
         guard prefs.githubEnabled else { return }
         let nodeID: String
         switch GitHubMergePolicy.gate(id: id, expectedHead: expectedHead, mine: snapshot?.mine,
+                                      listGeneration: snapshotGeneration, generation: generation,
                                       state: loadState, activity: mergeActivity[id]) {
         case .send(let node):
             nodeID = node
         case .headMoved:
             mergeActivity[id] = .failed(GitHubMergePolicy.headMovedReason)
+            return
+        case .listStale:
+            mergeActivity[id] = .failed(GitHubMergePolicy.listStaleReason)
             return
         case .ignore:
             return
@@ -249,6 +258,7 @@ final class GitHubModel: ObservableObject {
         generation += 1
         pollTask?.cancel()
         self.snapshot = snapshot
+        snapshotGeneration = generation
         self.mergeActivity = mergeActivity
         loadState = state
         if case .loaded(let source) = state { tokenSource = source } else { tokenSource = nil }
@@ -376,6 +386,7 @@ final class GitHubModel: ObservableObject {
         switch outcome {
         case .success(.snapshot(let snap)):
             snapshot = snap
+            snapshotGeneration = requestedIn
             mergeActivity = GitHubMergePolicy.carryOver(mergeActivity, into: snap.mine)
             loadState = .loaded(source)
             // Nearing the budget backs off like a 429 would, before one arrives.
