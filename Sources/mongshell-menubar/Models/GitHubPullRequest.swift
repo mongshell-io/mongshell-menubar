@@ -158,15 +158,39 @@ enum GitHubDot: Equatable, Sendable {
 /// What the menu-bar region and its hover show. Hidden repositories are
 /// removed before anything is counted.
 struct GitHubGlance: Equatable, Sendable {
+    /// The two hover rows, as parts: the hover view colors the numbers and
+    /// greys the rest, so they are not pre-joined into one string.
+    struct Lines: Equatable, Sendable {
+        let reviewRequested: Int
+        let mine: Int
+        let blocked: Int
+        /// After the review-requested count: "bookdam #58 외 1", or empty.
+        let line1Rest: String
+        /// After the my-PR count: "막힘 1 · #45 build 실패".
+        let line2Rest: String
+    }
+
     /// Review requests + my PRs that are blocked.
     let count: Int
     let dot: GitHubDot
-    /// "리뷰 요청 2 · bookdam #58 외 1"
-    let hoverLine1: String
-    /// "내 PR 4 · 막힘 1 · #45 build 실패"
-    let hoverLine2: String
+    /// nil when no snapshot speaks for the region (token missing, refused,
+    /// first load…) — the hover then shows `stateLabel` on its own.
+    let lines: Lines?
+    let stateLabel: String
 
-    static let empty = GitHubGlance(count: 0, dot: .grey, hoverLine1: "", hoverLine2: "")
+    static let empty = GitHubGlance(count: 0, dot: .grey, lines: nil, stateLabel: "")
+
+    /// "리뷰 요청 2 · bookdam #58 외 1", or the state label without lines.
+    var hoverLine1: String {
+        guard let lines else { return stateLabel }
+        return "리뷰 요청 \(lines.reviewRequested)" + (lines.line1Rest.isEmpty ? "" : " · \(lines.line1Rest)")
+    }
+
+    /// "내 PR 4 · 막힘 1 · #45 build 실패", or empty without lines.
+    var hoverLine2: String {
+        guard let lines else { return "" }
+        return "내 PR \(lines.mine) · \(lines.line2Rest)"
+    }
 
     /// A snapshot is only read for `.loaded`, and for `.loading` /
     /// `.rateLimited` when one was kept from before; every other state is a
@@ -177,9 +201,9 @@ struct GitHubGlance: Equatable, Sendable {
             return snapshot.map { of($0.hiding(hidden)) } ?? .empty
         case .loading, .rateLimited:
             if let snapshot { return of(snapshot.hiding(hidden)) }
-            return GitHubGlance(count: 0, dot: .grey, hoverLine1: state.hoverLabel, hoverLine2: "")
+            return GitHubGlance(count: 0, dot: .grey, lines: nil, stateLabel: state.hoverLabel)
         case .off, .noToken, .keychainDenied, .unauthorized, .error:
-            return GitHubGlance(count: 0, dot: .grey, hoverLine1: state.hoverLabel, hoverLine2: "")
+            return GitHubGlance(count: 0, dot: .grey, lines: nil, stateLabel: state.hoverLabel)
         }
     }
 
@@ -188,18 +212,19 @@ struct GitHubGlance: Equatable, Sendable {
         let requested = s.reviewRequested.count
         let dot: GitHubDot = !blocked.isEmpty ? .red : (requested > 0 ? .amber : .green)
 
-        var line1 = "리뷰 요청 \(requested)"
+        var line1Rest = ""
         if let first = s.reviewRequested.first {
-            line1 += " · \(first.repositoryName) #\(first.number)"
-            if requested > 1 { line1 += " 외 \(requested - 1)" }
+            line1Rest = "\(first.repositoryName) #\(first.number)"
+            if requested > 1 { line1Rest += " 외 \(requested - 1)" }
         }
 
-        var line2 = "내 PR \(s.mine.count) · 막힘 \(blocked.count)"
+        var line2Rest = "막힘 \(blocked.count)"
         if let first = blocked.first {
-            line2 += " · " + blockedReason(first)
+            line2Rest += " · " + blockedReason(first)
         }
-        return GitHubGlance(count: requested + blocked.count, dot: dot,
-                            hoverLine1: line1, hoverLine2: line2)
+        let lines = Lines(reviewRequested: requested, mine: s.mine.count, blocked: blocked.count,
+                          line1Rest: line1Rest, line2Rest: line2Rest)
+        return GitHubGlance(count: requested + blocked.count, dot: dot, lines: lines, stateLabel: "")
     }
 
     /// "#45 build 실패" / "#45 충돌" / "#45 변경 요청". A rollup failure with no

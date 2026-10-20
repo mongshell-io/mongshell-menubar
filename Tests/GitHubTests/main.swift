@@ -183,6 +183,20 @@ do {
           line1([r1, r2]) == "리뷰 요청 2 · bookdam #58 외 1", line1([r1, r2]))
     check("리뷰 요청 1 → 외 N 없음", line1([r1]) == "리뷰 요청 1 · bookdam #58")
     check("리뷰 요청 0 → 숫자만", line1([]) == "리뷰 요청 0")
+
+    // The hover view draws the parts, not the joined strings: the numbers
+    // get a color and the rest is greyed.
+    let parts = GitHubGlance.of(snap(review: [r1, r2], mine: [pr("mongshell/bookdam", 1), fail]),
+                                state: .loaded(.pat), hidden: []).lines
+    check("lines 는 숫자와 나머지를 따로 든다",
+          parts == GitHubGlance.Lines(reviewRequested: 2, mine: 2, blocked: 1,
+                                      line1Rest: "bookdam #58 외 1",
+                                      line2Rest: "막힘 1 · #45 build 실패"), "\(String(describing: parts))")
+    check("리뷰 요청 0 → line1Rest 비어 있음",
+          GitHubGlance.of(snap(mine: [pr()]), state: .loaded(.pat), hidden: []).lines?.line1Rest == "")
+    let noLines = GitHubGlance.of(snap(review: [r1]), state: .unauthorized, hidden: [])
+    check("스냅샷을 읽지 않는 상태 → lines 없음·stateLabel 만",
+          noLines.lines == nil && noLines.stateLabel == "토큰이 거부되었어요 (401)")
 }
 
 // MARK: - 6. 검사 칩 접기

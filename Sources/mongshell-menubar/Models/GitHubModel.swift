@@ -13,6 +13,10 @@ import SwiftUI
 final class GitHubModel: ObservableObject {
     @Published private(set) var snapshot: GitHubSnapshot?
     @Published private(set) var loadState: GitHubLoadState = .off
+    /// Which item the last refresh read its token from; nil while none was
+    /// found or the region is off. Kept apart from `loadState` so settings
+    /// can still say "PAT 사용 중" (and offer to clear it) after a 401.
+    @Published private(set) var tokenSource: GitHubTokenSource?
     /// What the menu-bar region shows; recomputed whenever the snapshot, the
     /// state or the hidden repositories change.
     @Published private(set) var glance: GitHubGlance = .empty
@@ -63,6 +67,7 @@ final class GitHubModel: ObservableObject {
             pollTask?.cancel()
             pollTask = nil
             snapshot = nil
+            tokenSource = nil
             backoff = 0
             ghKeychainDenied = false
             loadState = .off
@@ -130,6 +135,7 @@ final class GitHubModel: ObservableObject {
         pollTask = nil
         self.snapshot = snapshot
         loadState = state
+        if case .loaded(let source) = state { tokenSource = source } else { tokenSource = nil }
         frozenNow = now
         updateGlance()
     }
@@ -196,10 +202,12 @@ final class GitHubModel: ObservableObject {
         case .token(let t, let s):
             token = t; source = s
         case .unavailable(let state):
+            tokenSource = nil
             loadState = state
             updateGlance()
             return
         }
+        tokenSource = source
         if snapshot == nil { loadState = .loading; updateGlance() }
 
         let now = Date()

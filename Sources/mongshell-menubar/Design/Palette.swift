@@ -34,6 +34,24 @@ enum Palette {
     /// Claude brand terracotta — the menu-bar mark's fixed color.
     static let claudeOrange = Color(hex: 0xD97757)
 
+    // GitHub popover badges and check chips (Decision #45, mockup § D). The
+    // filled badge pairs a tinted background with a darker text of the same
+    // hue; the outlined badge only borders. All sit on the light popover.
+    static let badgeRedFill   = red.opacity(0.12)
+    static let badgeRedText   = red
+    static let badgeAmberFill = amber.opacity(0.14)
+    static let badgeAmberText = Color(hex: 0x9A6A12)
+    static let badgeGreenFill = green.opacity(0.13)
+    static let badgeGreenText = Color(hex: 0x2C7A4F)
+    static let badgeGreyFill  = Color.black.opacity(0.07)
+    static let badgeGreyText  = textSecondary
+    static let badgeOutline   = border
+    static let chipFill       = Color.black.opacity(0.04)
+    static let chipFailedFill = red.opacity(0.08)
+    static let chipTimeText   = textTertiary
+    /// A PR row under the cursor — the whole row is the click target.
+    static let rowHoverFill   = Color.black.opacity(0.035)
+
     /// Usage → status color, honoring the color-coding toggle.
     static func statusColor(for pct: Int, colorCoding: Bool) -> Color {
         guard colorCoding else { return mono }
