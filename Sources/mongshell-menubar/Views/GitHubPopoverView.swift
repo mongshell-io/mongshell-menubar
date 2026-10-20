@@ -424,56 +424,79 @@ private struct PRRow: View {
 
     // MARK: Squash merge (Decision #49)
 
-    /// Same height as the badges, so the line — and the row — keeps its height.
-    @ViewBuilder private var mergeControl: some View {
+    /// What the control shows: the button at rest (and after a failure, to
+    /// retry), or the label of a merge out or done.
+    private enum MergeFace: CaseIterable {
+        case button, merging, merged
+    }
+
+    private var mergeFace: MergeFace {
         switch mergeActivity {
+        case .merging:     return .merging
+        case .merged:      return .merged
+        case .failed, nil: return .button
+        }
+    }
+
+    /// One button in every state, so a click on the "머지 중…" / "머지됨"
+    /// label is still the button's — a child button's click wins over the
+    /// row's tap (`RowLink`) — and does nothing: the second click of a
+    /// double-click lands here, never on the row's link. Every face is laid
+    /// out and only the current one shown, so the control is as wide as the
+    /// widest in each state and no click slips past an edge that moved in.
+    /// Same height as the badges, so the line — and the row — keeps its height.
+    private var mergeControl: some View {
+        Button(action: mergeClicked) {
+            ZStack {
+                ForEach(MergeFace.allCases, id: \.self) { face in
+                    faceLabel(face)
+                        .opacity(face == mergeFace ? 1 : 0)
+                        .accessibilityHidden(face != mergeFace)
+                }
+            }
+            .padding(.horizontal, 6)
+            .frame(height: Self.controlHeight)
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(mergeFace == .button ? Palette.badgeOutline : Color.clear, lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 5))
+        }
+        .buttonStyle(.plain)
+        .help(mergeFace == .button ? "누르면 바로 squash 머지합니다 — 앱은 브랜치를 지우지 않습니다" : "")
+    }
+
+    @ViewBuilder private func faceLabel(_ face: MergeFace) -> some View {
+        switch face {
+        case .button:
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.merge").font(.system(size: 10, weight: .semibold))
+                Text("Squash 머지").font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(Palette.badgeGreenText)
         case .merging:
             HStack(spacing: 4) {
                 ProgressView().controlSize(.mini)
                 Text("머지 중…").font(.system(size: 11, weight: .medium))
             }
             .foregroundStyle(Palette.textSecondary)
-            .frame(height: Self.controlHeight)
         case .merged:
             HStack(spacing: 4) {
                 Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold))
                 Text("머지됨").font(.system(size: 11, weight: .medium))
             }
             .foregroundStyle(Palette.badgeGreenText)
-            .frame(height: Self.controlHeight)
-        case .failed, nil:
-            mergeButton
         }
     }
 
     private static let controlHeight: CGFloat = 18
 
-    private var mergeButton: some View {
-        Button(action: mergeClicked) {
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.triangle.merge")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Squash 머지")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .foregroundStyle(Palette.badgeGreenText)
-            .padding(.horizontal, 6)
-            .frame(height: Self.controlHeight)
-            .overlay(
-                RoundedRectangle(cornerRadius: 5)
-                    .strokeBorder(Palette.badgeOutline, lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 5))
-        }
-        .buttonStyle(.plain)
-        .help("누르면 바로 squash 머지합니다 — 앱은 브랜치를 지우지 않습니다")
-    }
-
     /// One click merges the head this row shows now — what the user saw is
     /// what goes out as `expectedHeadOid`. The model re-judges it against
-    /// its own list before sending (`GitHubMergePolicy.gate`).
+    /// its own list before sending (`GitHubMergePolicy.gate`). On a merge
+    /// out or done the click is only absorbed.
     private func mergeClicked() {
-        guard let head = pr.headSHA else { return }
+        guard mergeFace == .button, let head = pr.headSHA else { return }
         onMerge(head)
     }
 
