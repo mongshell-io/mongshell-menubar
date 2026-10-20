@@ -38,8 +38,8 @@ macOS 메뉴바에 Claude 구독 사용량을 상시 표시하는 1인용 네이
 - **정책 노브**: 커밋/PR trailer — `Co-Authored-By` **포함**, `🤖 Generated with Claude Code`
   **미포함**. 응답 톤 — 항상 존댓말. 커밋 메시지 — 한국어 conventional commits.
 
-이 프로젝트의 위험 등급 해당 범위: DB 마이그레이션·요청 경로(proxy/middleware)는 없다 — CI 워크플로(`.github/`)만
-해당하며 지금은 그 디렉토리도 없다. 자동 머지 수단도 없으므로 모든 PR 을 사람이 `--squash` 로 머지한다.
+이 프로젝트에서 위험 등급에 해당하는 것은 CI 워크플로(`.github/`) 변경뿐이다 (DB 마이그레이션·요청 경로 없음).
+자동 머지 수단도 없으므로 모든 PR 을 사람이 `--squash` 로 머지한다.
 
 프로덕트 철학·범위는 [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md), 아키텍처 의사결정 기록은 [docs/architecture-decisions.md](docs/architecture-decisions.md). 새 결정 전 가장 먼저 참조.
 
