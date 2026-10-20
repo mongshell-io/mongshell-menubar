@@ -183,7 +183,7 @@ GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주�
 - 401 이나 PAT 저장 실패면 자동 폴링을 멈추고, 팝오버를 열어도 요청하지 않는다. 재개는 수동뿐이다 — 팝오버의 재시도·새로고침, PAT 적용·지우기, gh 토큰 다시 시도, "GitHub 표시" 다시 켜기. 재개한 요청이 다시 401 이면 다시 멈춘다.
 - 판정 (`GitHubPullRequest.swift`, 순수 값): 배지 우선순위 충돌 > 검사 실패 > 변경 요청 > 내 리뷰 대기 > Draft > 리뷰 대기 > 승인 > 머지 가능. 메뉴바 숫자 = 리뷰 요청 + 내 PR 중 막힌 것(충돌·검사 실패·변경 요청). 점은 막힘 있으면 빨강, 리뷰 요청만 있으면 주황, 없으면 초록, 토큰 없음·거부·401·오류는 회색. 모르는 값은 통과로 읽지 않는다 — CheckRun 모르는 `status` → queued, `COMPLETED` + 모르는 `conclusion` → failed, rollup 모르는 `state` → pending, `mergeable` 모르는 값 → unknown(충돌 아님). 검사 칩은 전부 통과·건너뜀이면 "검사 N개 통과 · 소요" 하나로 접는다.
 - 링크: 응답의 URL 은 https 만 받는다 (검사 링크 `detailsUrl`·`targetUrl` 은 CI 가 채우는 제3자 값). PR 링크는 그에 더해 `github.com` 호스트일 때만 연다.
-- 한도: 토큰당 시간당 5,000 포인트. 요청당 1 포인트 안팎 (노드 수에 비례). 팝오버 바닥에 `remaining / limit` 를 보인다.
+- 한도: 토큰당 시간당 5,000 포인트. 요청당 1 포인트 안팎 (노드 수에 비례). 팝오버 바닥에 쓴 비율을 작은 링으로 보이고, 정확한 `remaining / limit` 는 툴팁에만 둔다.
 - 숨긴 레포(`Preferences.githubHiddenRepos`, "owner/name" 소문자)는 스냅샷을 읽는 모든 소비자가 `hiding(_:)` 을 거치므로 메뉴바 숫자·hover·팝오버 어디에도 세지 않는다.
 - 꺼져 있으면 폴링도 없고 메뉴바·팝오버·hover 어디에도 흔적이 없다. 설정의 "GitHub 표시" 토글은 PHILOSOPHY 원칙 2 의 설정 진입점 예외로 항상 보인다. 켜는 동작이 첫 Keychain 읽기이며, gh 항목 접근 거부는 세션 동안 기억해 설정에서만 재시도한다.
 

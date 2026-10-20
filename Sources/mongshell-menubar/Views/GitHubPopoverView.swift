@@ -254,11 +254,22 @@ struct GitHubPopoverView: View {
 
     private func footer(_ snapshot: GitHubSnapshot) -> some View {
         HStack {
-            if let limit = snapshot.rateLimit {
-                Text("API 잔량 \(Self.grouped(limit.remaining)) / \(Self.grouped(limit.limit))")
-                    .font(.system(size: 12))
-                    .monospacedDigit()
-                    .foregroundStyle(Palette.textSecondary)
+            if let limit = snapshot.rateLimit, limit.limit > 0 {
+                // A glance, not a readout: how much of the hourly budget is
+                // spent. The exact figures sit in the tooltip and on the web.
+                let used = min(100, max(0, Int((Double(limit.limit - limit.remaining)
+                                                / Double(limit.limit) * 100).rounded())))
+                HStack(spacing: 5) {
+                    RingView(percent: used,
+                             color: Palette.statusColor(for: used, colorCoding: prefs.colorCoding),
+                             lineWidth: 2.5, diameter: 13)
+                    Text("API")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Palette.textTertiary)
+                }
+                .help("GitHub API 사용량 \(used)% — 남은 \(Self.grouped(limit.remaining)) / \(Self.grouped(limit.limit))")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("GitHub API 사용량 \(used)퍼센트")
             }
             Spacer()
             Text(TimeText.updatedClock(snapshot.fetchedAt))
