@@ -178,11 +178,13 @@ enum PRMergeActivity: Equatable, Sendable {
 enum GitHubMergePolicy {
     /// The merge button is drawn — never greyed out — only on my own PR,
     /// when GitHub's own verdict is `CLEAN` (the one signal a solo repo has:
-    /// no review rules, no `reviewDecision`), it isn't a draft, and the
-    /// response carried what the mutation needs.
+    /// no review rules, no `reviewDecision`), it isn't a draft, the
+    /// response carried what the mutation needs, and its link survived the
+    /// https · github.com filter — a PR whose URL was dropped is data we
+    /// don't trust enough to offer an irreversible write on.
     static func canOffer(_ pr: GitHubPullRequest, section: PRSection) -> Bool {
         section == .mine && pr.mergeState == .clean && !pr.isDraft
-            && pr.nodeID != nil && pr.headSHA != nil
+            && pr.nodeID != nil && pr.headSHA != nil && pr.url != nil
     }
 
     /// The row's line when the list moved to a new head between the first

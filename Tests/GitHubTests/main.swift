@@ -30,8 +30,11 @@ func pr(_ repo: String = "mongshell/bookdam", _ number: Int = 45,
         rollup: PRChecksRollup = .success,
         checks: [PRCheck] = [],
         complete: Bool = false,
-        nodeID: String? = nil, headSHA: String? = nil) -> GitHubPullRequest {
-    GitHubPullRequest(repository: repo, number: number, title: "t", url: nil, isDraft: draft,
+        nodeID: String? = nil, headSHA: String? = nil,
+        linked: Bool = true) -> GitHubPullRequest {
+    GitHubPullRequest(repository: repo, number: number, title: "t",
+                      url: linked ? URL(string: "https://github.com/\(repo)/pull/\(number)") : nil,
+                      isDraft: draft,
                       reviewDecision: review, mergeable: mergeable, mergeState: merge, checksRollup: rollup,
                       checks: checks, checksListComplete: complete, updatedAt: now, mergedAt: nil,
                       nodeID: nodeID, headSHA: headSHA)
@@ -801,6 +804,8 @@ do {
     check("최근 머지 섹션 → 없음", !offer(ready, .merged))
     check("nodeID 없음 → 없음", !offer(pr(merge: .clean, headSHA: "abc")))
     check("headSHA 없음 → 없음", !offer(pr(merge: .clean, nodeID: "PR_1")))
+    check("링크 없음 (URL 이 https·github.com 검사를 못 넘김) → 없음",
+          !offer(pr(merge: .clean, nodeID: "PR_1", headSHA: "abc", linked: false)))
     check("reviewDecision 없어도 CLEAN 이면 있음 (혼자 쓰는 저장소)",
           offer(pr(review: .none, merge: .clean, rollup: .none, nodeID: "PR_1", headSHA: "abc")))
 }
