@@ -49,6 +49,9 @@ enum Palette {
     static let chipFill       = Color.black.opacity(0.04)
     static let chipFailedFill = red.opacity(0.08)
     static let chipTimeText   = textTertiary
+    static let chipFailedTimeText = red.opacity(0.8)
+    /// The running check's dot blinks between `amber` and this.
+    static let chipRunningDotDim = amber.opacity(0.35)
     /// A PR row under the cursor — the whole row is the click target.
     static let rowHoverFill   = Color.black.opacity(0.035)
 

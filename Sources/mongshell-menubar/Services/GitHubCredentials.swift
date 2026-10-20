@@ -61,18 +61,6 @@ struct GitHubCredentialStore: Sendable {
 
     // MARK: gh CLI item (read-only)
 
-    /// The username gh stored its token under, without the token. Attributes
-    /// alone never trigger the Keychain prompt — that only guards the data —
-    /// so this is safe to show in settings before the user opts in.
-    func ghAccountName() -> String? {
-        var query = Self.ghItemQuery
-        query[kSecReturnAttributes as String] = true
-        var out: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
-              let attrs = out as? [String: Any] else { return nil }
-        return attrs[kSecAttrAccount as String] as? String
-    }
-
     /// Reads gh's token — this is the call that prompts. Of several items
     /// under the service (multiple gh accounts) an arbitrary one is read.
     /// The go-keyring wrapping is undone here, so the token comes back

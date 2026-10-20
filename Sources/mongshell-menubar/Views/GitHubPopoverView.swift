@@ -420,7 +420,8 @@ private struct PRRow: View {
                           text: "검사 \(passed)개 통과",
                           time: total.map { TimeText.duration(Int($0)) },
                           tone: .normal)
-                ForEach(skipped, id: \.name) { check in
+                // Matrix jobs share a name, so the name is no identity.
+                ForEach(Array(skipped.enumerated()), id: \.offset) { _, check in
                     skippedChip(check)
                 }
             }
@@ -447,7 +448,7 @@ private struct PRRow: View {
             // Blink by the clock itself: no animation, and the snapshot's
             // frozen clock gives the same frame every time.
             let visible = Int(now.timeIntervalSince1970) % 2 == 0
-            CheckChip(glyph: "circle.fill", glyphColor: Palette.amber.opacity(visible ? 1 : 0.35),
+            CheckChip(glyph: "circle.fill", glyphColor: visible ? Palette.amber : Palette.chipRunningDotDim,
                       text: check.name,
                       time: check.startedAt.map { TimeText.duration(Int(now.timeIntervalSince($0))) + "…" },
                       tone: .normal)
@@ -563,7 +564,7 @@ private struct CheckChip: View {
             if let time {
                 Text(time)
                     .monospacedDigit()
-                    .foregroundStyle(tone == .failed ? Palette.red.opacity(0.8) : Palette.chipTimeText)
+                    .foregroundStyle(tone == .failed ? Palette.chipFailedTimeText : Palette.chipTimeText)
             }
         }
         .font(.system(size: 10.5))
