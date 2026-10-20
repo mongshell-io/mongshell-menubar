@@ -396,9 +396,10 @@ private struct PRRow: View {
         }
     }
 
-    /// GitHub's own aggregate says pending, or a chip is still going.
+    /// The PR's checks are pending (the same reading the badge uses), or a
+    /// chip is still going.
     private var checksPending: Bool {
-        pr.checksRollup == .pending || pr.checks.contains { $0.outcome.isPending }
+        pr.effectiveChecks == .pending || pr.checks.contains { $0.outcome.isPending }
     }
 
     private var verdictGlyph: String {

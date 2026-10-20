@@ -366,6 +366,7 @@ private extension GitHubSnapshot {
                               url: URL(string: "https://github.com/\(repo)/pull/\(number)"),
                               isDraft: draft, reviewDecision: review, mergeable: mergeable,
                               mergeState: mergeState, checksRollup: rollup, checks: checks,
+                              checksListComplete: true,
                               updatedAt: now.addingTimeInterval(-updatedAgo),
                               mergedAt: mergedAgo.map { now.addingTimeInterval(-$0) })
         }
@@ -434,6 +435,7 @@ private extension GitHubSnapshot {
                               isDraft: false,
                               reviewDecision: PRReviewDecision.none, mergeable: .mergeable,
                               mergeState: .blocked, checksRollup: PRChecksRollup.none, checks: [],
+                              checksListComplete: true,
                               updatedAt: template.updatedAt, mergedAt: nil)
         }
         snapshot.recentlyMerged.append(snapshot.recentlyMerged[0])

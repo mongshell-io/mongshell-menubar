@@ -44,8 +44,9 @@ enum PRReviewDecision: Equatable, Sendable {
     case none
 }
 
-/// `statusCheckRollup.state`, GitHub's own aggregate — the badge trusts this
-/// over the chips, which are capped at the first thirty contexts.
+/// `statusCheckRollup.state`, GitHub's own aggregate. It counts every run on
+/// the commit, a cancelled re-run included, so the badge only falls back to
+/// it when the chips don't cover the whole list (`effectiveChecks`).
 enum PRChecksRollup: Equatable, Sendable {
     case success, failure, pending
     /// No rollup: the repo runs no checks.
@@ -63,7 +64,12 @@ struct GitHubPullRequest: Equatable, Identifiable, Sendable {
     let mergeable: PRMergeable
     let mergeState: PRMergeState
     let checksRollup: PRChecksRollup
+    /// One chip per check name — the latest run (`GitHubAPIClient` drops the
+    /// re-run ones).
     let checks: [PRCheck]
+    /// Every context GitHub has was read (none past the thirty requested,
+    /// none of a kind we skip), so `checks` speaks for the whole PR.
+    let checksListComplete: Bool
     let updatedAt: Date?
     let mergedAt: Date?
 
@@ -72,6 +78,17 @@ struct GitHubPullRequest: Equatable, Identifiable, Sendable {
     /// The "name" of "owner/name" — what the menu bar and hover have room for.
     var repositoryName: String {
         repository.split(separator: "/").last.map(String.init) ?? repository
+    }
+
+    /// How the PR's checks stand, for the badge, the menu-bar count and the
+    /// hover. From the chips when they are the whole list — the rollup still
+    /// fails on a cancelled run that a later re-run replaced — and from the
+    /// rollup when the list was cut short or is empty.
+    var effectiveChecks: PRChecksRollup {
+        guard checksListComplete, !checks.isEmpty else { return checksRollup }
+        if checks.contains(where: { $0.outcome == .failed }) { return .failure }
+        if checks.contains(where: { $0.outcome.isPending }) { return .pending }
+        return .success
     }
 
     /// The first failed check chip, for the hover line.
@@ -108,12 +125,13 @@ enum PRVerdict: Int, Comparable, Sendable {
     ///   else's PR waiting on me, which outranks its own draft state.
     static func of(_ pr: GitHubPullRequest, reviewRequested: Bool) -> PRVerdict {
         if pr.mergeable == .conflicting { return .conflict }
-        if pr.checksRollup == .failure { return .checksFailed }
+        let checks = pr.effectiveChecks
+        if checks == .failure { return .checksFailed }
         if pr.reviewDecision == .changesRequested { return .changesRequested }
         if reviewRequested { return .myReviewPending }
         if pr.isDraft { return .draft }
         let approved = pr.reviewDecision == .approved
-        let checksClear = pr.checksRollup == .success || pr.checksRollup == .none
+        let checksClear = checks == .success || checks == .none
         switch pr.mergeState {
         case .clean:
             // GitHub's merge button is green. A repo with no review rules

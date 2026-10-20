@@ -64,8 +64,8 @@ struct GitHubAPIClient: Sendable {
     /// become an "외 N건" line, and someone with more than twenty open PRs
     /// has a different problem.
     static let searchPageSize = 20
-    /// Check contexts read per PR. Beyond this the chips are incomplete, but
-    /// the badge still trusts `statusCheckRollup.state`, which covers all.
+    /// Check contexts read per PR. Beyond this the chips are incomplete, and
+    /// the badge falls back to `statusCheckRollup.state`, which covers all.
     static let contextsPageSize = 30
 
     /// The query text. `mergedSince` becomes `merged:>=YYYY-MM-DD` in the
@@ -92,7 +92,7 @@ struct GitHubAPIClient: Sendable {
           __typename number title url isDraft reviewDecision mergeable mergeStateStatus updatedAt mergedAt
           repository { nameWithOwner }
           commits(last: 1) { nodes { commit { statusCheckRollup { state
-            contexts(first: \(contextsPageSize)) { nodes { __typename
+            contexts(first: \(contextsPageSize)) { totalCount nodes { __typename
               ... on CheckRun { name status conclusion startedAt completedAt detailsUrl }
               ... on StatusContext { context state createdAt targetUrl } } } } } } }
         }
@@ -246,6 +246,7 @@ struct GitHubAPIClient: Sendable {
         else { return nil }
         let rollup = ((((node["commits"] as? [String: Any])?["nodes"] as? [Any])?.first
                        as? [String: Any])?["commit"] as? [String: Any])?["statusCheckRollup"]
+        let contexts = checks(rollup)
         return GitHubPullRequest(
             repository: repository,
             number: number,
@@ -256,7 +257,8 @@ struct GitHubAPIClient: Sendable {
             mergeable: mergeable(node["mergeable"]),
             mergeState: mergeState(node["mergeStateStatus"]),
             checksRollup: checksRollup(rollup),
-            checks: checks(rollup),
+            checks: latestRunPerName(contexts.checks),
+            checksListComplete: contexts.complete,
             updatedAt: isoDate(node["updatedAt"]),
             mergedAt: isoDate(node["mergedAt"])
         )
@@ -308,10 +310,37 @@ struct GitHubAPIClient: Sendable {
         }
     }
 
-    private static func checks(_ rollup: Any?) -> [PRCheck] {
-        guard let nodes = ((rollup as? [String: Any])?["contexts"] as? [String: Any])?["nodes"] as? [Any]
-        else { return [] }
-        return nodes.compactMap { check($0 as? [String: Any]) }
+    /// Every context read, re-runs included, and whether that is all of them:
+    /// GitHub's `totalCount` matches what we could read. A missing count, a
+    /// page cut at thirty, or a node of a kind we skip each leave it
+    /// incomplete — what we couldn't read might be the failing one.
+    private static func checks(_ rollup: Any?) -> (checks: [PRCheck], complete: Bool) {
+        guard let contexts = (rollup as? [String: Any])?["contexts"] as? [String: Any],
+              let nodes = contexts["nodes"] as? [Any]
+        else { return ([], false) }
+        let checks = nodes.compactMap { check($0 as? [String: Any]) }
+        return (checks, int(contexts["totalCount"]) == checks.count)
+    }
+
+    /// A re-run adds a run under the same name instead of replacing the old
+    /// one, so the list holds both. Keeps one per name — the latest by
+    /// `startedAt` (else `completedAt`); when either side has no time, the
+    /// one later in the response. Survivors keep their original order.
+    static func latestRunPerName(_ checks: [PRCheck]) -> [PRCheck] {
+        var winner: [String: Int] = [:]
+        for (index, check) in checks.enumerated() {
+            guard let held = winner[check.name] else { winner[check.name] = index; continue }
+            if !isEarlier(check, than: checks[held]) { winner[check.name] = index }
+        }
+        let kept = Set(winner.values)
+        return checks.indices.filter(kept.contains).map { checks[$0] }
+    }
+
+    /// Strictly earlier by run time. Without a time on both sides there is
+    /// no order to read, so it is not earlier — the later entry wins.
+    private static func isEarlier(_ a: PRCheck, than b: PRCheck) -> Bool {
+        guard let ta = a.startedAt ?? a.completedAt, let tb = b.startedAt ?? b.completedAt else { return false }
+        return ta < tb
     }
 
     private static func check(_ node: [String: Any]?) -> PRCheck? {

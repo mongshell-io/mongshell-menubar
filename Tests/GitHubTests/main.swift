@@ -28,10 +28,11 @@ func pr(_ repo: String = "mongshell/bookdam", _ number: Int = 45,
         mergeable: PRMergeable = .mergeable,
         merge: PRMergeState = .unknown,
         rollup: PRChecksRollup = .success,
-        checks: [PRCheck] = []) -> GitHubPullRequest {
+        checks: [PRCheck] = [],
+        complete: Bool = false) -> GitHubPullRequest {
     GitHubPullRequest(repository: repo, number: number, title: "t", url: nil, isDraft: draft,
                       reviewDecision: review, mergeable: mergeable, mergeState: merge, checksRollup: rollup,
-                      checks: checks, updatedAt: now, mergedAt: nil)
+                      checks: checks, checksListComplete: complete, updatedAt: now, mergedAt: nil)
 }
 
 func chk(_ name: String, _ outcome: PRCheckOutcome, start: TimeInterval? = 0, end: TimeInterval? = 60) -> PRCheck {
@@ -135,8 +136,48 @@ do {
               && PRVerdict.changesRequested.isBlocking && !PRVerdict.myReviewPending.isBlocking
               && !PRVerdict.draft.isBlocking && !PRVerdict.awaitingReview.isBlocking
               && !PRVerdict.approved.isBlocking && !PRVerdict.mergeable.isBlocking)
-    check("검사 실패 근거는 칩이 아니라 rollup — 칩에 실패가 있어도 rollup success 면 아님",
+    check("목록이 잘렸으면 검사 판정은 rollup — 칩에 실패가 있어도 rollup success 면 아님",
           verdict(pr(rollup: .success, checks: [chk("build", .failed)])) == .awaitingReview)
+}
+
+// MARK: - 3b. 끝까지 받은 칩 목록으로 검사 판정
+
+print("▸ effectiveChecks")
+do {
+    let allPassed = [chk("test", .passed), chk("automerge", .skipped)]
+    check("끝까지 받은 칩이 전부 통과면 rollup FAILURE 여도 검사 실패 아님",
+          verdict(pr(rollup: .failure, checks: allPassed, complete: true)) != .checksFailed
+              && pr(rollup: .failure, checks: allPassed, complete: true).effectiveChecks == .success)
+    check("목록이 잘렸으면 rollup FAILURE → 검사 실패",
+          verdict(pr(rollup: .failure, checks: allPassed, complete: false)) == .checksFailed)
+    check("contexts 가 비고 rollup FAILURE → 검사 실패",
+          verdict(pr(rollup: .failure, checks: [], complete: true)) == .checksFailed)
+    check("끝까지 받은 칩에 실패 하나 → 검사 실패 (rollup success 여도)",
+          verdict(pr(rollup: .success, checks: [chk("a", .passed), chk("b", .failed)], complete: true)) == .checksFailed)
+    check("끝까지 받은 칩에 진행중 → pending (CLEAN 이어도 머지 가능 아님)",
+          pr(rollup: .failure, checks: [chk("a", .running, end: nil)], complete: true).effectiveChecks == .pending
+              && verdict(pr(merge: .clean, rollup: .success,
+                            checks: [chk("a", .queued, start: nil, end: nil)], complete: true)) == .awaitingReview)
+    check("검사 없음(rollup none) → none 그대로", pr(rollup: .none, complete: true).effectiveChecks == PRChecksRollup.none)
+}
+
+// MARK: - 3c. 재실행 검사 정리
+
+print("▸ latestRunPerName")
+do {
+    let dedupe = GitHubAPIClient.latestRunPerName
+    let early = chk("test", .failed, start: 0, end: 60)
+    let late = chk("test", .passed, start: 120, end: 180)
+    check("test CANCELLED(이른) + test SUCCESS(늦은) → test 하나, passed",
+          dedupe([early, late]) == [late] && dedupe([late, early]) == [late])
+    let a = chk("ci", .failed, start: nil, end: nil), b = chk("ci", .passed, start: nil, end: nil)
+    check("시각 없는 중복 → 응답에서 뒤에 온 것", dedupe([a, b]) == [b] && dedupe([b, a]) == [a])
+    let byEnd1 = chk("e", .failed, start: nil, end: 10), byEnd2 = chk("e", .passed, start: nil, end: 20)
+    check("startedAt 없으면 completedAt 으로 비교", dedupe([byEnd2, byEnd1]) == [byEnd2])
+    let x = chk("lint", .passed), y = chk("build", .passed), z = chk("static", .passed)
+    check("서로 다른 이름은 유지·순서 유지", dedupe([x, y, z]) == [x, y, z])
+    check("남은 것은 원래 자리 순서", dedupe([early, x, late, y]) == [x, late, y],
+          "\(dedupe([early, x, late, y]).map(\.name))")
 }
 
 // MARK: - 4. Glance (메뉴바 숫자·점)
@@ -467,6 +508,62 @@ do {
           parsed(Data(#"{"data":{"mine":{"nodes":[{"__typename":"PullRequest","number":true,"repository":{"nameWithOwner":"a/b"}}]}}}"#.utf8))?.mine.isEmpty == true)
 }
 
+// MARK: - 9b. 재실행된 검사 (gambau#1982 모양, 2026-10-20 실측)
+
+print("▸ 재실행 검사 끝에서 끝까지")
+do {
+    func run(_ name: String, _ conclusion: String, _ start: String, _ end: String) -> String {
+        #"{"__typename":"CheckRun","name":"\#(name)","status":"COMPLETED","conclusion":"\#(conclusion)","startedAt":"2026-10-20T\#(start)Z","completedAt":"2026-10-20T\#(end)Z","detailsUrl":"https://x/\#(name)"}"#
+    }
+    let contexts = [
+        run("static", "SUCCESS", "05:23:35", "05:25:07"),
+        run("static", "SUCCESS", "05:25:54", "05:27:15"),
+        run("test", "CANCELLED", "05:23:35", "05:25:51"),
+        run("test", "SUCCESS", "05:25:54", "05:28:09"),
+        run("automerge", "CANCELLED", "05:25:52", "05:25:51"),
+        run("automerge", "SUCCESS", "05:28:12", "05:28:21"),
+        #"{"__typename":"StatusContext","context":"Vercel","state":"SUCCESS","createdAt":"2026-10-20T05:26:53Z","targetUrl":"https://x/v"}"#,
+        run("Vercel Preview Comments", "SUCCESS", "05:23:18", "05:23:18"),
+    ]
+    func rollup(totalCount: Int?) -> String {
+        let count = totalCount.map { "\"totalCount\":\($0)," } ?? ""
+        return #"{"state":"FAILURE","contexts":{"# + count + #""nodes":["# + contexts.joined(separator: ",") + "]}}"
+    }
+    let full = parsed(body(mine: [node("mongshellio/gambau", 1982, mergeState: "UNKNOWN", review: NSNull(),
+                                       rollup: rollup(totalCount: 8))]))
+    let pr1982 = full?.mine.first
+    check("이름별 최신 실행 하나씩, 원래 순서",
+          pr1982?.checks.map(\.name) == ["static", "test", "automerge", "Vercel", "Vercel Preview Comments"],
+          "\(String(describing: pr1982?.checks.map(\.name)))")
+    check("남은 칩은 전부 passed", pr1982?.checks.allSatisfy { $0.outcome == .passed } == true)
+    check("totalCount 8 == 받은 8 → 목록 끝까지", pr1982?.checksListComplete == true)
+    check("rollup FAILURE 인데 verdict 는 검사 실패 아님",
+          pr1982.map { verdict($0) } == .awaitingReview, "\(String(describing: pr1982.map { verdict($0) }))")
+    let g = full.map { GitHubGlance.of($0, state: .loaded(.pat), hidden: []) }
+    check("Glance 도 정리된 판정 — 막힘 0·초록·\"막힘 0\"",
+          g?.count == 0 && g?.dot == .green && g?.hoverLine2 == "내 PR 1 · 막힘 0", "\(String(describing: g))")
+
+    let cut = parsed(body(mine: [node(rollup: rollup(totalCount: 40))]))?.mine.first
+    check("totalCount > 받은 수(잘림) → rollup FAILURE 로 검사 실패",
+          cut?.checksListComplete == false && cut.map { verdict($0) } == .checksFailed)
+    let noCount = parsed(body(mine: [node(rollup: rollup(totalCount: nil))]))?.mine.first
+    check("totalCount 누락 → 끝까지 받았다고 보지 않음 (rollup)",
+          noCount?.checksListComplete == false && noCount.map { verdict($0) } == .checksFailed)
+    let mystery = #"{"state":"FAILURE","contexts":{"totalCount":2,"nodes":[\#(run("a", "SUCCESS", "05:00:00", "05:01:00")),{"__typename":"Mystery"}]}}"#
+    check("건너뛴 모르는 노드가 있으면 끝까지 받은 게 아님 (rollup)",
+          parsed(body(mine: [node(rollup: mystery)]))?.mine.first.map { verdict($0) } == .checksFailed)
+    let empty = parsed(body(mine: [node(rollup: #"{"state":"FAILURE","contexts":{"totalCount":0,"nodes":[]}}"#)]))?.mine.first
+    check("contexts 비고 rollup FAILURE → 검사 실패", empty.map { verdict($0) } == .checksFailed)
+
+    // A failure that survives the dedupe still names the check in the hover.
+    let stillFailing = [run("test", "SUCCESS", "05:00:00", "05:01:00"), run("test", "FAILURE", "05:10:00", "05:11:00")]
+    let failing = #"{"state":"FAILURE","contexts":{"totalCount":2,"nodes":["# + stillFailing.joined(separator: ",") + "]}}"
+    let fs = parsed(body(mine: [node("mongshell/bookdam", 45, rollup: failing)]))
+    check("최신 실행이 실패면 칩 하나·hover \"#45 test 실패\"",
+          fs?.mine.first?.checks.count == 1
+              && fs.map { GitHubGlance.of($0, state: .loaded(.pat), hidden: []).hoverLine2 } == "내 PR 1 · 막힘 1 · #45 test 실패")
+}
+
 // MARK: - 10. interpret
 
 print("▸ interpret (상태 코드·헤더)")
@@ -526,6 +623,7 @@ do {
           q.contains("statusCheckRollup { state") && q.contains("... on CheckRun {") && q.contains("... on StatusContext {"))
     check("mergeStateStatus 요청", q.contains(" mergeStateStatus "))
     check("first: 20 / contexts first: 30", q.contains("first: 20)") && q.contains("contexts(first: 30)"))
+    check("contexts 의 totalCount 요청", q.contains("contexts(first: 30) { totalCount nodes"))
     check("mutation 아님", !q.contains("mutation"))
     // The day boundary follows the calendar handed in, not UTC.
     var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
