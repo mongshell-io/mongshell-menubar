@@ -303,7 +303,8 @@ struct GitHubPopoverView: View {
 
 /// One pull request: repo and number, title, the verdict badge with any
 /// secondary badge, and the checks line. The whole row is the link, and it
-/// lights up under the cursor to say so. A mergeable PR of mine also gets the
+/// lights up under the cursor to say so; a row without a URL is dimmed
+/// instead, as a disabled button is (`RowLink`). A mergeable PR of mine also gets the
 /// squash merge control at the end of the badge line (Decision #49), and a
 /// failed merge a red line at the bottom.
 private struct PRRow: View {
@@ -401,15 +402,10 @@ private struct PRRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(hovering ? Palette.rowHoverFill : Color.clear)
+                .fill(hovering && pr.url != nil ? Palette.rowHoverFill : Color.clear)
         )
         .contentShape(RoundedRectangle(cornerRadius: 8))
-        // A tap gesture rather than a Button: the merge control sits inside
-        // the row, and a child button's click wins over its parent's gesture,
-        // where a button inside another button's label is not reliably its own.
-        // A merge click must never also open the browser.
-        .onTapGesture(perform: openPR)
-        .accessibilityAction(named: "브라우저에서 열기", openPR)
+        .modifier(RowLink(url: pr.url))
         // The highlight bleeds past the section's text edge, as the mockup's
         // negative margin does; the text itself stays aligned with the header.
         .padding(.horizontal, -8)
@@ -419,10 +415,6 @@ private struct PRRow: View {
         .onChange(of: pr.headSHA) { arm = nil }
         .onChange(of: offersMerge) { if !offersMerge { arm = nil } }
         .onChange(of: popoverSession) { arm = nil }
-    }
-
-    private func openPR() {
-        if let url = pr.url { NSWorkspace.shared.open(url) }
     }
 
     private var topLine: some View {
@@ -640,6 +632,38 @@ private struct PRRow: View {
     private static func elapsedText(_ check: PRCheck) -> String? {
         guard let start = check.startedAt, let end = check.completedAt else { return nil }
         return TimeText.duration(Int(end.timeIntervalSince(start)))
+    }
+}
+
+// MARK: - Row link
+
+/// A PR row as a link, matching `mergedRow`'s button: with a URL, a tap and
+/// the default accessibility action open it, and the row reads as a button;
+/// without one, no tap and no button trait, and the row is dimmed as a
+/// disabled button is. A tap gesture rather than a Button: the merge control
+/// sits inside the row, and a child button's click wins over its parent's
+/// gesture, where a button inside another button's label is not reliably
+/// its own — a merge click must never also open the browser. `.contain`
+/// keeps that merge button an accessibility element of its own.
+private struct RowLink: ViewModifier {
+    let url: URL?
+
+    /// What `.disabled` does to a plain button's label, which `.disabled`
+    /// itself can't be used for here: it would switch the merge button off.
+    private static let disabledOpacity = 0.5
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let url {
+            content
+                .onTapGesture { NSWorkspace.shared.open(url) }
+                .accessibilityElement(children: .contain)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { NSWorkspace.shared.open(url) }
+        } else {
+            content
+                .accessibilityElement(children: .contain)
+                .opacity(Self.disabledOpacity)
+        }
     }
 }
 
