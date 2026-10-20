@@ -40,13 +40,23 @@ struct GitHubHoverSummaryView: View {
         .fixedSize()
     }
 
+    /// 59m 59s — with monospaced digits, the widest the elapsed time reads
+    /// under an hour; "1h 00m" and on are narrower.
+    private static let widestElapsed: TimeInterval = 59 * 60 + 59
+
     /// Only a running check with a start time pays for the timeline. The
     /// snapshot clock, when set, wins over the timeline's so reference
-    /// images don't tick.
+    /// images don't tick. A hidden copy at the widest elapsed time holds the
+    /// cell's width, so the hover doesn't jump when "59s" becomes "1m 00s".
     @ViewBuilder private func ciRest(_ ci: GitHubCILine) -> some View {
-        if ci.runningSince != nil {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                restCell(ci.rest(now: model.frozenNow ?? context.date), separated: ci.number != nil)
+        if let since = ci.runningSince {
+            ZStack(alignment: .leading) {
+                restCell(ci.rest(now: since.addingTimeInterval(Self.widestElapsed)),
+                         separated: ci.number != nil)
+                    .hidden()
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    restCell(ci.rest(now: model.frozenNow ?? context.date), separated: ci.number != nil)
+                }
             }
             .gridColumnAlignment(.leading)
         } else {
