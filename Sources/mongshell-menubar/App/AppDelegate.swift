@@ -32,26 +32,43 @@ final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// The one status item (Decision #5) is split into side-by-side regions,
+    /// laid out left to right in this order. Each region has its own host
+    /// view in the button and, when registered, its own hover summary and
+    /// click popover, so hover and click are judged per region. Only `.claude`
+    /// has content for now; `.github` is a zero-width placeholder.
+    enum Region: CaseIterable {
+        case claude
+        case github
+    }
+
     private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
-    private var hoverPopover: NSPopover!
-    /// Invisible, click-through window laid exactly over the status item while
-    /// the hover summary is up; the summary is anchored to it rather than to
+    /// The host views are `PassthroughHostingView` of differing root views,
+    /// so they are kept as plain `NSView`.
+    private var hosts: [Region: NSView] = [:]
+    private var clickPopovers: [Region: NSPopover] = [:]
+    private var hoverPopovers: [Region: NSPopover] = [:]
+    /// Invisible, click-through window laid exactly over the hovered region
+    /// while its summary is up; the summary is anchored to it rather than to
     /// the button. With the summary anchored to the button, the item's
     /// background changed on hover as if it were selected — the anchoring is
     /// the suspected cause (the system draws that highlight, so no API shows
-    /// it). The click popover stays anchored to the button.
+    /// it). The click popovers stay anchored to the button. One window serves
+    /// every region: at most one summary is up at a time.
     private var hoverAnchor: NSWindow?
-    /// Closes the hover summary if the cursor is no longer over the icon — see
-    /// `showHoverSummary`. Set while the summary is shown; if something other
-    /// than `hideHoverSummary` closes the summary, it clears itself on its
-    /// next tick.
+    /// The region whose summary currently owns `hoverAnchor` and
+    /// `hoverWatchdog`; nil while no summary is up.
+    private var hoverRegion: Region?
+    /// Closes the hover summary if the cursor is no longer over its region —
+    /// see `showHoverSummary`. Set while a summary is shown; if something
+    /// other than `hideHoverSummary` closes the summary, it clears itself on
+    /// its next tick.
     private var hoverWatchdog: Timer?
     /// How often the watchdog looks. A missed mouseExited is rare, so this only
     /// bounds how long a stray summary can stay up.
     private static let hoverWatchdogInterval: TimeInterval = 0.5
+    private static let minimumStatusItemWidth: CGFloat = 24
     private var settingsWindow: NSWindow?
-    private var hostingView: PassthroughHostingView<MenuBarIconView>!
     private var cancellables = Set<AnyCancellable>()
 
     private let model = UsageModel.shared
@@ -73,20 +90,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let icon = MenuBarIconView(model: model, prefs: prefs, openClaw: openClaw)
-        hostingView = PassthroughHostingView(rootView: icon)
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        install(PassthroughHostingView(rootView: icon), as: .claude)
+        // Explicit zero frame: a bare EmptyView makes the hosting view report
+        // SwiftUI's 10×10 default size, which would widen the status item.
+        install(PassthroughHostingView(rootView: EmptyView().frame(width: 0, height: 0)), as: .github)
 
         if let button = statusItem.button {
-            button.addSubview(hostingView)
-            NSLayoutConstraint.activate([
-                hostingView.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-                hostingView.centerXAnchor.constraint(equalTo: button.centerXAnchor)
-            ])
+            // Regions sit side by side from the button's leading edge; the
+            // item's length is kept equal to their total width by
+            // `resizeStatusItem`.
+            var leading = button.leadingAnchor
+            for region in Region.allCases {
+                guard let host = hosts[region] else { continue }
+                button.addSubview(host)
+                NSLayoutConstraint.activate([
+                    host.leadingAnchor.constraint(equalTo: leading),
+                    host.centerYAnchor.constraint(equalTo: button.centerYAnchor)
+                ])
+                leading = host.trailingAnchor
+            }
             button.target = self
-            button.action = #selector(togglePopover)
+            button.action = #selector(statusItemClicked)
         }
 
-        popover = NSPopover()
+        let popover = NSPopover()
         popover.behavior = .transient
         let content = PopoverView(
             model: model, prefs: prefs, openClaw: openClaw,
@@ -96,29 +123,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hc = NSHostingController(rootView: content)
         hc.sizingOptions = [.preferredContentSize]
         popover.contentViewController = hc
+        clickPopovers[.claude] = popover
 
         // Instant hover summary: a lightweight popover shown the moment the
-        // cursor enters the icon and closed when it leaves — no native-tooltip
-        // delay. The tracking-area callbacks below drive the normal show/close.
+        // cursor enters a region and closed when it leaves — no native-tooltip
+        // delay. The tracking-area callbacks wired in `install` drive the
+        // normal show/close.
         //
         // Not .transient: AppKit dismisses a transient popover on a click
         // outside it and swallows that click, so the first click on the icon
-        // only closed the summary and `togglePopover` never ran — the full
+        // only closed the summary and the button action never ran — the full
         // popover took a second click. With .applicationDefined the click
         // reaches the button, and we close the summary ourselves.
         //
         // What changes: the summary now stays for as long as the cursor is over
-        // the icon, app switches included (.transient closed it on those). The
-        // watchdog in `showHoverSummary` only cleans up the case where the
+        // the region, app switches included (.transient closed it on those).
+        // The watchdog in `showHoverSummary` only cleans up the case where the
         // cursor has left but mouseExited never arrived.
-        hoverPopover = NSPopover()
+        let hoverPopover = NSPopover()
         hoverPopover.behavior = .applicationDefined
         hoverPopover.animates = false
         let hoverHC = NSHostingController(rootView: HoverSummaryView(model: model, prefs: prefs))
         hoverHC.sizingOptions = [.preferredContentSize]
         hoverPopover.contentViewController = hoverHC
-        hostingView.onMouseEntered = { [weak self] in self?.showHoverSummary() }
-        hostingView.onMouseExited = { [weak self] in self?.hideHoverSummary() }
+        hoverPopovers[.claude] = hoverPopover
 
         // Keep the status-item width in sync with icon content.
         model.$snapshot.receive(on: RunLoop.main).sink { [weak self] _ in self?.resizeStatusItem() }
@@ -147,23 +175,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         claude.start()
     }
 
-    private func resizeStatusItem() {
-        hostingView.layoutSubtreeIfNeeded()
-        let w = max(24, hostingView.fittingSize.width)
-        statusItem.length = w
+    /// Registers a region's host view. The hover callbacks capture the region
+    /// here, so each host reports enter/exit for its own region only.
+    private func install(_ host: PassthroughHostingView<some View>, as region: Region) {
+        host.translatesAutoresizingMaskIntoConstraints = false
+        host.onMouseEntered = { [weak self] in self?.showHoverSummary(region) }
+        host.onMouseExited = { [weak self] in self?.hideHoverSummary(region) }
+        hosts[region] = host
     }
 
-    /// Show the instant hover summary below the icon. Suppressed while the full
+    private func resizeStatusItem() {
+        let width = Region.allCases.reduce(CGFloat(0)) { sum, region in
+            guard let host = hosts[region] else { return sum }
+            host.layoutSubtreeIfNeeded()
+            return sum + host.fittingSize.width
+        }
+        statusItem.length = max(Self.minimumStatusItemWidth, width)
+    }
+
+    /// Show a region's instant hover summary below it. Suppressed while a
     /// click popover is open so the two never stack.
-    private func showHoverSummary() {
-        guard !popover.isShown, !hoverPopover.isShown,
-              let frame = statusItemFrameOnScreen else { return }
+    private func showHoverSummary(_ region: Region) {
+        guard let summary = hoverPopovers[region] else { return }
+        // When the cursor crosses from one region into the next, the previous
+        // region's mouseExited and this region's mouseEntered arrive in no
+        // guaranteed order — so the other summary is closed here rather than
+        // left to its own exit.
+        if let hoverRegion, hoverRegion != region { hideHoverSummary(hoverRegion) }
+        guard !clickPopovers.values.contains(where: \.isShown), !summary.isShown,
+              let frame = regionFrameOnScreen(region) else { return }
         let anchor = hoverAnchor ?? Self.makeHoverAnchor()
         hoverAnchor = anchor
         guard let anchorView = anchor.contentView else { return }
         anchor.setFrame(frame, display: false)
         anchor.orderFrontRegardless()
-        hoverPopover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
+        hoverRegion = region
+        summary.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
         // mouseExited normally closes the summary. If that event is ever
         // missed, nothing else would close an .applicationDefined popover, so
         // check the cursor position while the summary is up.
@@ -171,10 +218,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let watchdog = Timer(timeInterval: Self.hoverWatchdogInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                if !self.hoverPopover.isShown || !self.isCursorOverStatusItem {
-                    self.hideHoverSummary()
-                } else if let frame = self.statusItemFrameOnScreen {
-                    // The icon can change width while the summary is up (a
+                if !summary.isShown || !self.isCursorOver(region) {
+                    self.hideHoverSummary(region)
+                } else if let frame = self.regionFrameOnScreen(region) {
+                    // The region can change width while the summary is up (a
                     // usage refresh); keep the anchor on it.
                     self.hoverAnchor?.setFrame(frame, display: false)
                 }
@@ -186,11 +233,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hoverWatchdog = watchdog
     }
 
-    private func hideHoverSummary() {
+    /// Closes that region's summary only. A late mouseExited from a region the
+    /// cursor already left (see `showHoverSummary`) must not take down the
+    /// summary that replaced it.
+    private func hideHoverSummary(_ region: Region) {
+        guard hoverRegion == region, let summary = hoverPopovers[region] else { return }
         hoverWatchdog?.invalidate()
         hoverWatchdog = nil
-        hoverPopover.performClose(nil)
+        summary.performClose(nil)
         hoverAnchor?.orderOut(nil)
+        hoverRegion = nil
     }
 
     /// Borderless and fully transparent, and it ignores mouse events, so the
@@ -211,33 +263,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return window
     }
 
-    private var statusItemFrameOnScreen: NSRect? {
-        guard let button = statusItem.button, let window = button.window else { return nil }
-        return window.convertToScreen(button.convert(button.bounds, to: nil))
+    /// The column of the button a region occupies, in the button's coordinate
+    /// system: the host's horizontal span over the button's full height. The
+    /// hosts are shorter than the button (content height, vertically
+    /// centered), and popovers are placed against this rect's bottom edge, so
+    /// it takes the button's height rather than the host's.
+    private func regionRect(_ region: Region) -> NSRect? {
+        guard let button = statusItem.button, let host = hosts[region] else { return nil }
+        return NSRect(x: host.frame.minX, y: button.bounds.minY,
+                      width: host.frame.width, height: button.bounds.height)
     }
 
-    private var isCursorOverStatusItem: Bool {
-        statusItemFrameOnScreen?.contains(NSEvent.mouseLocation) ?? false
+    private func regionFrameOnScreen(_ region: Region) -> NSRect? {
+        guard let button = statusItem.button, let window = button.window,
+              let rect = regionRect(region) else { return nil }
+        return window.convertToScreen(button.convert(rect, to: nil))
     }
 
-    @objc private func togglePopover() {
+    private func isCursorOver(_ region: Region) -> Bool {
+        regionFrameOnScreen(region)?.contains(NSEvent.mouseLocation) ?? false
+    }
+
+    /// Routes the button's click to the region under the cursor. Falls back
+    /// to `.claude` when there is no mouse location to judge by (keyboard or
+    /// accessibility activation) or the GitHub region has no width.
+    @objc private func statusItemClicked() {
         guard let button = statusItem.button else { return }
-        if popover.isShown {
-            popover.performClose(nil)
-        } else {
-            hideHoverSummary() // don't stack the hover summary under the full popover
-            // Freshen openclaw before showing its section in the unified popover.
-            if prefs.showsOpenClaw {
-                openClaw.refreshNow()
-            }
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+        var region = Region.claude
+        if let event = NSApp.currentEvent, event.window === button.window,
+           let github = regionRect(.github), github.width > 0,
+           github.contains(button.convert(event.locationInWindow, from: nil)) {
+            region = .github
         }
+        togglePopover(region)
+    }
+
+    private func togglePopover(_ region: Region) {
+        guard let button = statusItem.button, let rect = regionRect(region),
+              let popover = clickPopovers[region] else { return }
+        if let open = clickPopovers.values.first(where: \.isShown) {
+            open.performClose(nil)
+            if open === popover { return }
+        }
+        if let hoverRegion { hideHoverSummary(hoverRegion) } // don't stack a hover summary under the full popover
+        // Freshen openclaw before showing its section in the unified popover.
+        if region == .claude, prefs.showsOpenClaw {
+            openClaw.refreshNow()
+        }
+        // Anchored to the button, not to the region's host: that is the
+        // condition under which AppKit opens a .transient popover on the first
+        // click and closes it on a click outside (Decision #8, #36/#39). Only
+        // the positioning rect narrows to the region.
+        popover.show(relativeTo: rect, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
     }
 
     /// Also the target of the app's ⌘, command (`MongshellMenubarApp`).
     func openSettings() {
-        popover.performClose(nil)
+        for popover in clickPopovers.values { popover.performClose(nil) }
         // Re-read the login-item state on every open. The window (and its view
         // hierarchy) is retained across closes, so `.onAppear` would fire only
         // once — this is the reliable point to catch a change made directly in
