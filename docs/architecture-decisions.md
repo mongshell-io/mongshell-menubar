@@ -26,6 +26,7 @@
 | #25 | openclaw 감시를 원격 서버 에이전트 + Funnel 정적 상태 파일로 (로컬 모드 제거) | active (상태 문서에 서버 호스트 신호를 더한 것은 #31) |
 | #31 | 상태 문서에 서버 호스트 신호(전원·디스크) 추가 — 판정은 에이전트, 메뉴바는 두 줄 스택 | active |
 | #40 | 최소 지원을 macOS 26 으로 — 배포 타깃이 바이너리의 SDK 버전으로 찍혀 호환 동작을 정하므로 | active |
+| #47 | 앱 번들 버전(`CFBundleShortVersionString`)은 빌드 시 가장 가까운 `vX.Y.Z` 태그에서 찍는다 | active |
 
 ---
 
@@ -131,7 +132,7 @@
 
 ## Decision #11-2: 뷰 로컬 상태는 `@State` 매크로 대신 `State<Value>` 수동 펼침
 
-- **도입**: 미정 (CLT 27.0 대응)
+- **도입**: 미정 (#24)
 - **컨텍스트**: Command Line Tools 27.0 (2026-09) 은 macOS 27 SDK 를 기본으로 쓰고, 이 SDK 에서 `@State` 는 프로퍼티 래퍼가 아니라 `SwiftUIMacros` 플러그인이 전개하는 **매크로**가 됐다. 그 플러그인은 Xcode 에만 동봉되고 CLT 에는 없어서 `@State` 가 한 줄만 있어도 CLT 빌드가 실패한다. "Xcode 없이 빌드 가능" 은 Decision 3 / #11-1 이 세운 전제다.
 - **결정**: `@State` 를 쓰지 않는다. `State<Value>` 프로퍼티 래퍼 타입은 SDK 에 그대로 남아 있으므로, 매크로가 만들었을 저장 프로퍼티(`_x = State(initialValue:)`)와 접근자(`wrappedValue` get / nonmutating set)를 직접 적는다.
 - **이유**: 대안은 셋이었다. (a) 스크립트에서 이전 SDK(26.5) 를 고정 — 다음 CLT 업데이트에서 그 SDK 가 빠지면 도리어 설치 부담이 생긴다. (b) Xcode 설치 요구 — 전제를 깬다. (c) 수동 펼침 — 의미가 `@State` 와 동일하고 수정 범위가 뷰 한 곳이라 가장 싸다. `@StateObject` + `ObservableObject` 로 바꾸는 것도 되지만 생명주기 의미가 달라져 동작 보존이 아니다.
@@ -219,3 +220,15 @@
   - 배포 타깃을 14 로 되돌리면 빈 창이 돌아온다 (15 에서는 뜨지 않았다).
   - macOS 15 이하에서는 실행되지 않는다. `platforms` 는 패키지 단위라 서버 에이전트도 같다 — 서버 맥도 macOS 26 이상이어야 한다.
   - `PackageDescription` 의 `.v26` 은 tools-version 6.2 부터라, tools-version 6.0 을 유지하려고 문자열 형태 `.macOS("26.0")` 로 적는다.
+
+## Decision #47: 앱 번들 버전은 빌드 시 git tag 에서 찍는다
+
+- **도입**: 미정 (#47)
+- **컨텍스트**: 버전 SSOT 는 git tag 다 (`docs/architecture.md` § 배포, `/release` 는 태그만 만들고 파일을 고치지 않는다). 그런데 `Resources/Info.plist` 의 `CFBundleShortVersionString` 은 손으로 적은 `0.1.0` 이었고 `make_app.sh` 가 그대로 복사해, 태그가 `v1.1.2` 인데도 앱은 0.1.0 으로 찍혔다. 사용자에게 보이지 않아 드러나지 않았지만, GitHub PR 영역(#45)이 GitHub API 요청의 `User-Agent` 에 이 값을 싣도록 설계돼 외부로 나가는 값이 된다.
+- **결정**: `make_app.sh` 가 번들을 조립할 때 `git describe --tags --abbrev=0 --match 'v[0-9]*'` 로 가장 가까운 태그를 읽어, `vX.Y.Z` 형식이면 번들 안 `Info.plist` 사본의 `CFBundleShortVersionString` 을 그 값으로 바꾼다 (서명 전에). 저장소의 `Info.plist` 에는 `0.0.0` 자리표시만 둔다. `release.sh` 는 `make_app.sh` 를 거치므로 같은 값을 받는다.
+- **이유**: 대안은 셋이었다. (a) 릴리스마다 `Info.plist` 를 손으로 올림 — 태그와 파일 두 곳에 같은 값을 복제하는 것이고, `/release` 가 파일을 고치지 않는 불변식 때문에 별도 chore PR 이 매번 필요해 결국 밀린다 (지금 상태가 그 결과다). (b) `git describe` 전체 문자열(`1.1.2-5-gabc1234`)을 씀 — `CFBundleShortVersionString` 은 마침표로 나뉜 정수 세 개여야 해서 넣을 수 없다. (c) 빌드 시 가장 가까운 태그 — 파생 가능한 값을 복제하지 않고, 형식도 지킨다.
+- **결과**:
+  - 태그 사이의 개발 빌드는 직전 릴리스 번호로 찍힌다 (`v1.1.2` 뒤 커밋도 1.1.2). 어느 커밋인지는 번들 버전으로 구분하지 않는다.
+  - 태그를 볼 수 없는 빌드(`.git` 없는 소스 사본, 태그를 fetch 하지 않은 clone)는 `0.0.0` 으로 남고 `make_app.sh` 가 그 사실을 출력한다. 태그가 `vX.Y.Z` 형식이 아니어도(예: `v1.2.0-rc1`) 같다. 로컬 빌드는 그대로 진행하지만, 남에게 주는 `release.sh` 는 `0.0.0` 이면 서명·공증 전에 멈춘다.
+  - `CFBundleVersion` 은 `1` 그대로 둔다 — 자동 업데이트 수단이 없어 빌드 번호를 비교하는 쪽이 없다.
+  - 되돌리려면 `make_app.sh` 의 버전 블록과 `release.sh` 의 `0.0.0` 검사를 지우고 `Info.plist` 에 실제 버전을 적으면 된다.

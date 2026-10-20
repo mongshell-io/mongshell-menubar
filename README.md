@@ -86,7 +86,7 @@ open mongshell-menubar.app                 # 메뉴바에 아이콘 등장
 ### 개발용
 ```bash
 ./scripts/make_app.sh debug && open mongshell-menubar.app          # 디버그 빌드
-./scripts/test.sh                                                  # settings.json 읽기/쓰기 회귀 테스트
+./scripts/test.sh                                                  # 회귀 테스트 전체 (묶음 목록은 docs/development.md § 테스트)
 swift build && MONGSHELL_SNAPSHOT=/tmp/mongshell_snaps ./.build/debug/mongshell-menubar   # 아이콘/팝오버·설정창 PNG 렌더
 ```
 
@@ -135,7 +135,8 @@ codesign -dvvv --requirements - mongshell-menubar.app
 테스트는 `swift test` 가 아니라 `scripts/test.sh` 입니다 — `swift test` 는 XCTest 나
 swift-testing 을 요구하는데 둘 다 Command Line Tools 에 들어 있지 않아서, Xcode 없이 빌드
 가능하다는 이 프로젝트의 전제와 맞지 않습니다. 대신 실제 소스 파일을 그대로 컴파일해
-검증합니다. 다루는 불변식은 하나입니다 — **보이지 않는 설정을 앱이 파괴하지 않는다.**
+검증합니다. 테스트 묶음과 각 묶음이 지키는 불변식은
+[docs/development.md § 테스트](docs/development.md#테스트) 가 권위입니다.
 
 ## 구조
 ```

@@ -27,6 +27,14 @@ NOTARY_PROFILE="${NOTARY_PROFILE:-mongshell-menubar-notary}"
 echo "▶ building release bundle"
 "$ROOT/scripts/make_app.sh" release   # produces mongshell-menubar.app (ad-hoc); we re-sign below
 
+# make_app.sh leaves the 0.0.0 placeholder when it can't see a vX.Y.Z tag — fine
+# for a local build, not for one we hand out (Decision #47).
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+if [[ "$VERSION" == 0.0.0 ]]; then
+  echo "✗ bundle version is the 0.0.0 placeholder — run 'git fetch --tags' and retry" >&2
+  exit 1
+fi
+
 echo "▶ code signing (Developer ID + hardened runtime)"
 codesign --force --options runtime --timestamp \
          --sign "$DEV_ID" "$APP/Contents/MacOS/mongshell-menubar"
