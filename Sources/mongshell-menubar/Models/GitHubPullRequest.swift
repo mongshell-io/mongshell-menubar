@@ -72,6 +72,12 @@ struct GitHubPullRequest: Equatable, Identifiable, Sendable {
     let checksListComplete: Bool
     let updatedAt: Date?
     let mergedAt: Date?
+    /// GraphQL node id — what `mergePullRequest` takes. nil when the response
+    /// didn't carry one; such a PR is never offered a merge.
+    let nodeID: String?
+    /// `headRefOid`, the commit the row shows. A merge is sent with it as
+    /// `expectedHeadOid` so GitHub refuses one whose head moved meanwhile.
+    let headSHA: String?
 
     var id: String { url?.absoluteString ?? "\(repository)#\(number)" }
 

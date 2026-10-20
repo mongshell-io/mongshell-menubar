@@ -32,7 +32,8 @@ func pr(_ repo: String = "mongshell/bookdam", _ number: Int = 45,
         complete: Bool = false) -> GitHubPullRequest {
     GitHubPullRequest(repository: repo, number: number, title: "t", url: nil, isDraft: draft,
                       reviewDecision: review, mergeable: mergeable, mergeState: merge, checksRollup: rollup,
-                      checks: checks, checksListComplete: complete, updatedAt: now, mergedAt: nil)
+                      checks: checks, checksListComplete: complete, updatedAt: now, mergedAt: nil,
+                      nodeID: nil, headSHA: nil)
 }
 
 func chk(_ name: String, _ outcome: PRCheckOutcome, start: TimeInterval? = 0, end: TimeInterval? = 60) -> PRCheck {
@@ -400,13 +401,15 @@ do {
 func node(_ repo: String = "mongshell/bookdam", _ number: Int = 45, typename: String = "PullRequest",
           mergeable: String = "MERGEABLE", mergeState: String? = nil, review: Any = "APPROVED",
           rollup: String? = #"{"state":"SUCCESS","contexts":{"nodes":[]}}"#,
-          url: String? = nil) -> String {
+          url: String? = nil, id: String? = nil, headRefOid: String? = nil) -> String {
     let reviewJSON = review is NSNull ? "null" : "\"\(review)\""
     let rollupJSON = rollup ?? "null"
     let urlText = url ?? "https://github.com/\(repo)/pull/\(number)"
     let mergeStateJSON = mergeState.map { "\"mergeStateStatus\":\"\($0)\"," } ?? ""
+    let idJSON = id.map { "\"id\":\"\($0)\"," } ?? ""
+    let headJSON = headRefOid.map { "\"headRefOid\":\"\($0)\"," } ?? ""
     return """
-    {"__typename":"\(typename)","number":\(number),"title":"t","url":"\(urlText)",
+    {"__typename":"\(typename)",\(idJSON)\(headJSON)"number":\(number),"title":"t","url":"\(urlText)",
      "isDraft":false,"reviewDecision":\(reviewJSON),"mergeable":"\(mergeable)",\(mergeStateJSON)
      "updatedAt":"2026-09-29T03:12:45Z","mergedAt":null,
      "repository":{"nameWithOwner":"\(repo)"},
@@ -683,6 +686,91 @@ do {
     check("같은 순간이 UTC 로는 전날", GitHubAPIClient.query(mergedSince: since, calendar: utc).contains("merged:>=2026-10-13"))
     let lateNight = cal.date(from: DateComponents(year: 2026, month: 10, day: 13, hour: 1))!
     check("서울 01시 = UTC 전날 → 달력이 결정", GitHubAPIClient.query(mergedSince: lateNight, calendar: utc).contains("merged:>=2026-10-12"))
+}
+
+// MARK: - 11b. 머지 mutation (Decision #49)
+
+print("▸ PR 노드 id · head SHA")
+do {
+    let full = parsed(body(mine: [node(id: "PR_kwDOabc", headRefOid: "0123abcd")]))?.mine.first
+    check("id → nodeID", full?.nodeID == "PR_kwDOabc", "\(String(describing: full?.nodeID))")
+    check("headRefOid → headSHA", full?.headSHA == "0123abcd")
+    let bare = parsed(body(mine: [node()]))?.mine.first
+    check("id·headRefOid 없음 → nil (행은 남음)", bare != nil && bare?.nodeID == nil && bare?.headSHA == nil)
+    let empty = parsed(body(mine: [node(id: "", headRefOid: "")]))?.mine.first
+    check("빈 문자열 → nil", empty?.nodeID == nil && empty?.headSHA == nil)
+    let q = GitHubAPIClient.query(mergedSince: now)
+    check("query 가 id·headRefOid 를 요청", q.contains(" id number ") && q.contains(" headRefOid "))
+}
+
+print("▸ 머지 mutation")
+do {
+    let m = GitHubAPIClient.mergeMutation
+    check("mutation 이다", m.hasPrefix("mutation"))
+    check("mergeMethod: SQUASH", m.contains("mergeMethod: SQUASH"))
+    check("expectedHeadOid 를 변수로 넘김", m.contains("expectedHeadOid: $expectedHeadOid")
+              && m.contains("$expectedHeadOid: GitObjectID!"))
+    check("pullRequestId 를 변수로 넘김", m.contains("pullRequestId: $pullRequestId") && m.contains("$pullRequestId: ID!"))
+    check("브랜치 삭제·커밋 문구 인자 없음",
+          !m.contains("deleteBranch") && !m.contains("commitHeadline") && !m.contains("commitBody"))
+    check("결과로 state 를 받음", m.contains("pullRequest { number state mergedAt }"))
+    let b = GitHubAPIClient.mergeRequestBody(pullRequestId: "PR_x", expectedHeadOid: "abc")
+    let vars = b["variables"] as? [String: String]
+    check("본문 variables 에 두 id", vars == ["pullRequestId": "PR_x", "expectedHeadOid": "abc"])
+    check("본문 query 는 mutation 원문", b["query"] as? String == m)
+}
+
+print("▸ 머지 응답 해석")
+do {
+    func merge(_ code: Int, _ json: String = "", _ headers: [String: String] = [:]) -> GitHubMergeResult {
+        GitHubAPIClient.interpretMerge(statusCode: code, headers: headers, data: Data(json.utf8))
+    }
+    let merged = #"{"data":{"mergePullRequest":{"pullRequest":{"number":57,"state":"MERGED","mergedAt":"2026-10-20T03:00:00Z"}}}}"#
+    check("state MERGED → merged", merge(200, merged) == .merged)
+    check("성공은 실패 사유 없음", GitHubMergeResult.merged.failureReason == nil)
+    let moved = #"{"data":{"mergePullRequest":null},"errors":[{"type":"UNPROCESSABLE","path":["mergePullRequest"],"message":"Head branch was modified. Review and try the merge again."}]}"#
+    check("head 바뀜 메시지 → headChanged", merge(200, moved) == .headChanged, "\(merge(200, moved))")
+    let refused = #"{"data":{"mergePullRequest":null},"errors":[{"type":"UNPROCESSABLE","message":"Pull Request is not mergeable"}]}"#
+    check("머지 불가 → GitHub 메시지", merge(200, refused) == .notMergeable("Pull Request is not mergeable"))
+    check("머지 불가 사유 문구에 GitHub 메시지", GitHubMergeResult.notMergeable("x y").failureReason?.contains("x y") == true)
+    let protected = #"{"errors":[{"message":"Repository rule violations found\n\nRequired status check \"build\" is expected."}]}"#
+    check("여러 줄 메시지 → 한 줄",
+          merge(200, protected) == .notMergeable(#"Repository rule violations found Required status check "build" is expected."#),
+          "\(merge(200, protected))")
+    let forbidden = #"{"data":{"mergePullRequest":null},"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by personal access token"}]}"#
+    check("errors FORBIDDEN → forbidden", merge(200, forbidden) == .forbidden)
+    check("403 (한도 헤더 없음) → forbidden", merge(403) == .forbidden)
+    check("403 + x-ratelimit-remaining 0 → rateLimited", merge(403, "", ["X-RateLimit-Remaining": "0"]) == .rateLimited)
+    check("403 + retry-after → rateLimited", merge(403, "", ["retry-after": "30"]) == .rateLimited)
+    check("429 → rateLimited", merge(429) == .rateLimited)
+    check("errors RATE_LIMITED → rateLimited",
+          merge(200, #"{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded"}]}"#) == .rateLimited)
+    check("401 → unauthorized", merge(401) == .unauthorized)
+    let both = #"{"data":{"mergePullRequest":{"pullRequest":{"number":57,"state":"MERGED"}}},"errors":[{"type":"SOMETHING","message":"partial"}]}"#
+    check("errors + data(MERGED) 동반 → merged (머지는 일어났다)", merge(200, both) == .merged)
+    let open = #"{"data":{"mergePullRequest":{"pullRequest":{"number":57,"state":"OPEN"}}}}"#
+    check("errors 없이 OPEN → 머지 아님", { if case .notMergeable = merge(200, open) { return true }; return false }())
+    check("깨진 JSON → failed(badResponse)", merge(200, "<html>") == .failed(.badResponse))
+    check("data·errors 둘 다 없음 → failed(badResponse)", merge(200, "{}") == .failed(.badResponse))
+    check("502 → failed(http(502))", merge(502) == .failed(.http(502)))
+    check("302 → failed(http(302))", merge(302) == .failed(.http(302)))
+    check("전송 실패 사유는 GitHubAPIError.detail",
+          GitHubMergeResult.failed(.offline).failureReason == GitHubAPIError.offline.detail)
+
+    // The row shows GitHub's text; a token-shaped string must never reach it.
+    let token = "ghp_" + String(repeating: "A1b2", count: 9)
+    let leaky = #"{"errors":[{"message":"bad credentials for \#(token) and github_pat_11ABC_def"}]}"#
+    let reason = merge(200, leaky).failureReason ?? ""
+    check("오류 문구에 토큰 문자열 없음", !reason.contains(token) && !reason.contains("github_pat_11ABC_def")
+              && reason.contains("•••"), reason)
+    for result in [GitHubMergeResult.headChanged, .forbidden, .unauthorized, .rateLimited,
+                   .failed(.network), .notMergeable("x")] {
+        check("고정 문구에 토큰 접두 없음 (\(result))", !(result.failureReason ?? "").contains("ghp_"))
+    }
+    let long = String(repeating: "가", count: 300)
+    let cut = GitHubAPIClient.mergeMessage(long)
+    check("긴 메시지는 잘림", cut.count == GitHubAPIClient.mergeMessageMaxLength + 1 && cut.hasSuffix("…"))
+    check("짧은 메시지는 그대로", GitHubAPIClient.mergeMessage("Pull Request is not mergeable") == "Pull Request is not mergeable")
 }
 
 // MARK: - 12. gh Keychain 값 디코딩

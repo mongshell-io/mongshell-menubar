@@ -368,7 +368,8 @@ private extension GitHubSnapshot {
                               mergeState: mergeState, checksRollup: rollup, checks: checks,
                               checksListComplete: true,
                               updatedAt: now.addingTimeInterval(-updatedAgo),
-                              mergedAt: mergedAgo.map { now.addingTimeInterval(-$0) })
+                              mergedAt: mergedAgo.map { now.addingTimeInterval(-$0) },
+                              nodeID: nil, headSHA: nil)
         }
         return GitHubSnapshot(
             reviewRequested: [
@@ -436,7 +437,8 @@ private extension GitHubSnapshot {
                               reviewDecision: PRReviewDecision.none, mergeable: .mergeable,
                               mergeState: .blocked, checksRollup: PRChecksRollup.none, checks: [],
                               checksListComplete: true,
-                              updatedAt: template.updatedAt, mergedAt: nil)
+                              updatedAt: template.updatedAt, mergedAt: nil,
+                              nodeID: nil, headSHA: nil)
         }
         snapshot.recentlyMerged.append(snapshot.recentlyMerged[0])
         return snapshot

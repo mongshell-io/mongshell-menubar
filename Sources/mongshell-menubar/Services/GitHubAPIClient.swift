@@ -47,9 +47,45 @@ enum GitHubFetchResult: Equatable, Sendable {
     case rateLimited(retryAt: Date?)
 }
 
-/// One GraphQL request to `api.github.com` (Decision #45 (d)): three searches
-/// and `rateLimit`, bundled because cost is per node, not per request.
-/// Read-only by construction — a query, never a mutation — and the token
+/// What one merge request came back with (Decision #49). Never thrown: every
+/// outcome is something the row says, and only `unauthorized` changes the
+/// region's state.
+enum GitHubMergeResult: Equatable, Sendable {
+    /// GitHub reported the PR `MERGED`.
+    case merged
+    /// The head moved past the `expectedHeadOid` sent — nothing was merged.
+    case headChanged
+    /// GitHub refused the merge (conflict, branch protection, checks, …);
+    /// its message, shortened to one line.
+    case notMergeable(String)
+    /// The token may read the PR but not merge it (`FORBIDDEN`, or a 403
+    /// that isn't rate limiting).
+    case forbidden
+    /// 401 — the token was rejected.
+    case unauthorized
+    case rateLimited
+    /// No usable answer: transport, 3xx/5xx, or a body that isn't one.
+    case failed(GitHubAPIError)
+
+    /// The line under the row; nil for a merge that went through. Never
+    /// carries the token — GitHub's own message passes `mergeMessage` first.
+    var failureReason: String? {
+        switch self {
+        case .merged:                 return nil
+        case .headChanged:            return "그 사이 새 커밋이 올라와 머지하지 않았어요 — 갱신 후 다시"
+        case .notMergeable(let why):  return "머지 불가 — \(why)"
+        case .forbidden:              return "머지 권한이 없어요 — 토큰의 repo 권한 확인"
+        case .unauthorized:           return "토큰이 거부되었어요 (401)"
+        case .rateLimited:            return "API 한도 초과 — 잠시 후 다시"
+        case .failed(let error):      return error.detail
+        }
+    }
+}
+
+/// GraphQL requests to `api.github.com`. The poll is one query (Decision #45
+/// (d)): three searches and `rateLimit`, bundled because cost is per node,
+/// not per request. The one write is `merge` — a squash merge of my own PR,
+/// sent only after the user confirmed it (Decision #49). Either way the token
 /// goes to this one host only: redirects are refused (`BoundedHTTP`).
 struct GitHubAPIClient: Sendable {
     /// Three searches with check contexts take longer than a static file;
@@ -89,7 +125,7 @@ struct GitHubAPIClient: Sendable {
           rateLimit { cost remaining limit resetAt }
         }
         fragment PR on PullRequest {
-          __typename number title url isDraft reviewDecision mergeable mergeStateStatus updatedAt mergedAt
+          __typename id number title url isDraft headRefOid reviewDecision mergeable mergeStateStatus updatedAt mergedAt
           repository { nameWithOwner }
           commits(last: 1) { nodes { commit { statusCheckRollup { state
             contexts(first: \(contextsPageSize)) { totalCount nodes { __typename
@@ -100,18 +136,63 @@ struct GitHubAPIClient: Sendable {
         """
     }
 
+    // MARK: Merge mutation (Decision #49)
+
+    /// Squash only, no branch deletion, and no commit headline or body — the
+    /// repository's squash defaults apply. The ids travel as variables, never
+    /// spliced into the text.
+    static let mergeMutation = """
+    mutation($pullRequestId: ID!, $expectedHeadOid: GitObjectID!) {
+      mergePullRequest(input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH, expectedHeadOid: $expectedHeadOid }) {
+        pullRequest { number state mergedAt }
+      }
+    }
+    """
+
+    static func mergeRequestBody(pullRequestId: String, expectedHeadOid: String) -> [String: Any] {
+        ["query": mergeMutation,
+         "variables": ["pullRequestId": pullRequestId, "expectedHeadOid": expectedHeadOid]]
+    }
+
     // MARK: Fetch
 
     func fetch(token: String, now: Date = Date()) async throws(GitHubAPIError) -> GitHubFetchResult {
+        let mergedSince = now.addingTimeInterval(-Double(Config.githubMergedWindowDays) * 86_400)
+        let reply = try await post(["query": Self.query(mergedSince: mergedSince)], token: token)
+        return try Self.interpret(statusCode: reply.statusCode, headers: reply.headers,
+                                  data: reply.data, now: now)
+    }
+
+    /// One squash merge of `pullRequestId`, refused by GitHub unless its head
+    /// is still `expectedHeadOid`. Not retried — a merge is not repeated
+    /// without the user asking again.
+    func merge(pullRequestId: String, expectedHeadOid: String, token: String) async -> GitHubMergeResult {
+        let reply: Reply
+        do {
+            reply = try await post(Self.mergeRequestBody(pullRequestId: pullRequestId,
+                                                         expectedHeadOid: expectedHeadOid),
+                                   token: token)
+        } catch {
+            return .failed(error)
+        }
+        return Self.interpretMerge(statusCode: reply.statusCode, headers: reply.headers, data: reply.data)
+    }
+
+    private struct Reply {
+        let statusCode: Int
+        let headers: [String: String]
+        let data: Data
+    }
+
+    /// The one POST both requests make: same endpoint, headers and session.
+    private func post(_ payload: [String: Any], token: String) async throws(GitHubAPIError) -> Reply {
         var req = URLRequest(url: Config.githubGraphQLURL)
         req.httpMethod = "POST"
         req.setValue("bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue(Config.githubUserAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let mergedSince = now.addingTimeInterval(-Double(Config.githubMergedWindowDays) * 86_400)
-        guard let body = try? JSONSerialization.data(withJSONObject: ["query": Self.query(mergedSince: mergedSince)])
-        else { throw .badResponse }
+        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { throw .badResponse }
         req.httpBody = body
 
         let data: Data
@@ -130,8 +211,7 @@ struct GitHubAPIClient: Sendable {
             throw .network
         }
         guard let http = response as? HTTPURLResponse else { throw .badResponse }
-        return try Self.interpret(statusCode: http.statusCode, headers: Self.headers(of: http),
-                                  data: data, now: now)
+        return Reply(statusCode: http.statusCode, headers: Self.headers(of: http), data: data)
     }
 
     /// Only a 2xx carries a document; the error codes are judged on code and
@@ -185,6 +265,68 @@ struct GitHubAPIClient: Sendable {
             throw .http(statusCode)
         }
     }
+
+    /// Status code + headers + body of a merge → result. Rate limiting reads
+    /// as for the poll; a `MERGED` state wins over anything else in the body —
+    /// the merge happened. GitHub's error message is what the row shows, so
+    /// it goes through `mergeMessage`.
+    static func interpretMerge(statusCode: Int, headers: [String: String], data: Data) -> GitHubMergeResult {
+        func header(_ name: String) -> String? {
+            headers.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value
+        }
+        let rateLimitHeaders = header("retry-after") != nil || header("x-ratelimit-remaining").flatMap(Int.init) == 0
+
+        switch statusCode {
+        case 401:
+            return .unauthorized
+        case 429:
+            return .rateLimited
+        case 403:
+            return rateLimitHeaders ? .rateLimited : .forbidden
+        case 200..<300:
+            guard let root = try? jsonObject(data) else { return .failed(.badResponse) }
+            let pullRequest = ((root["data"] as? [String: Any])?["mergePullRequest"]
+                               as? [String: Any])?["pullRequest"] as? [String: Any]
+            let state = pullRequest?["state"] as? String
+            if state == "MERGED" { return .merged }
+            let errors = root["errors"] as? [[String: Any]] ?? []
+            if rateLimitHeaders || hasRateLimitedError(root) { return .rateLimited }
+            if errors.contains(where: { $0["type"] as? String == "FORBIDDEN" }) { return .forbidden }
+            if let message = errors.lazy.compactMap({ $0["message"] as? String }).first(where: { !$0.isEmpty }) {
+                return isHeadChanged(message) ? .headChanged : .notMergeable(mergeMessage(message))
+            }
+            // An answer without errors that still isn't MERGED (a queue, a
+            // state we don't know) is not a merge.
+            if pullRequest != nil { return .notMergeable("GitHub 이 머지하지 않았어요 (\(state ?? "상태 없음"))") }
+            return .failed(.badResponse)
+        default:
+            return .failed(.http(statusCode))
+        }
+    }
+
+    /// GitHub words a moved head as "Head branch was modified…"; the input
+    /// name may show up in it too. Anything else stays GitHub's own message.
+    private static func isHeadChanged(_ message: String) -> Bool {
+        let m = message.lowercased()
+        return m.contains("head branch was modified") || m.contains("expectedheadoid")
+            || m.contains("expected head") || m.contains("head oid")
+    }
+
+    /// The one line under a row: whitespace folded, anything shaped like a
+    /// GitHub token masked, cut to `mergeMessageMaxLength`. GitHub has no
+    /// reason to echo a token, but the row is not where to find out.
+    static func mergeMessage(_ raw: String) -> String {
+        let oneLine = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let masked = oneLine.replacingOccurrences(of: tokenPattern, with: "•••", options: .regularExpression)
+        guard masked.count > mergeMessageMaxLength else { return masked }
+        return String(masked.prefix(mergeMessageMaxLength)) + "…"
+    }
+
+    /// Classic and OAuth tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`) and
+    /// fine-grained PATs (`github_pat_`).
+    private static let tokenPattern = #"(gh[pousr]_|github_pat_)[A-Za-z0-9_]+"#
+    /// The row truncates sooner; the full line sits in its tooltip.
+    static let mergeMessageMaxLength = 120
 
     /// `x-oauth-scopes: repo, read:org` → ["repo", "read:org"]. Only a classic
     /// PAT sends it; `repo` must be the whole scope — `public_repo` isn't it.
@@ -261,7 +403,9 @@ struct GitHubAPIClient: Sendable {
             checks: latestRuns(contexts.runs),
             checksListComplete: contexts.complete,
             updatedAt: isoDate(node["updatedAt"]),
-            mergedAt: isoDate(node["mergedAt"])
+            mergedAt: isoDate(node["mergedAt"]),
+            nodeID: nonEmptyString(node["id"]),
+            headSHA: nonEmptyString(node["headRefOid"])
         )
     }
 
@@ -459,6 +603,11 @@ struct GitHubAPIClient: Sendable {
         let value = number.doubleValue
         guard value.isFinite, value >= 0, value < Double(Int32.max) else { return nil }
         return Int(value)
+    }
+
+    private static func nonEmptyString(_ any: Any?) -> String? {
+        guard let s = any as? String, !s.isEmpty else { return nil }
+        return s
     }
 
     private static func isoDate(_ any: Any?) -> Date? {
