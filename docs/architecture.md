@@ -172,7 +172,7 @@ GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주�
                    + rateLimit { cost remaining limit resetAt }
         └─ interpret(statusCode:headers:data:)  →  .snapshot / .unauthorized(401) / .rateLimited(403·429 + retry-after, x-ratelimit-remaining: 0, errors[].type == RATE_LIMITED)
              그 밖의 코드(3xx·5xx)·`data` 없는 본문 → throws GitHubAPIError (배너)
-        └─ parse() → GitHubSnapshot  (alias 누락은 빈 목록, PullRequest 아닌 노드·rateLimit 누락은 건너뜀, 검사는 (워크플로 이름, job 이름)별 최신 실행 하나, x-oauth-scopes 에 repo 없음 → tokenScopesLackRepo)
+        └─ parse() → GitHubSnapshot  (alias 누락은 빈 목록, PullRequest 아닌 노드·rateLimit 누락은 건너뜀, 검사는 (워크플로 이름 ?? 앱 slug, job 이름)별·StatusContext 는 context 별 최신 실행 하나, x-oauth-scopes 에 repo 없음 → tokenScopesLackRepo)
    └─ @Published snapshot / loadState / glance 갱신
         ├─ GitHubMenuBarView       (헤어라인 · 글리프 · 점 · 처리할 PR 수 — 0 이면 숫자 없음)
         ├─ GitHubHoverSummaryView  (리뷰 요청 N · 내 PR N · 막힘 N 두 줄)
