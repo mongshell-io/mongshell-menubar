@@ -158,10 +158,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         githubHC.sizingOptions = [.preferredContentSize]
         githubPopover.contentViewController = githubHC
         clickPopovers[.github] = githubPopover
-        // The model's cadence follows the popover: open = refresh at once and
-        // the fast cadence while a check runs; closed = back to the base
-        // interval. AppKit closes a .transient popover itself, so the close
-        // is learned from its notification rather than from `togglePopover`.
+        // The model hears the popover: open = refresh at once; closed = a
+        // pending merge confirm is void. AppKit closes a .transient popover
+        // itself, so the close is learned from its notification rather than
+        // from `togglePopover`.
         NotificationCenter.default.publisher(for: NSPopover.didCloseNotification, object: githubPopover)
             .sink { [weak self] _ in self?.github.setPopoverOpen(false) }
             .store(in: &cancellables)
@@ -349,7 +349,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if region == .claude, prefs.showsOpenClaw {
             openClaw.refreshNow()
         }
-        // Same idea for GitHub, through the model's open/closed cadence.
+        // GitHub refreshes once on open — skipped while backing off or
+        // stopped for the user (`GitHubPollPolicy.refreshesOnOpen`).
         if region == .github {
             github.setPopoverOpen(true)
         }

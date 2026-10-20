@@ -50,7 +50,7 @@ enum Config {
     // MARK: GitHub (Decision #45)
 
     /// The one host the GitHub client talks to. GraphQL, because one request
-    /// carries all three searches plus `rateLimit`; cost is per node, not per
+    /// carries both searches plus `rateLimit`; cost is per node, not per
     /// request, so bundling costs nothing extra.
     static let githubGraphQLURL = URL(string: "https://api.github.com/graphql")!
 
@@ -79,15 +79,25 @@ enum Config {
     /// is where the list stops being "current".
     static let githubPollRange = 60...600
     static let githubDefaultPollSeconds = 180
-    /// While the popover is open and a check is still running — elapsed
-    /// times tick every second there, and the state should keep up.
-    static let githubOpenPollSeconds = 30
+    /// While a check on one of my PRs is running, popover open or not — the
+    /// hover and popover tick elapsed times every second, and the state
+    /// should keep up. About 120 points an hour at one point a request.
+    static let githubFastPollSeconds = 30
+    /// A running check older than this no longer holds the fast cadence: a
+    /// runner that never reports back would otherwise keep it forever.
+    /// Most CI runs end well inside an hour; past it, base is soon enough.
+    static let githubFastPollMaxRunningAge: TimeInterval = 3600
+    /// How far in the future a check's start may lie and still count as
+    /// fresh: a runner's clock can run a little ahead of ours. Past this the
+    /// start time is not believed — counted as fresh, it would hold the
+    /// fast cadence for as long as the clock stays wrong, past the age cap.
+    static let githubFastPollClockSkew: TimeInterval = 300
     /// Points left at which polling backs off: enough for gh and the browser
     /// to keep working on the same token.
     static let githubRateLimitReserve = 200
 
     /// Rows shown per popover section; past these a trailing "외 N건" row.
-    static let githubSectionCaps = (reviewRequested: 6, mine: 8, merged: 3)
+    static let githubSectionCaps = (mine: 8, merged: 3)
     /// How far back "recently merged" looks.
     static let githubMergedWindowDays = 7
 

@@ -79,7 +79,7 @@ UI 를 추가·변경하면 `App/SnapshotRenderer.swift` 의 렌더 목록에 �
 
 `Form` 기반 화면은 `ImageRenderer` 로 **빈 이미지가 나온다.** 설정창 계열은 오프스크린 윈도우 캡처 경로에 등록해야 한다.
 
-시간이 흐르는 요소는 스냅샷에서 시계를 고정한다 — GitHub 팝오버의 검사 칩 경과 시간은 `TimelineView` 로 1초마다 흐르고, 스냅샷은 `frozenNow` 를 넘겨 렌더마다 같은 값을 그린다.
+시간이 흐르는 요소는 스냅샷에서 시계를 고정한다 — GitHub 팝오버의 검사 칩과 hover CI 줄의 경과 시간은 `TimelineView` 로 1초마다 흐르고, 스냅샷은 `frozenNow` 를 넘겨 렌더마다 같은 값을 그린다.
 
 ## 선택 기능의 비가시성
 
