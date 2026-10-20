@@ -91,7 +91,7 @@ swift build && MONGSHELL_SNAPSHOT=/tmp/mongshell_snaps ./.build/debug/mongshell-
 | `github_menubar_strip_dark` / `github_menubar_strip_light` / `github_menubar_strip_zero_dark` | 메뉴바 두 영역 — Claude 영역 뒤에 헤어라인 · GitHub 글리프 · 점 · 숫자 (3건·빨강 / 0건·초록) |
 | `github_hover` | GitHub 영역 hover 요약 |
 | `github_popover` / `github_popover_overflow` / `github_popover_no_token` / `github_popover_unauthorized` | GitHub 팝오버 — gh CLI 로 연결됨 / 섹션 상한 초과("외 N건")와 빈 섹션("없음") / 토큰 없음 배너 / 401 배너. 진행중 칩의 경과 시간은 `frozenNow` 로 고정 |
-| `github_popover_merge_confirm` / `github_popover_merge_failed` | GitHub 팝오버 — 내 PR 의 머지 가능 행의 squash 머지 버튼이 첫 클릭으로 "확인 — #N 머지" 가 된 상태 / GitHub 가 머지를 거절해 행 아래 빨간 사유 한 줄이 붙은 상태 (Decision #49). `github_popover` 에는 같은 행에 평상시 버튼이 보인다 |
+| `github_popover_merge_failed` | GitHub 팝오버 — 내 PR 의 머지 가능 행에서 GitHub 가 squash 머지를 거절해 행 아래 빨간 사유 한 줄이 붙은 상태 (Decision #49). `github_popover` 에는 같은 행에 평상시 버튼이 보인다 |
 | `settings_github` | 설정창 GitHub 섹션 (켜진 상태) |
 
 ## Claude Code 설정 편집 테스트

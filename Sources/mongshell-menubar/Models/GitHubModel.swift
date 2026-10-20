@@ -26,10 +26,6 @@ final class GitHubModel: ObservableObject {
     /// Merges asked for from the popover, by `GitHubPullRequest.id`
     /// (Decision #49). What a refresh keeps is `GitHubMergePolicy.carryOver`.
     @Published private(set) var mergeActivity: [String: PRMergeActivity] = [:]
-    /// Bumped each time the popover closes. AppKit reuses the popover's
-    /// hosting view, so view state outlives a close; a merge confirm armed
-    /// under an earlier value is void (Decision #49).
-    @Published private(set) var popoverSession = 0
 
     private let prefs: Preferences
     private let credentials: GitHubCredentialStore
@@ -127,8 +123,6 @@ final class GitHubModel: ObservableObject {
     /// backing off, or after a 401 or a failed PAT save, opening only
     /// records the flag.
     func setPopoverOpen(_ open: Bool) {
-        // Before the guard: whatever the flag says, a close voids any confirm.
-        if !open { popoverSession += 1 }
         guard open != popoverOpen else { return }
         popoverOpen = open
         guard open, GitHubPollPolicy.refreshesOnOpen(after: loadState, backoff: backoff) else { return }
@@ -186,12 +180,12 @@ final class GitHubModel: ObservableObject {
 
     // MARK: Merge (Decision #49)
 
-    /// Squash-merges one of my PRs, sending the head SHA the first click
-    /// saw as `expectedHeadOid`. The view only calls this after the second
-    /// click. What `GitHubMergePolicy.gate` says of the current list and
-    /// state decides: nothing goes out in a stopped state (a 401 among
-    /// them) or on a list fetched before the token changed, and a head that
-    /// moved since the first click is refused here, before GitHub is asked.
+    /// Squash-merges one of my PRs on one click of its button, sending the
+    /// head SHA the row showed as `expectedHeadOid`. What
+    /// `GitHubMergePolicy.gate` says of the current list and state decides:
+    /// nothing goes out in a stopped state (a 401 among them) or on a list
+    /// fetched before the token changed, and a head that moved since the
+    /// row was drawn is refused here, before GitHub is asked.
     func merge(_ id: String, expectedHead: String) {
         guard prefs.githubEnabled else { return }
         let nodeID: String

@@ -55,10 +55,8 @@ enum Palette {
     /// A PR row under the cursor — the whole row is the click target.
     static let rowHoverFill   = Color.black.opacity(0.035)
 
-    // Squash merge on my PR rows (Decision #49). At rest it is an outlined
-    // badge; armed, it fills so the click that commits looks like one.
-    static let mergeConfirmFill = green
-    static let mergeConfirmText = Color.white
+    // Squash merge on my PR rows (Decision #49). The button itself is an
+    // outlined badge (`badgeGreenText` · `badgeOutline`).
     /// The failure line under a row.
     static let mergeFailedText  = red
 

@@ -187,8 +187,8 @@ enum GitHubMergePolicy {
             && pr.nodeID != nil && pr.headSHA != nil && pr.url != nil
     }
 
-    /// The row's line when the list moved to a new head between the first
-    /// click and the second: nothing was sent.
+    /// The row's line when the list moved to a new head between drawing the
+    /// row and the click: nothing was sent.
     static let headMovedReason = "그 사이 새 커밋이 올라왔어요 — 다시 확인해 주세요"
 
     /// The row's line when the token changed after the list on screen was
@@ -209,10 +209,10 @@ enum GitHubMergePolicy {
         }
     }
 
-    /// What the model does with a confirmed click.
+    /// What the model does with a click on the merge button.
     enum Gate: Equatable, Sendable {
         case send(nodeID: String)
-        /// The list now holds another head than the one confirmed.
+        /// The list now holds another head than the one the row showed.
         case headMoved
         /// The list was fetched before the token last changed, so it speaks
         /// for another token than the one the merge would go out with.
@@ -236,54 +236,6 @@ enum GitHubMergePolicy {
         guard listGeneration == generation else { return .listStale }
         guard current.headSHA == expectedHead else { return .headMoved }
         return .send(nodeID: nodeID)
-    }
-
-    /// How long the armed "확인 — #N 머지" waits for the second click.
-    static let confirmWindowSeconds = 3
-    /// The least time between the first click and a second that counts:
-    /// anything sooner is the other half of a double-click — one gesture,
-    /// not a decision. Never under this, whatever the system interval says.
-    static let confirmFloorSeconds: TimeInterval = 0.4
-    /// …and never so long that the window leaves no room to confirm (the
-    /// slowest double-click setting runs to seconds).
-    static let confirmCeilingSeconds: TimeInterval = 1.5
-
-    enum ConfirmClick: Equatable, Sendable {
-        /// Too soon after arming: ignored, and the confirm stays up.
-        case tooSoon
-        case confirms
-        /// Past the window — the confirm should already have dropped, so
-        /// the click is a fresh first one.
-        case expired
-    }
-
-    /// Whether a row reads as armed — one click from a merge. Worked out
-    /// from what the first click saw rather than trusted as stored: the
-    /// view's disarm paths hang on lifecycle callbacks, and should one not
-    /// come (AppKit reuses the popover's hosting view), an arm for another
-    /// head, from an earlier opening, or on a row that no longer offers the
-    /// merge still reads as not armed. No arm (nil head or session) is not
-    /// armed.
-    static func isArmed(armHead: String?, armSession: Int?, currentHead: String?,
-                        session: Int, offers: Bool) -> Bool {
-        guard offers, let armHead, let armSession else { return false }
-        return armHead == currentHead && armSession == session
-    }
-
-    /// `NSEvent.doubleClickInterval`, held between the floor and the ceiling.
-    static func confirmMinimum(doubleClickInterval: TimeInterval) -> TimeInterval {
-        min(max(doubleClickInterval, confirmFloorSeconds), confirmCeilingSeconds)
-    }
-
-    /// How a click on an armed button reads. Times are monotonic seconds
-    /// (`ProcessInfo.systemUptime`), so a wall-clock change can't stretch
-    /// or shrink the gap.
-    static func confirmClick(armedAt: TimeInterval, now: TimeInterval,
-                             minimum: TimeInterval) -> ConfirmClick {
-        let elapsed = now - armedAt
-        if elapsed < minimum { return .tooSoon }
-        if elapsed > TimeInterval(confirmWindowSeconds) { return .expired }
-        return .confirms
     }
 
     /// What a successful refresh keeps: a merge still out, and a finished

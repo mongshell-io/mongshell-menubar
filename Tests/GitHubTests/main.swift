@@ -826,40 +826,6 @@ do {
     check("실패 사유 → 다음 성공 갱신에서 지움", after[pr("mongshell/bookdam", 60).id] == nil)
 }
 
-print("▸ 머지 확인 클릭 간격 (GitHubMergePolicy.confirmClick)")
-do {
-    func click(_ elapsed: TimeInterval, minimum: TimeInterval = 0.5) -> GitHubMergePolicy.ConfirmClick {
-        GitHubMergePolicy.confirmClick(armedAt: 100, now: 100 + elapsed, minimum: minimum)
-    }
-    let window = TimeInterval(GitHubMergePolicy.confirmWindowSeconds)
-    check("더블클릭 간격 안 → 무시 (확인 유지)", click(0.2) == .tooSoon)
-    check("최소 간격 직전 → 무시", click(0.499) == .tooSoon)
-    check("최소 간격 정각 → 확정", click(0.5) == .confirms)
-    check("창 끝 정각 → 확정", click(window) == .confirms)
-    check("창 넘김 → 새 첫 클릭", click(window + 0.01) == .expired)
-    check("시각이 거꾸로 → 무시", click(-1) == .tooSoon)
-    let minimum = GitHubMergePolicy.confirmMinimum
-    check("시스템 간격이 하한보다 짧으면 하한", minimum(0.2) == GitHubMergePolicy.confirmFloorSeconds)
-    check("시스템 간격이 길면 그 값", minimum(0.8) == 0.8)
-    check("시스템 간격이 아주 길어도 상한 — 확정할 틈이 남는다",
-          minimum(5) == GitHubMergePolicy.confirmCeilingSeconds
-              && GitHubMergePolicy.confirmCeilingSeconds < window)
-}
-
-print("▸ 머지 확인 상태 (GitHubMergePolicy.isArmed)")
-do {
-    func armed(head: String? = "abc", session: Int? = 3, current: String? = "abc",
-               now: Int = 3, offers: Bool = true) -> Bool {
-        GitHubMergePolicy.isArmed(armHead: head, armSession: session, currentHead: current,
-                                  session: now, offers: offers)
-    }
-    check("같은 head · 같은 열림 · 노출 중 → 확인 상태", armed())
-    check("head 가 바뀜 → 확인 아님", !armed(current: "def"))
-    check("다른 열림에서 건 확인 → 확인 아님", !armed(now: 4))
-    check("버튼 노출 조건을 잃음 → 확인 아님", !armed(offers: false))
-    check("확인을 건 적 없음 → 확인 아님", !armed(head: nil, session: nil))
-}
-
 print("▸ 머지 요청 판정 (GitHubMergePolicy.gate)")
 do {
     let ready = pr("mongshell/bookdam", 57, merge: .clean, nodeID: "PR_57", headSHA: "abc")
@@ -872,7 +838,7 @@ do {
                                state: state, activity: activity)
     }
     check("현재 목록의 머지 가능 PR, 같은 head → 보냄", gate([ready]) == .send(nodeID: "PR_57"))
-    check("확인한 head 와 목록의 head 가 다름 → headMoved", gate([ready], head: "old") == .headMoved)
+    check("행이 보인 head 와 목록의 head 가 다름 → headMoved", gate([ready], head: "old") == .headMoved)
     // The row's copy said CLEAN; the list now says BLOCKED — the list wins.
     let nowBlocked = pr("mongshell/bookdam", 57, merge: .blocked, nodeID: "PR_57", headSHA: "abc")
     check("목록에서 다시 꺼낸 PR 이 더는 머지 불가 → 무시", gate([nowBlocked]) == .ignore)

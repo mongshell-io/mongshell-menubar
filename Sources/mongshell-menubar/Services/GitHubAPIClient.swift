@@ -85,7 +85,7 @@ enum GitHubMergeResult: Equatable, Sendable {
 /// GraphQL requests to `api.github.com`. The poll is one query (Decision #45
 /// (d)): three searches and `rateLimit`, bundled because cost is per node,
 /// not per request. The one write is `merge` — a squash merge of my own PR,
-/// sent only after the user confirmed it (Decision #49). Either way the token
+/// sent only when the user clicks its button (Decision #49). Either way the token
 /// goes to this one host only: redirects are refused (`BoundedHTTP`).
 struct GitHubAPIClient: Sendable {
     /// Three searches with check contexts take longer than a static file;

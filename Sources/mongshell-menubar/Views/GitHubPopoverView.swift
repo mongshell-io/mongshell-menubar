@@ -11,9 +11,6 @@ struct GitHubPopoverView: View {
     @ObservedObject var model: GitHubModel
     @ObservedObject var prefs: Preferences
     var onOpenSettings: () -> Void
-    /// Snapshot hook: the row with this id starts with its merge armed, so
-    /// the confirm state has a reference image. Nil in the app.
-    var previewArmedPRID: String? = nil
 
     /// The lists are only shown when the glance reads the snapshot too
     /// (loaded, or loading / rate-limited with an earlier answer) — the
@@ -177,9 +174,7 @@ struct GitHubPopoverView: View {
                       frozenNow: model.frozenNow,
                       offersMerge: GitHubMergePolicy.canOffer(pr, section: section),
                       mergeActivity: model.mergeActivity[pr.id],
-                      onMerge: { head in model.merge(pr.id, expectedHead: head) },
-                      popoverSession: model.popoverSession,
-                      armed: pr.id == previewArmedPRID)
+                      onMerge: { head in model.merge(pr.id, expectedHead: head) })
             }
             if prs.count > cap {
                 Text("외 \(prs.count - cap)건")
@@ -315,11 +310,9 @@ private struct PRRow: View {
     /// `GitHubMergePolicy.canOffer` for this row's section.
     let offersMerge: Bool
     let mergeActivity: PRMergeActivity?
-    /// The second click — the model sends the merge for the head SHA the
-    /// first click saw.
+    /// The click — the model sends the merge for the head SHA the row
+    /// showed at that moment.
     let onMerge: (_ expectedHead: String) -> Void
-    /// `GitHubModel.popoverSession`, bumped on every close of the popover.
-    let popoverSession: Int
 
     // `@State` 를 손으로 펼친 것 (Decision #11-2, `MenuBarIconView.pulsing` 참조).
     private var _hovering = State(initialValue: false)
@@ -327,40 +320,16 @@ private struct PRRow: View {
         get { _hovering.wrappedValue }
         nonmutating set { _hovering.wrappedValue = newValue }
     }
-    /// What the first click saw: the head on screen and the opening of the
-    /// popover it happened in. The second click merges that head or nothing.
-    private struct MergeArm: Equatable {
-        let head: String
-        let session: Int
-        /// `ProcessInfo.systemUptime` at the first click.
-        let at: TimeInterval
-    }
-    private var _arm = State<MergeArm?>(initialValue: nil)
-    private var arm: MergeArm? {
-        get { _arm.wrappedValue }
-        nonmutating set { _arm.wrappedValue = newValue }
-    }
 
     init(pr: GitHubPullRequest, verdict: PRVerdict, frozenNow: Date?,
          offersMerge: Bool, mergeActivity: PRMergeActivity?,
-         onMerge: @escaping (_ expectedHead: String) -> Void,
-         popoverSession: Int, armed: Bool = false) {
-        self._arm = State(initialValue: armed ? pr.headSHA.map { MergeArm(head: $0, session: popoverSession, at: 0) } : nil)
+         onMerge: @escaping (_ expectedHead: String) -> Void) {
         self.pr = pr
         self.verdict = verdict
         self.frozenNow = frozenNow
         self.offersMerge = offersMerge
         self.mergeActivity = mergeActivity
         self.onMerge = onMerge
-        self.popoverSession = popoverSession
-    }
-
-    /// The confirm state, as drawn and as the second click reads it
-    /// (`GitHubMergePolicy.isArmed` — why it is worked out, not stored).
-    private var armed: Bool {
-        GitHubMergePolicy.isArmed(armHead: arm?.head, armSession: arm?.session,
-                                  currentHead: pr.headSHA, session: popoverSession,
-                                  offers: offersMerge)
     }
 
     private var checksLine: ChecksLine { ChecksLine.fold(pr.checks) }
@@ -407,11 +376,6 @@ private struct PRRow: View {
         // negative margin does; the text itself stays aligned with the header.
         .padding(.horizontal, -8)
         .onHover { hovering = $0 }
-        // Every way the confirm can lose its footing drops it.
-        .onDisappear { arm = nil }
-        .onChange(of: pr.headSHA) { arm = nil }
-        .onChange(of: offersMerge) { if !offersMerge { arm = nil } }
-        .onChange(of: popoverSession) { arm = nil }
     }
 
     private var topLine: some View {
@@ -489,56 +453,28 @@ private struct PRRow: View {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.triangle.merge")
                     .font(.system(size: 10, weight: .semibold))
-                Text(armed ? "확인 — #\(String(pr.number)) 머지" : "Squash 머지")
+                Text("Squash 머지")
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundStyle(armed ? Palette.mergeConfirmText : Palette.badgeGreenText)
+            .foregroundStyle(Palette.badgeGreenText)
             .padding(.horizontal, 6)
             .frame(height: Self.controlHeight)
-            .background(
-                RoundedRectangle(cornerRadius: 5).fill(armed ? Palette.mergeConfirmFill : Color.clear)
-            )
             .overlay(
                 RoundedRectangle(cornerRadius: 5)
-                    .strokeBorder(armed ? Color.clear : Palette.badgeOutline, lineWidth: 1)
+                    .strokeBorder(Palette.badgeOutline, lineWidth: 1)
             )
             .contentShape(RoundedRectangle(cornerRadius: 5))
         }
         .buttonStyle(.plain)
-        .help(armed ? "\(GitHubMergePolicy.confirmWindowSeconds)초 안에 다시 누르면 squash 머지 (앱은 브랜치를 지우지 않음)"
-                    : "squash 머지 — 한 번 더 눌러 확정")
-        // Disarms after the window, and also when the wait is cancelled: the
-        // button leaving the hierarchy cancels it, and an arm left standing
-        // then would come back armed. Only the arm this wait was for is
-        // cleared — a newer one has a wait of its own.
-        .task(id: arm) {
-            guard let waitingFor = arm else { return }
-            try? await Task.sleep(for: .seconds(GitHubMergePolicy.confirmWindowSeconds))
-            if arm == waitingFor { arm = nil }
-        }
+        .help("누르면 바로 squash 머지합니다 — 앱은 브랜치를 지우지 않습니다")
     }
 
-    /// First click arms; a second inside the window merges. A second click
-    /// within a double-click of the first is ignored with the confirm left
-    /// up, so one quick double-click never merges on its own.
+    /// One click merges the head this row shows now — what the user saw is
+    /// what goes out as `expectedHeadOid`. The model re-judges it against
+    /// its own list before sending (`GitHubMergePolicy.gate`).
     private func mergeClicked() {
-        let now = ProcessInfo.processInfo.systemUptime
-        if armed, let arm {
-            let minimum = GitHubMergePolicy.confirmMinimum(doubleClickInterval: NSEvent.doubleClickInterval)
-            switch GitHubMergePolicy.confirmClick(armedAt: arm.at, now: now, minimum: minimum) {
-            case .tooSoon:
-                return
-            case .confirms:
-                self.arm = nil
-                onMerge(arm.head)
-                return
-            case .expired:
-                break
-            }
-        }
-        if let head = pr.headSHA {
-            arm = MergeArm(head: head, session: popoverSession, at: now)
-        }
+        guard let head = pr.headSHA else { return }
+        onMerge(head)
     }
 
     /// The PR's checks are pending (the same reading the badge uses), or a
