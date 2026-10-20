@@ -201,10 +201,10 @@ final class GitHubModel: ObservableObject {
         case .send(let node):
             nodeID = node
         case .headMoved:
-            mergeActivity[id] = .failed(GitHubMergePolicy.headMovedReason)
+            setMergeActivity(id, .failed(GitHubMergePolicy.headMovedReason))
             return
         case .listStale:
-            mergeActivity[id] = .failed(GitHubMergePolicy.listStaleReason)
+            setMergeActivity(id, .failed(GitHubMergePolicy.listStaleReason))
             return
         case .ignore:
             return
@@ -219,7 +219,7 @@ final class GitHubModel: ObservableObject {
             updateGlance()
             return
         }
-        mergeActivity[id] = .merging
+        setMergeActivity(id, .merging)
         let requestedIn = generation
         let client = client
         Task { [weak self] in
@@ -233,7 +233,7 @@ final class GitHubModel: ObservableObject {
         guard prefs.githubEnabled, mergeActivity[id] == .merging else { return }
         switch result {
         case .merged:
-            mergeActivity[id] = .merged
+            setMergeActivity(id, .merged)
             // The list catches up at once — unless backing off, when the
             // next regular wake does, or stopped by a 401 or a failed PAT
             // save that landed while this merge was out (none is sent from
@@ -242,7 +242,7 @@ final class GitHubModel: ObservableObject {
             // so it can't be clicked again.
             if GitHubPollPolicy.refreshesOnOpen(after: loadState, backoff: backoff) { refreshNow() }
         case .unauthorized:
-            mergeActivity[id] = nil
+            setMergeActivity(id, nil)
             // The same stop as a polled 401 — unless the token was swapped
             // meanwhile, and the new one speaks for itself.
             guard requestedIn == generation else { return }
@@ -250,8 +250,16 @@ final class GitHubModel: ObservableObject {
             loadState = .unauthorized
             updateGlance()
         default:
-            mergeActivity[id] = .failed(result.failureReason ?? "")
+            setMergeActivity(id, .failed(result.failureReason ?? ""))
         }
+    }
+
+    /// Every per-PR merge state change goes through here: the glance's
+    /// mergeable count leaves out a merge out or done (Decision #52), so it
+    /// is worked out again with each one.
+    private func setMergeActivity(_ id: String, _ activity: PRMergeActivity?) {
+        mergeActivity[id] = activity
+        updateGlance()
     }
 
     /// Snapshot hook: shows a given snapshot and state without any network,
@@ -425,6 +433,7 @@ final class GitHubModel: ObservableObject {
     }
 
     private func updateGlance() {
-        glance = GitHubGlance.of(snapshot, state: loadState, hidden: prefs.githubHiddenRepos)
+        glance = GitHubGlance.of(snapshot, state: loadState, hidden: prefs.githubHiddenRepos,
+                                 mergeActivity: mergeActivity)
     }
 }

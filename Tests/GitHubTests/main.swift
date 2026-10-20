@@ -290,7 +290,8 @@ do {
     check("lines 는 숫자와 나머지를 따로 든다",
           parts == GitHubGlance.Lines(reviewRequested: 2, mine: 2, blocked: 1,
                                       line1Rest: "bookdam #58 외 1",
-                                      line2Rest: "막힘 1 · #45 build 실패"), "\(String(describing: parts))")
+                                      line2Rest: "막힘 1 · #45 build 실패",
+                                      mergeable: 0, line3Rest: ""), "\(String(describing: parts))")
     check("리뷰 요청 0 → line1Rest 비어 있음",
           GitHubGlance.of(snap(mine: [pr()]), state: .loaded(.pat), hidden: []).lines?.line1Rest == "")
     let noLines = GitHubGlance.of(snap(review: [r1]), state: .unauthorized, hidden: [])
@@ -299,6 +300,73 @@ do {
     let saveFailed = GitHubGlance.of(snap(review: [r1]), state: .patSaveFailed(-25299), hidden: [])
     check("PAT 저장 실패 → stateLabel 에 상태 코드, 토큰 값 없음",
           saveFailed.stateLabel == "PAT 를 Keychain 에 저장하지 못했어요 (-25299)", saveFailed.stateLabel)
+}
+
+// MARK: - 5b. 머지 가능 (Decision #52)
+
+print("▸ 머지 가능")
+do {
+    func clean(_ repo: String = "mongshell/bookdam", _ number: Int = 57, draft: Bool = false,
+               merge: PRMergeState = .clean, nodeID: String? = "PR_n", linked: Bool = true) -> GitHubPullRequest {
+        pr(repo, number, draft: draft, merge: merge, nodeID: nodeID, headSHA: "abc", linked: linked)
+    }
+    func glance(review: [GitHubPullRequest] = [], mine: [GitHubPullRequest],
+                state: GitHubLoadState = .loaded(.pat), hidden: Set<String> = [],
+                activity: [String: PRMergeActivity] = [:]) -> GitHubGlance {
+        GitHubGlance.of(snap(review: review, mine: mine), state: state, hidden: hidden, mergeActivity: activity)
+    }
+    func count(_ g: GitHubGlance) -> Int? { g.lines?.mergeable }
+
+    let one = glance(mine: [clean()])
+    check("CLEAN 내 PR 1개 → 머지 가능 1·글리프 켬",
+          count(one) == 1 && one.hasMergeable, "\(one)")
+    check("머지 가능 판정 = 팝오버 머지 버튼 (canOffer)",
+          GitHubMergePolicy.canOffer(clean(), section: .mine) && count(one) == 1)
+    for (label, p) in [("Draft", clean(draft: true)), ("BLOCKED", clean(merge: .blocked)),
+                       ("UNKNOWN", clean(merge: .unknown)),
+                       ("nodeID 없음", clean(nodeID: nil)), ("url 없음", clean(linked: false))] {
+        let g = glance(mine: [p])
+        check("\(label) → 머지 가능 0", count(g) == 0 && !g.hasMergeable, "\(g)")
+    }
+    let noHead = pr("mongshell/bookdam", 57, merge: .clean, nodeID: "PR_n", headSHA: nil)
+    check("headSHA 없음 → 머지 가능 0", count(glance(mine: [noHead])) == 0)
+
+    let hidden = glance(mine: [clean("mongshell/bookdam", 57)], hidden: ["mongshell/bookdam"])
+    check("숨긴 레포의 CLEAN PR → 0·hover 에 없음",
+          count(hidden) == 0 && !hidden.hasMergeable && hidden.hoverLine3 == "머지 가능 0", hidden.hoverLine3)
+
+    let a = clean("mongshell/bookdam", 57), b = clean("mongshell/growdle", 9)
+    let merging = glance(mine: [a, b], activity: [a.id: .merging])
+    check(".merging 인 PR 은 세지 않음", count(merging) == 1 && merging.hoverLine3 == "머지 가능 1 · growdle #9",
+          merging.hoverLine3)
+    let merged = glance(mine: [a], activity: [a.id: .merged])
+    check(".merged 인 PR 은 세지 않음 (색인 지연 동안 거짓 있음 방지)",
+          count(merged) == 0 && !merged.hasMergeable)
+    let failed = glance(mine: [a], activity: [a.id: .failed("x")])
+    check(".failed 인 PR 은 센다 (버튼이 다시 나온다)", count(failed) == 1 && failed.hasMergeable)
+    let otherID = glance(mine: [a], activity: [b.id: .merged])
+    check("다른 PR 의 활동은 영향 없음", count(otherID) == 1)
+    let loadingKept = GitHubGlance.of(snap(mine: [a]), state: .loading, hidden: [], mergeActivity: [a.id: .merging])
+    check("loading + 마지막 스냅샷에도 활동 반영", loadingKept.lines?.mergeable == 0)
+
+    let review = glance(review: [clean("mongshell/bookdam", 58)], mine: [])
+    check("리뷰 요청 목록의 CLEAN PR 은 세지 않음", count(review) == 0 && !review.hasMergeable)
+    check("머지 가능은 메뉴바 숫자에 더하지 않음", one.count == 0 && one.dot == .green, "\(one)")
+
+    check("hoverLine3 0 → \"머지 가능 0\"", glance(mine: [pr()]).hoverLine3 == "머지 가능 0")
+    check("hoverLine3 1 → \"머지 가능 1 · bookdam #57\"", one.hoverLine3 == "머지 가능 1 · bookdam #57",
+          one.hoverLine3)
+    let three = glance(mine: [a, pr(), b, clean("mongshell/menubar", 3)])
+    check("hoverLine3 여럿 → 첫 번째 · 외 K",
+          three.hoverLine3 == "머지 가능 3 · bookdam #57 외 2" && three.lines?.line3Rest == "bookdam #57 외 2",
+          three.hoverLine3)
+
+    for state: GitHubLoadState in [.off, .noToken, .keychainDenied, .unauthorized, .patSaveFailed(-25299), .error("x")] {
+        let g = glance(mine: [clean()], state: state)
+        check("\(state) → 머지 가능 표시 없음", g.lines == nil && !g.hasMergeable && g.hoverLine3 == "")
+    }
+    check("loading + 스냅샷 없음 → 표시 없음",
+          !GitHubGlance.of(nil, state: .loading, hidden: [], mergeActivity: [:]).hasMergeable)
 }
 
 // MARK: - 6. 검사 칩 접기
