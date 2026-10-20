@@ -60,7 +60,7 @@ non_goals:
 
 ## GitHub PR 판정과 폴링 주기
 
-Decision #45 의 모델 쪽 규약은 넷이다. 주기 규칙(즉시 1회·30초·백오프·401 정지)은 [docs/architecture.md § 4. GitHub PR 폴링](../../../docs/architecture.md#4-github-pr-폴링-선택-경로) 이 권위다.
+Decision #45 의 모델 쪽 규약은 넷이다. 주기와 요청 정지 규칙은 [docs/architecture.md § 4. GitHub PR 폴링](../../../docs/architecture.md#4-github-pr-폴링-선택-경로) 이 권위다.
 
 - 판정은 `GitHubPullRequest.swift` 의 순수 값 타입에 둔다 — 배지 우선순위, 메뉴바 숫자(리뷰 요청 + 내 PR 중 막힌 것), 점 색, 검사 칩 접기. `GitHubModel` 은 API 결과를 그 타입에 넘겨 호출만 하고, 판정 규칙을 모델 안에 다시 적지 않는다. 규칙은 `scripts/test.sh` 가 고정한다.
 - 팝오버의 열림·닫힘은 `setPopoverOpen(_:)` 으로 받는다 (AppDelegate 가 `NSPopover.didCloseNotification` 으로 부른다). hover 는 갱신을 일으키지 않는다.

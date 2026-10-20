@@ -180,7 +180,7 @@ GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주�
 ```
 
 - 주기 (`GitHubPollPolicy.nextWait`): 백그라운드 3분(설정 1~10분, `Config.githubPollRange`) · 팝오버를 열면 즉시 1회 · 열려 있고 진행중 검사(running/queued)가 있으면 30초 · 잔량 200 미만 또는 `.rateLimited` 이면 지수 백오프(`base * 2^n`, 상한 3600초). 백오프 중엔 30초 주기를 쓰지 않고, 팝오버를 열어도 즉시 요청을 보내지 않는다. 팝오버 닫힘은 요청·재시작 없이 다음 깨어남부터 base 로 복귀한다.
-- 401 이면 자동 폴링을 멈춘다. 재개는 수동뿐이다 — 팝오버의 재시도·새로고침, 팝오버를 열 때의 즉시 1회, PAT 적용·지우기, gh 토큰 다시 시도, "GitHub 표시" 다시 켜기. 재개한 요청이 다시 401 이면 다시 멈춘다.
+- 401 이면 자동 폴링을 멈춘다. 재개는 수동뿐이다 — 팝오버의 재시도·새로고침, PAT 적용·지우기, gh 토큰 다시 시도, "GitHub 표시" 다시 켜기. 재개한 요청이 다시 401 이면 다시 멈춘다. 401 이나 PAT 저장 실패 상태에서는 팝오버를 열어도 요청하지 않는다.
 - 판정 (`GitHubPullRequest.swift`, 순수 값): 배지 우선순위 충돌 > 검사 실패 > 변경 요청 > 내 리뷰 대기 > Draft > 리뷰 대기 > 승인 > 머지 가능. 메뉴바 숫자 = 리뷰 요청 + 내 PR 중 막힌 것(충돌·검사 실패·변경 요청). 점은 막힘 있으면 빨강, 리뷰 요청만 있으면 주황, 없으면 초록, 토큰 없음·거부·401·오류는 회색. 모르는 값은 통과로 읽지 않는다 — CheckRun 모르는 `status` → queued, `COMPLETED` + 모르는 `conclusion` → failed, rollup 모르는 `state` → pending, `mergeable` 모르는 값 → unknown(충돌 아님). 검사 칩은 전부 통과·건너뜀이면 "검사 N개 통과 · 소요" 하나로 접는다.
 - 링크: 응답의 URL 은 https 만 받는다 (검사 링크 `detailsUrl`·`targetUrl` 은 CI 가 채우는 제3자 값). PR 링크는 그에 더해 `github.com` 호스트일 때만 연다.
 - 한도: 토큰당 시간당 5,000 포인트. 요청당 1 포인트 안팎 (노드 수에 비례). 팝오버 바닥에 `remaining / limit` 를 보인다.
