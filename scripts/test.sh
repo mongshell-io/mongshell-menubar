@@ -51,6 +51,7 @@ swiftc -o "$OUT/client-tests" \
   "$APP/Models/OpenClawStatus.swift" \
   "$APP/Models/ServerHost.swift" \
   "$APP/Models/ServerHostAlertWatch.swift" \
+  "$APP/Services/BoundedHTTP.swift" \
   "$APP/Services/OpenClawStatusClient.swift" \
   "$APP/Services/TimeText.swift" \
   "$AGENT/Probe.swift" \
