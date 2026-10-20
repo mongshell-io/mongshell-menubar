@@ -227,10 +227,12 @@ final class GitHubModel: ObservableObject {
 
     /// Snapshot hook: shows a given snapshot and state without any network,
     /// so reference images are deterministic and never carry real PRs.
-    func presentForSnapshot(_ snapshot: GitHubSnapshot?, state: GitHubLoadState, now: Date) {
+    func presentForSnapshot(_ snapshot: GitHubSnapshot?, state: GitHubLoadState, now: Date,
+                            mergeActivity: [String: PRMergeActivity] = [:]) {
         generation += 1
         pollTask?.cancel()
         self.snapshot = snapshot
+        self.mergeActivity = mergeActivity
         loadState = state
         if case .loaded(let source) = state { tokenSource = source } else { tokenSource = nil }
         frozenNow = now

@@ -104,6 +104,20 @@ enum SnapshotRenderer {
         github.presentForSnapshot(.sample(now: now), state: .loaded(.ghCLI(account: "mongshellio")), now: now)
         write(GitHubHoverPreview(github: github), to: base, "github_hover", scale: 2)
         write(GitHubPopoverPreview(github: github), to: base, "github_popover", scale: 2)
+        // The squash merge control on the CLEAN row (Decision #49): armed by
+        // a first click, and after GitHub refused the merge.
+        let sample = GitHubSnapshot.sample(now: now)
+        if let mergeable = sample.mine.first(where: { GitHubMergePolicy.canOffer($0, section: .mine) }) {
+            write(GitHubPopoverPreview(github: github, armedPRID: mergeable.id),
+                  to: base, "github_popover_merge_confirm", scale: 2)
+            github.presentForSnapshot(sample, state: .loaded(.ghCLI(account: "mongshellio")), now: now,
+                                      mergeActivity: [mergeable.id: .failed(
+                                        GitHubMergeResult.notMergeable("Required status check \"build\" is expected.")
+                                            .failureReason ?? "")])
+            write(GitHubPopoverPreview(github: github), to: base, "github_popover_merge_failed", scale: 2)
+        } else {
+            report("github_popover_merge_*: no mergeable row in the sample")
+        }
         github.presentForSnapshot(.sampleOverflow(now: now), state: .loaded(.pat), now: now)
         write(GitHubPopoverPreview(github: github), to: base, "github_popover_overflow", scale: 2)
         github.presentForSnapshot(nil, state: .noToken, now: now)
@@ -481,8 +495,10 @@ private struct GitHubHoverPreview: View {
 
 private struct GitHubPopoverPreview: View {
     @ObservedObject var github: GitHubModel
+    var armedPRID: String? = nil
     var body: some View {
-        GitHubPopoverView(model: github, prefs: .shared, onOpenSettings: {})
+        GitHubPopoverView(model: github, prefs: .shared, onOpenSettings: {},
+                          previewArmedPRID: armedPRID)
             .padding(24)
             .background(Color(hex: 0xE8E6E1))
     }

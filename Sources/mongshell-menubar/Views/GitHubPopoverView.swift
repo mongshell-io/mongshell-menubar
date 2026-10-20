@@ -11,6 +11,9 @@ struct GitHubPopoverView: View {
     @ObservedObject var model: GitHubModel
     @ObservedObject var prefs: Preferences
     var onOpenSettings: () -> Void
+    /// Snapshot hook: the row with this id starts with its merge armed, so
+    /// the confirm state has a reference image. Nil in the app.
+    var previewArmedPRID: String? = nil
 
     /// The lists are only shown when the glance reads the snapshot too
     /// (loaded, or loading / rate-limited with an earlier answer) — the
@@ -174,7 +177,8 @@ struct GitHubPopoverView: View {
                       frozenNow: model.frozenNow,
                       offersMerge: GitHubMergePolicy.canOffer(pr, section: section),
                       mergeActivity: model.mergeActivity[pr.id],
-                      onMerge: { model.merge(pr) })
+                      onMerge: { model.merge(pr) },
+                      armed: pr.id == previewArmedPRID)
             }
             if prs.count > cap {
                 Text("외 \(prs.count - cap)건")
@@ -329,7 +333,9 @@ private struct PRRow: View {
     }
 
     init(pr: GitHubPullRequest, verdict: PRVerdict, frozenNow: Date?,
-         offersMerge: Bool, mergeActivity: PRMergeActivity?, onMerge: @escaping () -> Void) {
+         offersMerge: Bool, mergeActivity: PRMergeActivity?, onMerge: @escaping () -> Void,
+         armed: Bool = false) {
+        self._armed = State(initialValue: armed)
         self.pr = pr
         self.verdict = verdict
         self.frozenNow = frozenNow
