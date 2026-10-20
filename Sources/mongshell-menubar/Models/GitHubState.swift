@@ -71,7 +71,9 @@ struct GitHubSnapshot: Equatable, Sendable {
     /// One of my open PRs reads as checks-going (`effectiveChecks`, as its
     /// badge and the hover's CI row read it — so a PR whose checks already
     /// failed doesn't count) and has a running check that started within
-    /// `Config.githubFastPollMaxRunningAge` of `now`. The only grounds for
+    /// `Config.githubFastPollMaxRunningAge` of `now` — a start up to
+    /// `Config.githubFastPollClockSkew` ahead of `now` counts, one further
+    /// ahead does not. The only grounds for
     /// the fast cadence (Decision #45 후속 (#51)). A wait that may never end —
     /// queued checks, a status still expected, the rollup alone pending, a
     /// running check with no start time or one that has run past the cap —
@@ -80,7 +82,8 @@ struct GitHubSnapshot: Equatable, Sendable {
         mine.contains { pr in
             pr.effectiveChecks == .pending && pr.checks.contains { check in
                 guard check.outcome == .running, let started = check.startedAt else { return false }
-                return now.timeIntervalSince(started) <= Config.githubFastPollMaxRunningAge
+                let age = now.timeIntervalSince(started)
+                return age >= -Config.githubFastPollClockSkew && age <= Config.githubFastPollMaxRunningAge
             }
         }
     }

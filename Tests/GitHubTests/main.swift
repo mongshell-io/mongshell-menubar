@@ -439,8 +439,16 @@ do {
     }
     check("10분 전 시작한 running → 빠른 주기",
           fresh([pr(checks: [running(minutesAgo: 10)], complete: true)]))
+    check("정확히 60분 전 시작한 running → 빠른 주기 (상한 포함)",
+          fresh([pr(checks: [running(minutesAgo: 60)], complete: true)]))
     check("61분 전 시작한 running → 아님 (끝나지 않는 실행이 붙잡지 않음)",
           !fresh([pr(checks: [running(minutesAgo: 61)], complete: true)]))
+    check("1분 뒤 시작으로 보고된 running (시계 오차 안) → 빠른 주기",
+          fresh([pr(checks: [running(minutesAgo: -1)], complete: true)]))
+    check("정확히 5분 뒤 시작 (오차 경계) → 빠른 주기",
+          fresh([pr(checks: [running(minutesAgo: -5)], complete: true)]))
+    check("10분 뒤 시작으로 보고된 running → 아님 (미래 시각이 60분 상한을 넘지 못함)",
+          !fresh([pr(checks: [running(minutesAgo: -10)], complete: true)]))
     check("오래된 running 옆에 막 시작한 running 이 있으면 → 빠른 주기",
           fresh([pr(checks: [running(minutesAgo: 90), chk("lint", .running, start: -30, end: nil)],
                     complete: true)]))

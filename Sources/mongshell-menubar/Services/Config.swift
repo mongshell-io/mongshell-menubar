@@ -87,6 +87,11 @@ enum Config {
     /// runner that never reports back would otherwise keep it forever.
     /// Most CI runs end well inside an hour; past it, base is soon enough.
     static let githubFastPollMaxRunningAge: TimeInterval = 3600
+    /// How far in the future a check's start may lie and still count as
+    /// fresh: a runner's clock can run a little ahead of ours. Past this the
+    /// start time is not believed — counted as fresh, it would hold the
+    /// fast cadence for as long as the clock stays wrong, past the age cap.
+    static let githubFastPollClockSkew: TimeInterval = 300
     /// Points left at which polling backs off: enough for gh and the browser
     /// to keep working on the same token.
     static let githubRateLimitReserve = 200
