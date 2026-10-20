@@ -255,16 +255,8 @@ struct PopoverView: View {
     }
 
     private func banner<Trailing: View>(text: String, tint: Color,
-                                        @ViewBuilder trailing: () -> Trailing) -> some View {
-        HStack(spacing: 8) {
-            Circle().fill(tint).frame(width: 6, height: 6)
-            Text(text).font(.system(size: 11.5)).foregroundStyle(Palette.textSecondary)
-            Spacer(minLength: 0)
-            trailing()
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 9)
-        .background(tint.opacity(0.06))
+                                        @ViewBuilder trailing: @escaping () -> Trailing) -> some View {
+        PopoverBanner(text: text, tint: tint, trailing: trailing)
     }
 
     // MARK: Primary 5-hour gauge
