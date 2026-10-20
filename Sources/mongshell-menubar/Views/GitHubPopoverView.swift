@@ -231,7 +231,7 @@ struct GitHubPopoverView: View {
             if let url = pr.url { open(url) }
         } label: {
             HStack(spacing: 10) {
-                Text("\(Text("#\(pr.number)").fontWeight(.medium).foregroundStyle(Palette.textTertiary)) \(pr.title)")
+                Text("\(Text("#\(String(pr.number))").fontWeight(.medium).foregroundStyle(Palette.textTertiary)) \(pr.title)")
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.textSecondary)
                     .lineLimit(1)
@@ -367,7 +367,7 @@ private struct PRRow: View {
     private var repoText: Text {
         let parts = pr.repository.split(separator: "/", maxSplits: 1).map(String.init)
         let owner = parts.count == 2 ? parts[0] + "/" : ""
-        return Text("\(owner)\(Text(pr.repositoryName).fontWeight(.semibold)) #\(pr.number)")
+        return Text("\(owner)\(Text(pr.repositoryName).fontWeight(.semibold)) #\(String(pr.number))")
     }
 
     // MARK: Badges (mockup § D)

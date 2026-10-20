@@ -406,8 +406,10 @@ private extension GitHubSnapshot {
                 pr("mongshell/mongshell-menubar", 42,
                    "fix: probe 타임아웃이 openclaw 손자 프로세스에 막혀 무력화되던 문제",
                    updatedAgo: 3 * day, rollup: .success, checks: [], mergedAgo: 3 * day),
-                pr("mongshell/mongshell-menubar", 41,
-                   "fix: 에이전트가 probe 마다 파이프 fd 를 새어 결국 열지 못하던 문제",
+                // Four digits on purpose: a PR number interpolated into a
+                // localized Text gets a grouping separator ("#1,988").
+                pr("mongshell/gambau", 1988,
+                   "feat(profitability): 판매자배송 상품의 정산 예정 금액을 미리 보여준다",
                    updatedAgo: 4 * day, rollup: .success, checks: [], mergedAgo: 4 * day),
             ],
             rateLimit: GitHubRateLimit(cost: 12, remaining: 4812, limit: 5000,
