@@ -14,11 +14,11 @@ non_goals:
 macOS 메뉴바에 Claude 구독 사용량을 상시 표시하는 1인용 네이티브 앱. SwiftPM executable 타깃 2개(메뉴바 앱 + 서버 맥용 감시 에이전트: openclaw 게이트웨이와 서버 호스트 신호(전원·디스크)를 판정해 싣는다 — `server/README.md`), 외부 의존성 없음. 개발 하네스 = **mongshell-dev 플러그인** (스킬 `/mongshell-dev:qa` 등 네임스페이스 호출 — 흐름도·라우팅은 플러그인 동봉 README 가 권위).
 
 ## 작업 규약 코어 (하네스 상시 규칙)
-<!-- harness-core: 2026-07 -->
+<!-- harness-core: 2026-10 -->
 
 - **오케스트레이터**: 메인 세션은 탐색·계획·서브에이전트 관리·사용자 소통이 주 역할,
-  실질 구현은 developer, 검토는 reviewer 에이전트에 위임. 위임이 병렬성·컨텍스트 격리·
-  독립 리뷰 중 뭔가를 사면 위임, 자명한 변경(한 줄·오타·기계적 교정)은 직접 편집.
+  실질 구현은 developer, 검토는 reviewer 에이전트에 위임. 위임으로 병렬성·컨텍스트 격리·
+  독립 리뷰 중 하나라도 얻어지면 위임, 자명한 변경(한 줄·오타·기계적 교정)은 직접 편집.
 - **1인 운영 전제**: 단순성 우선, 팀 협업 본질 패턴 디스카운트, 운영 부담 최소화.
 - **스크립트 우선**: 결정적 판정(개수 비교·존재 확인·형식 검사)은 모델 추론이 아니라
   스크립트/bash 로 처리한다.
@@ -28,11 +28,18 @@ macOS 메뉴바에 Claude 구독 사용량을 상시 표시하는 1인용 네이
   트리거는 새 화면·큰 레이아웃 재구성만, 기본값 skip, 게이트락 아님. 사용자 "목업 먼저"
   pull 로 양방향 오버라이드 가능. 목업 합의 후 (필요 시) architect → developer 로 이어지며,
   상수·절차 권위는 컴포넌트 영역 CLAUDE.md.
-- **머지 규약** (worktree 워크플로우 전제): PR 머지는 `gh pr merge <N> --squash` 만 —
-  `--delete-branch` 금지 (worktree 의 `main` 점유와 충돌; remote 브랜치는 repo 설정
-  `delete_branch_on_merge` 가 자동 삭제).
+- **머지 규약** (worktree 워크플로우 전제): PR 머지는 squash 만 — 사람이 머지할 때는
+  `gh pr merge <N> --squash`, 자동 머지 수단이 있는 프로젝트는 그것도 squash 로 제한(수단·라벨
+  권위는 프로젝트 CI 설정). `--delete-branch` 금지 (worktree 의 `main` 점유와 충돌; remote
+  브랜치는 repo 설정 `delete_branch_on_merge` 가 자동 삭제).
+- **위험 등급**: PR 의 위험은 작성자가 아니라 **변경 파일**이 정한다. DB 마이그레이션·요청 경로
+  (proxy/middleware)·CI 워크플로(`.github/`) 변경은 사람이 적용 순서를 확인하고 머지하며, 자동
+  머지 수단이 있으면 그 대상에서 뺀다. 그 순서와 되돌리는 법은 PR 본문 Risk / How to revert 에 적는다.
 - **정책 노브**: 커밋/PR trailer — `Co-Authored-By` **포함**, `🤖 Generated with Claude Code`
   **미포함**. 응답 톤 — 항상 존댓말. 커밋 메시지 — 한국어 conventional commits.
+
+이 프로젝트에서 위험 등급에 해당하는 것은 CI 워크플로(`.github/`) 변경뿐이다 (DB 마이그레이션·요청 경로 없음).
+자동 머지 수단도 없으므로 모든 PR 을 사람이 `--squash` 로 머지한다.
 
 프로덕트 철학·범위는 [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md), 아키텍처 의사결정 기록은 [docs/architecture-decisions.md](docs/architecture-decisions.md). 새 결정 전 가장 먼저 참조.
 

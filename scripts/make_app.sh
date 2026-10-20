@@ -17,6 +17,18 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/mongshell-menubar"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 
+# Bundle version from the nearest release tag — the git tag is the version SSOT
+# (Decision #47). Resources/Info.plist only holds a 0.0.0 placeholder, so a build
+# that can't see a vX.Y.Z tag (no .git, tags not fetched) is recognizable instead
+# of passing as a release. Must run before codesign: the signature covers it.
+TAG="$(git -C "$ROOT" describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
+if [[ "${TAG#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "▶ version ${TAG#v} (from $TAG)"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${TAG#v}" "$APP/Contents/Info.plist"
+else
+  echo "  (no vX.Y.Z tag reachable — keeping placeholder version from Info.plist)"
+fi
+
 # Code signature so Keychain / UserNotifications / ASWebAuth work locally.
 #
 # Prefer a self-signed code-signing certificate over an ad-hoc signature. The
