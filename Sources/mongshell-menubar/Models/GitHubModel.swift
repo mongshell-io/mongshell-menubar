@@ -134,8 +134,9 @@ final class GitHubModel: ObservableObject {
         generation += 1
         guard status == errSecSuccess else {
             guard prefs.githubEnabled else { return }
-            // A follow-up asked for before the failure would send the old
-            // token right after the request in flight.
+            // A follow-up asked for before the failure would go out right
+            // after the request in flight, with whatever the Keychain now
+            // resolves to — not the token just given.
             refreshRequested = false
             loadState = .patSaveFailed(status)
             updateGlance()
@@ -308,6 +309,9 @@ final class GitHubModel: ObservableObject {
                 backoff = 0
             }
         case .success(.unauthorized):
+            // A follow-up coalesced while this request was out would resend
+            // the rejected token once more without the user asking.
+            refreshRequested = false
             loadState = .unauthorized
         case .success(.rateLimited(let retryAt)):
             backOff()
