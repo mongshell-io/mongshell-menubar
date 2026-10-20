@@ -79,7 +79,46 @@ enum SnapshotRenderer {
         writeWindowed(OpenClawSectionPreview(), size: NSSize(width: 380, height: 420),
                       to: base, "settings_openclaw")
 
+        renderGitHub(to: base, now: now)
+
         return true
+    }
+
+    /// The GitHub region (Decision #45) on canned PRs. The region stays off
+    /// for every image above, so those stay as they were; here the model is
+    /// shown a sample snapshot directly, with no network and no Keychain.
+    private static func renderGitHub(to base: URL, now: Date) {
+        let github = GitHubModel(prefs: .shared)
+        for scheme in [ColorScheme.dark, .light] {
+            let name = scheme == .dark ? "dark" : "light"
+            write(GitHubMenuBarStrip(scheme: scheme, count: 3, dot: .red)
+                    .frame(width: 320, height: 44).environment(\.colorScheme, scheme),
+                  to: base, "github_menubar_strip_\(name)", scale: 3)
+        }
+        write(GitHubMenuBarStrip(scheme: .dark, count: 0, dot: .green)
+                .frame(width: 320, height: 44).environment(\.colorScheme, .dark),
+              to: base, "github_menubar_strip_zero_dark", scale: 3)
+
+        github.presentForSnapshot(.sample(now: now), state: .loaded(.ghCLI(account: "mongshellio")), now: now)
+        write(GitHubHoverPreview(github: github), to: base, "github_hover", scale: 2)
+        write(GitHubPopoverPreview(github: github), to: base, "github_popover", scale: 2)
+        github.presentForSnapshot(.sampleOverflow(now: now), state: .loaded(.pat), now: now)
+        write(GitHubPopoverPreview(github: github), to: base, "github_popover_overflow", scale: 2)
+        github.presentForSnapshot(nil, state: .noToken, now: now)
+        write(GitHubPopoverPreview(github: github), to: base, "github_popover_no_token", scale: 2)
+        github.presentForSnapshot(nil, state: .unauthorized, now: now)
+        write(GitHubPopoverPreview(github: github), to: base, "github_popover_unauthorized", scale: 2)
+
+        // The section's rows only appear with the region on; switch it on in
+        // the volatile argument domain for this one image and off again, so
+        // `settings` above and the real preference are untouched.
+        github.presentForSnapshot(.sample(now: now), state: .loaded(.ghCLI(account: "mongshellio")), now: now)
+        let domain = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+        UserDefaults.standard.setVolatileDomain(domain.merging(["githubEnabled": true]) { $1 },
+                                               forName: UserDefaults.argumentDomain)
+        writeWindowed(GitHubSectionPreview(github: github), size: NSSize(width: 380, height: 420),
+                      to: base, "settings_github")
+        UserDefaults.standard.setVolatileDomain(domain, forName: UserDefaults.argumentDomain)
     }
 
     /// `Form` is AppKit-backed and comes out blank through `ImageRenderer`, so
@@ -292,6 +331,156 @@ private struct OpenClawSectionPreview: View {
         Form {
             Section("서버") {
                 OpenClawSettingsSection(prefs: .shared, openClaw: .shared)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 380, height: 420)
+    }
+}
+
+/// Canned pull requests for the reference images — the mockup's rows
+/// (design/github-pr-region/mockup.html § C2), never real ones.
+private extension GitHubSnapshot {
+    static func sample(now: Date) -> GitHubSnapshot {
+        let minute = 60.0, hour = 3600.0, day = 86_400.0
+        func check(_ name: String, _ outcome: PRCheckOutcome,
+                   startedAgo: TimeInterval, took: TimeInterval? = nil) -> PRCheck {
+            PRCheck(name: name, outcome: outcome,
+                    startedAt: now.addingTimeInterval(-startedAgo),
+                    completedAt: took.map { now.addingTimeInterval(-startedAgo + $0) },
+                    url: nil)
+        }
+        func passed(_ count: Int, total: TimeInterval) -> [PRCheck] {
+            (1...count).map { i in
+                check("check-\(i)", .passed, startedAgo: 20 * minute, took: i == count ? total : 30)
+            }
+        }
+        func pr(_ repo: String, _ number: Int, _ title: String, updatedAgo: TimeInterval,
+                draft: Bool = false, review: PRReviewDecision = PRReviewDecision.none,
+                mergeable: PRMergeable = .mergeable, rollup: PRChecksRollup,
+                checks: [PRCheck], mergedAgo: TimeInterval? = nil) -> GitHubPullRequest {
+            GitHubPullRequest(repository: repo, number: number, title: title,
+                              url: URL(string: "https://github.com/\(repo)/pull/\(number)"),
+                              isDraft: draft, reviewDecision: review, mergeable: mergeable,
+                              checksRollup: rollup, checks: checks,
+                              updatedAt: now.addingTimeInterval(-updatedAgo),
+                              mergedAt: mergedAgo.map { now.addingTimeInterval(-$0) })
+        }
+        return GitHubSnapshot(
+            reviewRequested: [
+                pr("mongshell/bookdam", 58, "feat: 대화 목록 무한 스크롤과 날짜 구분선",
+                   updatedAgo: day, rollup: .success, checks: passed(5, total: 7 * minute + 51)),
+                pr("mongshell/growdle", 121, "fix: 주간 리포트 집계가 UTC 자정에 끊기던 문제",
+                   updatedAgo: 3 * hour, rollup: .pending, checks: [
+                    check("static", .passed, startedAgo: 5 * minute, took: minute + 12),
+                    check("test", .running, startedAgo: 83),
+                    check("automerge", .skipped, startedAgo: 5 * minute, took: 1),
+                    check("Vercel", .running, startedAgo: 125),
+                    check("Preview Comments", .passed, startedAgo: 4 * minute, took: 4),
+                   ]),
+            ],
+            mine: [
+                pr("mongshell/mongshell-menubar", 45, "feat: GitHub PR 영역을 메뉴바 두 번째 영역으로",
+                   updatedAgo: 25 * minute, rollup: .failure, checks: [
+                    check("build", .failed, startedAgo: 3 * minute, took: 48),
+                    check("test", .running, startedAgo: 83),
+                    check("snapshot", .passed, startedAgo: 2 * minute, took: 31),
+                   ]),
+                pr("mongshell/mongshell-menubar", 46, "docs: PHILOSOPHY 에 옵트인 두 번째 영역 예외 추가",
+                   updatedAgo: hour, draft: true, rollup: .success,
+                   checks: passed(3, total: 2 * minute + 40)),
+                pr("mongshell/bookdam", 57, "refactor: auth 라우트의 세션 조회를 미들웨어로",
+                   updatedAgo: 2 * day, review: .approved, rollup: .success,
+                   checks: passed(5, total: 6 * minute + 12)),
+                pr("mongshell/bookdam", 55, "feat: 대화 내보내기 (markdown)",
+                   updatedAgo: 4 * day, review: .reviewRequired, rollup: .success,
+                   checks: passed(4, total: 5 * minute + 58)
+                        + [check("automerge", .skipped, startedAgo: 20 * minute, took: 1)]),
+            ],
+            recentlyMerged: [
+                pr("mongshell/mongshell-menubar", 44,
+                   "fix: 갱신 토큰이 서버에서 폐기되면 자체 토큰을 버리고 재로그인을 안내하며 재발 진단 로그를 남긴다",
+                   updatedAgo: day, rollup: .success, checks: [], mergedAgo: day),
+                pr("mongshell/mongshell-menubar", 42,
+                   "fix: probe 타임아웃이 openclaw 손자 프로세스에 막혀 무력화되던 문제",
+                   updatedAgo: 3 * day, rollup: .success, checks: [], mergedAgo: 3 * day),
+                pr("mongshell/mongshell-menubar", 41,
+                   "fix: 에이전트가 probe 마다 파이프 fd 를 새어 결국 열지 못하던 문제",
+                   updatedAgo: 4 * day, rollup: .success, checks: [], mergedAgo: 4 * day),
+            ],
+            rateLimit: GitHubRateLimit(cost: 12, remaining: 4812, limit: 5000,
+                                       resetAt: now.addingTimeInterval(hour)),
+            fetchedAt: now,
+            tokenScopesLackRepo: nil)
+    }
+
+    /// Past the section caps: no review requests ("없음"), ten of my PRs
+    /// (eight rows + "외 2건"), four merged (three + "외 1건").
+    static func sampleOverflow(now: Date) -> GitHubSnapshot {
+        var snapshot = sample(now: now)
+        let template = snapshot.mine[3]
+        snapshot.reviewRequested = []
+        snapshot.mine = (1...10).map { i in
+            GitHubPullRequest(repository: "mongshell/bookdam", number: 100 + i,
+                              title: "chore: 샘플 PR \(i)",
+                              url: URL(string: "https://github.com/mongshell/bookdam/pull/\(100 + i)"),
+                              isDraft: false,
+                              reviewDecision: PRReviewDecision.none, mergeable: .mergeable,
+                              checksRollup: PRChecksRollup.none, checks: [],
+                              updatedAt: template.updatedAt, mergedAt: nil)
+        }
+        snapshot.recentlyMerged.append(snapshot.recentlyMerged[0])
+        return snapshot
+    }
+}
+
+/// Menu-bar mock of the two regions together (mockup § A3 / A2): the Claude
+/// region as shipped, then the hairline and the GitHub region.
+private struct GitHubMenuBarStrip: View {
+    let scheme: ColorScheme
+    let count: Int
+    let dot: GitHubDot
+    var body: some View {
+        HStack(spacing: 0) {
+            MenuBarContent(fiveHourUsed: 34, weeklyUsed: 61,
+                           showRemaining: false, colorCoding: true,
+                           showPercent: true, fiveHourReset: "19:00",
+                           openClawDotColor: Palette.green)
+            GitHubMenuBarContent(count: count, dot: dot.color)
+        }
+        .padding(.horizontal, 18)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(scheme == .dark ? Color(hex: 0x2C2C30) : Color(hex: 0xE8E6E1))
+    }
+}
+
+/// The GitHub hover summary, on the same backdrop as the popover images.
+private struct GitHubHoverPreview: View {
+    @ObservedObject var github: GitHubModel
+    var body: some View {
+        GitHubHoverSummaryView(model: github)
+            .background(Palette.popoverBG)
+            .padding(24)
+            .background(Color(hex: 0xE8E6E1))
+    }
+}
+
+private struct GitHubPopoverPreview: View {
+    @ObservedObject var github: GitHubModel
+    var body: some View {
+        GitHubPopoverView(model: github, prefs: .shared, onOpenSettings: {})
+            .padding(24)
+            .background(Color(hex: 0xE8E6E1))
+    }
+}
+
+/// The GitHub section alone, switched on, for the same reason as the others.
+private struct GitHubSectionPreview: View {
+    @ObservedObject var github: GitHubModel
+    var body: some View {
+        Form {
+            Section("GitHub") {
+                GitHubSettingsSection(model: github, prefs: .shared)
             }
         }
         .formStyle(.grouped)

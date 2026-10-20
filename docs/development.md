@@ -86,6 +86,10 @@ swift build && MONGSHELL_SNAPSHOT=/tmp/mongshell_snaps ./.build/debug/mongshell-
 | `popover_host_unreachable` | 팝오버 — 두절, 서버 섹션에 마지막 값이 흐리게 남음 |
 | `popover_openclaw_unreachable` / `popover_openclaw_down` | 팝오버 — openclaw 두절 / 게이트웨이 다운 |
 | `settings` / `settings_claude` / `settings_openclaw` / `settings_openclaw_down` | 설정창 |
+| `github_menubar_strip_dark` / `github_menubar_strip_light` / `github_menubar_strip_zero_dark` | 메뉴바 두 영역 — Claude 영역 뒤에 헤어라인 · GitHub 글리프 · 점 · 숫자 (3건·빨강 / 0건·초록) |
+| `github_hover` | GitHub 영역 hover 요약 |
+| `github_popover` / `github_popover_overflow` / `github_popover_no_token` / `github_popover_unauthorized` | GitHub 팝오버 — gh CLI 로 연결됨 / 섹션 상한 초과("외 N건")와 빈 섹션("없음") / 토큰 없음 배너 / 401 배너. 진행중 칩의 경과 시간은 `frozenNow` 로 고정 |
+| `settings_github` | 설정창 GitHub 섹션 (켜진 상태) |
 
 ## Claude Code 설정 편집 테스트
 
