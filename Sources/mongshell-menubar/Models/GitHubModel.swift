@@ -26,6 +26,10 @@ final class GitHubModel: ObservableObject {
     /// Merges asked for from the popover, by `GitHubPullRequest.id`
     /// (Decision #49). What a refresh keeps is `GitHubMergePolicy.carryOver`.
     @Published private(set) var mergeActivity: [String: PRMergeActivity] = [:]
+    /// Bumped each time the popover closes. AppKit reuses the popover's
+    /// hosting view, so view state outlives a close; a merge confirm armed
+    /// under an earlier value is void (Decision #49).
+    @Published private(set) var popoverSession = 0
 
     private let prefs: Preferences
     private let credentials: GitHubCredentialStore
@@ -118,6 +122,8 @@ final class GitHubModel: ObservableObject {
     /// backing off, or after a 401 or a failed PAT save, opening only
     /// records the flag.
     func setPopoverOpen(_ open: Bool) {
+        // Before the guard: whatever the flag says, a close voids any confirm.
+        if !open { popoverSession += 1 }
         guard open != popoverOpen else { return }
         popoverOpen = open
         guard open, GitHubPollPolicy.refreshesOnOpen(after: loadState, backoff: backoff) else { return }
@@ -175,17 +181,23 @@ final class GitHubModel: ObservableObject {
 
     // MARK: Merge (Decision #49)
 
-    /// Squash-merges one of my PRs, as the row showed it: its node id and
-    /// the head SHA on screen, so GitHub refuses it if a commit landed since.
-    /// The view only calls this after the second click. A click while that
-    /// PR's merge is out, or after it went through, is ignored; so is a PR
-    /// the current list doesn't hold as mine and mergeable.
-    func merge(_ pr: GitHubPullRequest) {
+    /// Squash-merges one of my PRs, sending the head SHA the first click
+    /// saw as `expectedHeadOid`. The view only calls this after the second
+    /// click. Judged on the PR as the current list holds it, not as the row
+    /// last drew it: a click while that PR's merge is out, or after it went
+    /// through, is ignored, and so is a PR the list doesn't hold as mine and
+    /// mergeable. A head that moved since the first click is refused here,
+    /// before GitHub is asked.
+    func merge(_ id: String, expectedHead: String) {
         guard prefs.githubEnabled,
-              mergeActivity[pr.id] != .merging, mergeActivity[pr.id] != .merged,
-              snapshot?.mine.contains(where: { $0.id == pr.id }) == true,
-              GitHubMergePolicy.canOffer(pr, section: .mine),
-              let nodeID = pr.nodeID, let head = pr.headSHA else { return }
+              mergeActivity[id] != .merging, mergeActivity[id] != .merged,
+              let current = snapshot?.mine.first(where: { $0.id == id }),
+              GitHubMergePolicy.canOffer(current, section: .mine),
+              let nodeID = current.nodeID else { return }
+        guard current.headSHA == expectedHead else {
+            mergeActivity[id] = .failed(GitHubMergePolicy.headMovedReason)
+            return
+        }
         let token: String
         switch resolveToken() {
         case .token(let t, _):
@@ -196,12 +208,12 @@ final class GitHubModel: ObservableObject {
             updateGlance()
             return
         }
-        mergeActivity[pr.id] = .merging
+        mergeActivity[id] = .merging
         let requestedIn = generation
         let client = client
         Task { [weak self] in
-            let result = await client.merge(pullRequestId: nodeID, expectedHeadOid: head, token: token)
-            self?.finishMerge(pr.id, result: result, requestedIn: requestedIn)
+            let result = await client.merge(pullRequestId: nodeID, expectedHeadOid: expectedHead, token: token)
+            self?.finishMerge(id, result: result, requestedIn: requestedIn)
         }
     }
 

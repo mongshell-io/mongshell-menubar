@@ -185,6 +185,10 @@ enum GitHubMergePolicy {
             && pr.nodeID != nil && pr.headSHA != nil
     }
 
+    /// The row's line when the list moved to a new head between the first
+    /// click and the second: nothing was sent.
+    static let headMovedReason = "그 사이 새 커밋이 올라왔어요 — 다시 확인해 주세요"
+
     /// What a successful refresh keeps: a merge still out, and a finished
     /// one whose PR the list still shows open. Failure lines end here — the
     /// list they were about has been replaced.
