@@ -106,7 +106,7 @@ struct GitHubPullRequest: Equatable, Identifiable, Sendable {
 /// The one badge a row gets. Declaration order is priority order (mockup
 /// § D): `min()` of several verdicts is the one that wins.
 enum PRVerdict: Int, Comparable, Sendable {
-    case conflict, checksFailed, changesRequested, myReviewPending, draft, awaitingReview, approved, mergeable
+    case conflict, checksFailed, changesRequested, draft, awaitingReview, approved, mergeable
 
     static func < (lhs: PRVerdict, rhs: PRVerdict) -> Bool { lhs.rawValue < rhs.rawValue }
 
@@ -119,7 +119,6 @@ enum PRVerdict: Int, Comparable, Sendable {
         case .conflict:         return "충돌"
         case .checksFailed:     return "검사 실패"
         case .changesRequested: return "변경 요청"
-        case .myReviewPending:  return "내 리뷰 대기"
         case .draft:            return "Draft"
         case .awaitingReview:   return "리뷰 대기"
         case .approved:         return "승인"
@@ -127,14 +126,11 @@ enum PRVerdict: Int, Comparable, Sendable {
         }
     }
 
-    /// - reviewRequested: the PR came from the review-requested list — someone
-    ///   else's PR waiting on me, which outranks its own draft state.
-    static func of(_ pr: GitHubPullRequest, reviewRequested: Bool) -> PRVerdict {
+    static func of(_ pr: GitHubPullRequest) -> PRVerdict {
         if pr.mergeable == .conflicting { return .conflict }
         let checks = pr.effectiveChecks
         if checks == .failure { return .checksFailed }
         if pr.reviewDecision == .changesRequested { return .changesRequested }
-        if reviewRequested { return .myReviewPending }
         if pr.isDraft { return .draft }
         let approved = pr.reviewDecision == .approved
         let checksClear = checks == .success || checks == .none
@@ -160,7 +156,7 @@ enum PRVerdict: Int, Comparable, Sendable {
 
 /// Which popover list a row sits in.
 enum PRSection: Sendable {
-    case reviewRequested, mine, merged
+    case mine, merged
 }
 
 /// Where one PR's merge stands, as its row shows it. No entry means none
@@ -349,19 +345,16 @@ enum GitHubDot: Equatable, Sendable {
 /// What the menu-bar region and its hover show. Hidden repositories are
 /// removed before anything is counted.
 struct GitHubGlance: Equatable, Sendable {
-    /// The two hover rows, as parts: the hover view colors the numbers and
+    /// The hover rows, as parts: the hover view colors the numbers and
     /// greys the rest, so they are not pre-joined into one string.
     struct Lines: Equatable, Sendable {
-        let reviewRequested: Int
         let mine: Int
         let blocked: Int
-        /// After the review-requested count: "bookdam #58 외 1", or empty.
-        let line1Rest: String
         /// After the my-PR count: "막힘 1 · #45 build 실패".
-        let line2Rest: String
+        let mineRest: String
     }
 
-    /// Review requests + my PRs that are blocked.
+    /// My PRs that are blocked.
     let count: Int
     let dot: GitHubDot
     /// nil when no snapshot speaks for the region (token missing, refused,
@@ -371,16 +364,10 @@ struct GitHubGlance: Equatable, Sendable {
 
     static let empty = GitHubGlance(count: 0, dot: .grey, lines: nil, stateLabel: "")
 
-    /// "리뷰 요청 2 · bookdam #58 외 1", or the state label without lines.
-    var hoverLine1: String {
+    /// "내 PR 4 · 막힘 1 · #45 build 실패", or the state label without lines.
+    var hoverMineLine: String {
         guard let lines else { return stateLabel }
-        return "리뷰 요청 \(lines.reviewRequested)" + (lines.line1Rest.isEmpty ? "" : " · \(lines.line1Rest)")
-    }
-
-    /// "내 PR 4 · 막힘 1 · #45 build 실패", or empty without lines.
-    var hoverLine2: String {
-        guard let lines else { return "" }
-        return "내 PR \(lines.mine) · \(lines.line2Rest)"
+        return "내 PR \(lines.mine) · \(lines.mineRest)"
     }
 
     /// A snapshot is only read for `.loaded`, and for `.loading` /
@@ -399,30 +386,22 @@ struct GitHubGlance: Equatable, Sendable {
     }
 
     private static func of(_ s: GitHubSnapshot) -> GitHubGlance {
-        let blocked = s.mine.filter { PRVerdict.of($0, reviewRequested: false).isBlocking }
-        let requested = s.reviewRequested.count
-        let dot: GitHubDot = !blocked.isEmpty ? .red : (requested > 0 ? .amber : .green)
+        let blocked = s.mine.filter { PRVerdict.of($0).isBlocking }
+        let dot: GitHubDot = blocked.isEmpty ? .green : .red
 
-        var line1Rest = ""
-        if let first = s.reviewRequested.first {
-            line1Rest = "\(first.repositoryName) #\(first.number)"
-            if requested > 1 { line1Rest += " 외 \(requested - 1)" }
-        }
-
-        var line2Rest = "막힘 \(blocked.count)"
+        var mineRest = "막힘 \(blocked.count)"
         if let first = blocked.first {
-            line2Rest += " · " + blockedReason(first)
+            mineRest += " · " + blockedReason(first)
         }
-        let lines = Lines(reviewRequested: requested, mine: s.mine.count, blocked: blocked.count,
-                          line1Rest: line1Rest, line2Rest: line2Rest)
-        return GitHubGlance(count: requested + blocked.count, dot: dot, lines: lines, stateLabel: "")
+        let lines = Lines(mine: s.mine.count, blocked: blocked.count, mineRest: mineRest)
+        return GitHubGlance(count: blocked.count, dot: dot, lines: lines, stateLabel: "")
     }
 
     /// "#45 build 실패" / "#45 충돌" / "#45 변경 요청". A rollup failure with no
     /// failed chip (the failure sits past the thirty contexts read) names
     /// the badge instead of a check.
     private static func blockedReason(_ pr: GitHubPullRequest) -> String {
-        let verdict = PRVerdict.of(pr, reviewRequested: false)
+        let verdict = PRVerdict.of(pr)
         switch verdict {
         case .checksFailed:
             if let check = pr.firstFailedCheck { return "#\(pr.number) \(check.name) 실패" }

@@ -50,7 +50,7 @@ enum Config {
     // MARK: GitHub (Decision #45)
 
     /// The one host the GitHub client talks to. GraphQL, because one request
-    /// carries all three searches plus `rateLimit`; cost is per node, not per
+    /// carries both searches plus `rateLimit`; cost is per node, not per
     /// request, so bundling costs nothing extra.
     static let githubGraphQLURL = URL(string: "https://api.github.com/graphql")!
 
@@ -87,7 +87,7 @@ enum Config {
     static let githubRateLimitReserve = 200
 
     /// Rows shown per popover section; past these a trailing "외 N건" row.
-    static let githubSectionCaps = (reviewRequested: 6, mine: 8, merged: 3)
+    static let githubSectionCaps = (mine: 8, merged: 3)
     /// How far back "recently merged" looks.
     static let githubMergedWindowDays = 7
 

@@ -57,10 +57,9 @@ struct GitHubRateLimit: Equatable, Sendable {
     let resetAt: Date?
 }
 
-/// One answer to the one GraphQL request: the three lists plus what the
+/// One answer to the one GraphQL request: the two lists plus what the
 /// response said about the token and the budget.
 struct GitHubSnapshot: Equatable, Sendable {
-    var reviewRequested: [GitHubPullRequest]
     var mine: [GitHubPullRequest]
     var recentlyMerged: [GitHubPullRequest]
     var rateLimit: GitHubRateLimit?
@@ -69,10 +68,10 @@ struct GitHubSnapshot: Equatable, Sendable {
     /// missing (banner). nil when the header wasn't sent (fine-grained PAT).
     var tokenScopesLackRepo: Bool?
 
-    /// A check still running or queued anywhere in the two open lists — what
+    /// A check still running or queued on one of my open PRs — what
     /// switches the open popover to the fast cadence.
     var hasPendingChecks: Bool {
-        (reviewRequested + mine).contains { $0.checks.contains { $0.outcome.isPending } }
+        mine.contains { $0.checks.contains { $0.outcome.isPending } }
     }
 
     /// The same snapshot without the repositories the user hid ("owner/name",
@@ -82,7 +81,6 @@ struct GitHubSnapshot: Equatable, Sendable {
         guard !repos.isEmpty else { return self }
         func keep(_ pr: GitHubPullRequest) -> Bool { !repos.contains(pr.repository.lowercased()) }
         var out = self
-        out.reviewRequested = reviewRequested.filter(keep)
         out.mine = mine.filter(keep)
         out.recentlyMerged = recentlyMerged.filter(keep)
         return out

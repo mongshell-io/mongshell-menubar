@@ -83,12 +83,12 @@ enum GitHubMergeResult: Equatable, Sendable {
 }
 
 /// GraphQL requests to `api.github.com`. The poll is one query (Decision #45
-/// (d)): three searches and `rateLimit`, bundled because cost is per node,
+/// (d)): two searches and `rateLimit`, bundled because cost is per node,
 /// not per request. The one write is `merge` — a squash merge of my own PR,
 /// sent only after the user confirmed it (Decision #49). Either way the token
 /// goes to this one host only: redirects are refused (`BoundedHTTP`).
 struct GitHubAPIClient: Sendable {
-    /// Three searches with check contexts take longer than a static file;
+    /// Two searches with check contexts take longer than a static file;
     /// past this the next poll will try again.
     static let requestTimeout: TimeInterval = 20
 
@@ -112,7 +112,6 @@ struct GitHubAPIClient: Sendable {
         // `sort:updated-desc` makes "the first blocked PR" in the hover a
         // stable choice rather than search relevance.
         let searches = [
-            ("reviewRequested", "is:pr is:open review-requested:@me sort:updated-desc"),
             ("mine", "is:pr is:open author:@me sort:updated-desc"),
             ("merged", "is:pr is:merged author:@me merged:>=\(day) sort:updated-desc"),
         ]
@@ -361,7 +360,6 @@ struct GitHubAPIClient: Sendable {
     private static func parse(root: [String: Any], now: Date) throws(GitHubAPIError) -> GitHubSnapshot {
         guard let data = root["data"] as? [String: Any] else { throw .badResponse }
         return GitHubSnapshot(
-            reviewRequested: pullRequests(data["reviewRequested"]),
             mine: pullRequests(data["mine"]),
             recentlyMerged: pullRequests(data["merged"]),
             rateLimit: rateLimit(data["rateLimit"]),

@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /// The click popover of the GitHub region (mockup § C2): the same 308pt light
-/// popover as the Claude one, with the three PR lists under a header and a
+/// popover as the Claude one, with the two PR lists under a header and a
 /// state banner. Every row is a link to its PR. The one moving part is the
 /// elapsed time of a running check, which `TimelineView` advances once a
 /// second while the popover is open; `GitHubModel.frozenNow` pins it for
@@ -33,11 +33,6 @@ struct GitHubPopoverView: View {
                               tint: Palette.amber)
             }
             if let snapshot = listedSnapshot {
-                prSection(title: "리뷰 요청", prs: snapshot.reviewRequested,
-                          cap: Config.githubSectionCaps.reviewRequested,
-                          countText: "\(snapshot.reviewRequested.count)건",
-                          section: .reviewRequested)
-                hairline
                 prSection(title: "내 PR", prs: snapshot.mine,
                           cap: Config.githubSectionCaps.mine,
                           countText: mineCountText(snapshot.mine),
@@ -158,7 +153,7 @@ struct GitHubPopoverView: View {
     // MARK: PR sections
 
     private func mineCountText(_ mine: [GitHubPullRequest]) -> String {
-        let blocked = mine.filter { PRVerdict.of($0, reviewRequested: false).isBlocking }.count
+        let blocked = mine.filter { PRVerdict.of($0).isBlocking }.count
         return blocked > 0 ? "\(mine.count)건 · 막힘 \(blocked)" : "\(mine.count)건"
     }
 
@@ -173,7 +168,7 @@ struct GitHubPopoverView: View {
                 emptyRow
             }
             ForEach(prs.prefix(cap)) { pr in
-                PRRow(pr: pr, verdict: PRVerdict.of(pr, reviewRequested: section == .reviewRequested),
+                PRRow(pr: pr, verdict: PRVerdict.of(pr),
                       frozenNow: model.frozenNow,
                       offersMerge: GitHubMergePolicy.canOffer(pr, section: section),
                       mergeActivity: model.mergeActivity[pr.id],
@@ -551,7 +546,7 @@ private struct PRRow: View {
         switch verdict {
         case .conflict:                        return "exclamationmark.triangle"
         case .checksFailed, .changesRequested: return "xmark"
-        case .myReviewPending, .awaitingReview: return "eye"
+        case .awaitingReview:                  return "eye"
         case .draft:                           return "pencil"
         case .approved:                        return "checkmark"
         case .mergeable:                       return "arrow.triangle.merge"
@@ -561,7 +556,6 @@ private struct PRRow: View {
     private var verdictTint: Badge.Tint {
         switch verdict {
         case .conflict, .checksFailed, .changesRequested: return .red
-        case .myReviewPending:                            return .amber
         case .draft, .awaitingReview, .approved:          return .grey
         case .mergeable:                                  return .green
         }

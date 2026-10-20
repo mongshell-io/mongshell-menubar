@@ -67,11 +67,10 @@ Claude Code 는 설정 파일을 감시하므로 **대부분 실행 중인 세�
 
 ## GitHub PR 진행 상황 (선택 기능 — 설정에서 켠 경우에만)
 설정의 **GitHub 표시** 를 켜면 Claude 영역 오른쪽에 세로 헤어라인으로 나뉜 **두 번째 영역**이
-생깁니다 — PR 글리프 + 신호등 점 + 처리할 PR 수(리뷰 요청받은 PR + 내 PR 중 막힌 것). 점은
-막힌 PR 이 있으면 🔴, 리뷰 요청만 있으면 🟡, 할 일이 없으면 🟢(숫자 없이 점만), 토큰이
-없거나 거부되면 ⚪️ 입니다. hover 하면 두 줄 요약, 클릭하면 리뷰 요청·내 PR·최근 7일 머지
-세 섹션과 PR 별 배지(충돌 / 검사 실패 / 변경 요청 / 내 리뷰 대기 / Draft / 리뷰 대기 / 승인 /
-머지 가능), 검사별 칩과 소요시간이 보입니다. 쓰기 동작은 하나뿐입니다 — GitHub 가 머지
+생깁니다 — PR 글리프 + 신호등 점 + 내 PR 중 막힌 것의 수. 점은 막힌 PR 이 있으면 🔴,
+할 일이 없으면 🟢(숫자 없이 점만), 토큰이 없거나 거부되면 ⚪️ 입니다. hover 하면 내 PR
+요약, 클릭하면 내 PR·최근 7일 머지 두 섹션과 PR 별 배지(충돌 / 검사 실패 / 변경 요청 /
+Draft / 리뷰 대기 / 승인 / 머지 가능), 검사별 칩과 소요시간이 보입니다. 쓰기 동작은 하나뿐입니다 — GitHub 가 머지
 가능(`CLEAN`)으로 판정한 내 PR 행의 **Squash 머지** 버튼으로, 한 번 누르면 "확인 — #N 머지"
 로 바뀌고 3초 안에 다시 눌러야 실행됩니다. 첫 클릭 때 화면에 보인 커밋이 그대로일 때만
 머지됩니다. 앱은 브랜치를 지우지 않으며, 저장소의 자동 삭제 설정을 따릅니다. 승인·코멘트·다른
@@ -180,8 +179,8 @@ Sources/mongshell-menubar/
   Views/ClaudeSettingsSection.swift  settings.json 편집 섹션(한글 설명 캡션)
   Views/OpenClawSettingsSection.swift openclaw 상태 URL 입력·상태·확인 간격 섹션
   Views/GitHubMenuBarView.swift      두 번째 영역(헤어라인 · PR 글리프 · 점 · 숫자)
-  Views/GitHubHoverSummaryView.swift GitHub 영역 hover 두 줄 요약
-  Views/GitHubPopoverView.swift      GitHub 팝오버(배너 + 리뷰 요청/내 PR/최근 머지 섹션, 검사 칩)
+  Views/GitHubHoverSummaryView.swift GitHub 영역 hover 요약
+  Views/GitHubPopoverView.swift      GitHub 팝오버(배너 + 내 PR/최근 머지 섹션, 검사 칩)
   Views/GitHubSettingsSection.swift  GitHub 표시 토글·토큰·PAT·갱신 주기·레포 숨기기
   Design/Palette.swift      색 토큰 SSOT(사용량 3단계·팝오버 표면/텍스트)
   Models/…                  Preferences, UsageState, UsageModel(폴링/알림),

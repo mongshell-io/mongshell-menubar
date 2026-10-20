@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The instant hover summary of the GitHub region (mockup § B2): two rows in
-/// the same three-column grid, type sizes and padding as `HoverSummaryView`,
+/// The instant hover summary of the GitHub region (mockup § B2): rows in the
+/// same three-column grid, type sizes and padding as `HoverSummaryView`,
 /// so crossing from one region to the other reads as one app. Reads the
 /// glance the model already computed — hover never triggers a refresh.
 struct GitHubHoverSummaryView: View {
@@ -11,14 +11,10 @@ struct GitHubHoverSummaryView: View {
         Group {
             if let lines = model.glance.lines {
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 6, verticalSpacing: 5) {
-                    // Others waiting on me: amber whenever there is any.
-                    row(label: "리뷰 요청", number: lines.reviewRequested,
-                        numberColor: lines.reviewRequested > 0 ? Palette.amber : nil,
-                        rest: lines.line1Rest)
                     // Mine: red only when one of them is blocked.
                     row(label: "내 PR", number: lines.mine,
                         numberColor: lines.blocked > 0 ? Palette.red : nil,
-                        rest: lines.line2Rest)
+                        rest: lines.mineRest)
                 }
             } else {
                 // No snapshot speaks for the region (no token, refused, first
@@ -46,8 +42,8 @@ struct GitHubHoverSummaryView: View {
                 .monospacedDigit()
                 .foregroundStyle(numberColor ?? Color.primary)
                 .gridColumnAlignment(.trailing)
-            // Always emit the third cell so both rows keep the same column
-            // count and stay aligned.
+            // Always emit the third cell so every row keeps the same column
+            // count and stays aligned.
             Text(rest.isEmpty ? "" : "· \(rest)")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
