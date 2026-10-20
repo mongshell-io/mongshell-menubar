@@ -232,7 +232,7 @@ do {
 
     let noToken = GitHubGlance.of(snap(mine: [blocked]), state: .noToken, hidden: [])
     check("noToken → 회색·0 (스냅샷이 있어도)", noToken.count == 0 && noToken.dot == .grey
-              && noToken.hoverMineLine == "GitHub 토큰 없음", "\(noToken)")
+              && noToken.hoverCILine(now: now) == "GitHub 토큰 없음" && noToken.hoverMineLine == "", "\(noToken)")
     for state: GitHubLoadState in [.off, .keychainDenied, .unauthorized, .patSaveFailed(-25299), .error("x")] {
         let g = GitHubGlance.of(snap(mine: [blocked]), state: state, hidden: [])
         check("\(state) → 회색·0", g.count == 0 && g.dot == .grey)
@@ -245,6 +245,28 @@ do {
     check("loading + 스냅샷 없음 → 회색·0", loadingEmpty.count == 0 && loadingEmpty.dot == .grey)
     check("draft 는 막힘이 아니다",
           GitHubGlance.of(snap(mine: [pr(draft: true)]), state: .loaded(.pat), hidden: []).dot == .green)
+
+    // #51: amber now means a check is still going on one of my PRs.
+    let running = pr("mongshell/bookdam", 50, rollup: .pending,
+                     checks: [chk("test", .running, start: -60, end: nil)], complete: true)
+    let queued = pr("mongshell/bookdam", 51, rollup: .pending,
+                    checks: [chk("lint", .queued, start: nil, end: nil)], complete: true)
+    let ci = GitHubGlance.of(snap(mine: [fine, running]), state: .loaded(.pat), hidden: [])
+    check("막힘 없음 + 진행중 → 주황·숫자 없음", ci.count == 0 && ci.dot == .amber, "\(ci)")
+    let ciQueued = GitHubGlance.of(snap(mine: [queued]), state: .loaded(.pat), hidden: [])
+    check("막힘 없음 + 대기(queued)만 → 주황", ciQueued.count == 0 && ciQueued.dot == .amber)
+    let ciBlocked = GitHubGlance.of(snap(mine: [running, blocked]), state: .loaded(.pat), hidden: [])
+    check("막힘 + 진행중 → 빨강·막힘만 셈", ciBlocked.count == 1 && ciBlocked.dot == .red, "\(ciBlocked)")
+    let ciHidden = GitHubGlance.of(snap(mine: [fine, running]), state: .loaded(.pat),
+                                   hidden: ["mongshell/bookdam"])
+    check("진행중이 숨긴 레포에만 → 주황 아님", ciHidden.dot == .green)
+    // A chip still running on a PR whose checks already failed is read as
+    // the badge reads it: failed, not running.
+    let failedButRunning = pr("mongshell/bookdam", 52, rollup: .pending,
+                              checks: [chk("build", .failed), chk("test", .running, start: -30, end: nil)],
+                              complete: true)
+    check("실패한 PR 의 남은 진행중 칩은 주황이 아니다 (빨강)",
+          GitHubGlance.of(snap(mine: [failedButRunning]), state: .loaded(.pat), hidden: []).dot == .red)
 }
 
 // MARK: - 5. hover 문구
@@ -272,7 +294,8 @@ do {
     let parts = GitHubGlance.of(snap(mine: [pr("mongshell/bookdam", 1), fail]),
                                 state: .loaded(.pat), hidden: []).lines
     check("lines 는 숫자와 나머지를 따로 든다",
-          parts == GitHubGlance.Lines(mine: 2, blocked: 1, mineRest: "막힘 1 · #45 build 실패"),
+          parts == GitHubGlance.Lines(ci: .failed(prs: 1, rest: "#45 build 실패"),
+                                      mine: 2, blocked: 1, mineRest: "막힘 1 · #45 build 실패"),
           "\(String(describing: parts))")
     let noLines = GitHubGlance.of(snap(mine: [fail]), state: .unauthorized, hidden: [])
     check("스냅샷을 읽지 않는 상태 → lines 없음·stateLabel 만",
@@ -280,6 +303,79 @@ do {
     let saveFailed = GitHubGlance.of(snap(mine: [fail]), state: .patSaveFailed(-25299), hidden: [])
     check("PAT 저장 실패 → stateLabel 에 상태 코드, 토큰 값 없음",
           saveFailed.stateLabel == "PAT 를 Keychain 에 저장하지 못했어요 (-25299)", saveFailed.stateLabel)
+}
+
+// MARK: - 5b. hover CI 줄 (#51)
+
+print("▸ hover CI 줄")
+do {
+    func ciLine(_ mine: [GitHubPullRequest], hidden: Set<String> = [], at: Date = now) -> String {
+        GitHubGlance.of(snap(mine: mine), state: .loaded(.pat), hidden: hidden).hoverCILine(now: at)
+    }
+    func going(_ repo: String, _ number: Int, _ checks: [PRCheck]) -> GitHubPullRequest {
+        pr(repo, number, rollup: .pending, checks: checks, complete: true)
+    }
+    let passed = pr("mongshell/bookdam", 40, checks: [chk("build", .passed)], complete: true)
+    let failed = pr("mongshell/bookdam", 45, rollup: .failure,
+                    checks: [chk("lint", .passed), chk("build", .failed)], complete: true)
+    // Started 100s ago on the first PR, 300s ago on the second: the second
+    // has run longest, whatever the list order.
+    let young = going("mongshell/bookdam", 46, [chk("test", .running, start: -100, end: nil)])
+    let old = going("mongshell/growdle", 121, [chk("lint", .passed),
+                                               chk("Vercel", .running, start: -300, end: nil)])
+
+    check("진행중 → \"CI 2 · growdle #121 Vercel 5m 00s…\" (가장 먼저 시작한 running, PR 을 넘어)",
+          ciLine([young, old]) == "CI 2 · growdle #121 Vercel 5m 00s…", ciLine([young, old]))
+    check("경과 시간은 넘긴 시각으로 흐른다",
+          ciLine([young, old], at: now.addingTimeInterval(5)) == "CI 2 · growdle #121 Vercel 5m 05s…")
+    let untimed = going("mongshell/bookdam", 47, [chk("ci", .running, start: nil, end: nil)])
+    check("시각 없는 running 은 시각 있는 running 을 이기지 못한다",
+          ciLine([untimed, young]) == "CI 2 · bookdam #46 test 1m 40s…", ciLine([untimed, young]))
+    check("running 이 전부 시각 없음 → 목록 순서 첫 것, \"진행중\"",
+          ciLine([untimed]) == "CI 1 · bookdam #47 ci 진행중", ciLine([untimed]))
+
+    let queuedA = going("mongshell/bookdam", 48, [chk("lint", .queued, start: nil, end: nil),
+                                                  chk("build", .queued, start: nil, end: nil)])
+    let queuedB = going("mongshell/growdle", 9, [chk("x", .queued, start: nil, end: nil)])
+    check("queued 만 → 목록 순서 첫 PR 의 첫 queued, 경과 없이 \"대기\"",
+          ciLine([queuedA, queuedB]) == "CI 2 · bookdam #48 lint 대기", ciLine([queuedA, queuedB]))
+    check("queued 가 앞에 있어도 running 이 있으면 running",
+          ciLine([queuedA, young]) == "CI 2 · bookdam #46 test 1m 40s…", ciLine([queuedA, young]))
+    let rollupOnly = pr("mongshell/bookdam", 49, rollup: .pending, checks: [], complete: false)
+    check("rollup 만 진행중(칩 없음) → \"검사 진행중\"",
+          ciLine([rollupOnly]) == "CI 1 · bookdam #49 검사 진행중", ciLine([rollupOnly]))
+
+    check("진행중이 실패보다 앞 — 숫자는 진행중 PR 수",
+          ciLine([failed, old]) == "CI 1 · growdle #121 Vercel 5m 00s…", ciLine([failed, old]))
+    check("실패만 → \"CI 1 · #45 build 실패\" (첫 실패 검사 이름)",
+          ciLine([passed, failed]) == "CI 1 · #45 build 실패", ciLine([passed, failed]))
+    let failed2 = pr("mongshell/growdle", 3, rollup: .failure, checks: [], complete: false)
+    check("실패 여럿 → 숫자는 실패 PR 수, 문구는 목록 순서 첫 PR",
+          ciLine([failed2, failed]) == "CI 2 · #3 검사 실패", ciLine([failed2, failed]))
+    check("모두 통과 → 숫자 없이 \"CI 모두 통과\"", ciLine([passed]) == "CI 모두 통과", ciLine([passed]))
+    check("검사 있는 PR 이 없음 → \"CI 없음\"",
+          ciLine([pr(rollup: .none)]) == "CI 없음" && ciLine([]) == "CI 없음", ciLine([pr(rollup: .none)]))
+    check("검사 없는 PR 이 섞여도 통과한 PR 이 있으면 모두 통과",
+          ciLine([pr(rollup: .none), passed]) == "CI 모두 통과")
+
+    check("숨긴 레포의 진행중·실패는 CI 줄에서도 빠진다",
+          ciLine([old, failed, passed], hidden: ["mongshell/growdle"]) == "CI 1 · #45 build 실패"
+              && ciLine([old, failed], hidden: ["mongshell/growdle", "mongshell/bookdam"]) == "CI 없음")
+
+    // The parts the view draws: a number only when there is a count, and
+    // its color telling running from failed.
+    let runningLine = GitHubCILine.of([young, old])
+    check("진행중 → 숫자·주황·경과 기준 시각",
+          runningLine.number == 2 && runningLine.tone == .amber
+              && runningLine.runningSince == now.addingTimeInterval(-300), "\(runningLine)")
+    let queuedLine = GitHubCILine.of([queuedA])
+    check("대기 → 숫자·주황·흐르는 시간 없음",
+          queuedLine.number == 1 && queuedLine.tone == .amber && queuedLine.runningSince == nil)
+    let failedLine = GitHubCILine.of([failed])
+    check("실패 → 숫자·빨강", failedLine.number == 1 && failedLine.tone == .red && failedLine.runningSince == nil)
+    check("모두 통과·없음 → 숫자·색 없음",
+          GitHubCILine.of([passed]).number == nil && GitHubCILine.of([passed]).tone == nil
+              && GitHubCILine.of([]).number == nil && GitHubCILine.of([]).tone == nil)
 }
 
 // MARK: - 6. 검사 칩 접기

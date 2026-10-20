@@ -100,6 +100,10 @@ enum SnapshotRenderer {
         write(GitHubMenuBarStrip(scheme: .dark, count: 0, dot: .green)
                 .frame(width: 320, height: 44).environment(\.colorScheme, .dark),
               to: base, "github_menubar_strip_zero_dark", scale: 3)
+        // Nothing blocked, a check still running: amber, still no number.
+        write(GitHubMenuBarStrip(scheme: .dark, count: 0, dot: .amber)
+                .frame(width: 320, height: 44).environment(\.colorScheme, .dark),
+              to: base, "github_menubar_strip_ci_dark", scale: 3)
 
         github.presentForSnapshot(.sample(now: now), state: .loaded(.ghCLI(account: "mongshellio")), now: now)
         write(GitHubHoverPreview(github: github), to: base, "github_hover", scale: 2)
