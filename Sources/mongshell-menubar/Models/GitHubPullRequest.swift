@@ -359,7 +359,8 @@ struct GitHubGlance: Equatable, Sendable {
         let line1Rest: String
         /// After the my-PR count: "막힘 1 · #45 build 실패".
         let line2Rest: String
-        /// My PRs the popover offers a merge on right now (Decision #52).
+        /// My PR rows the popover draws with a merge button right now
+        /// (Decision #52) — rows past the section cap have none.
         let mergeable: Int
         /// After the mergeable count: "bookdam #57 외 1", or empty.
         let line3Rest: String
@@ -403,7 +404,7 @@ struct GitHubGlance: Equatable, Sendable {
     /// `mergeActivity` is the model's per-PR merge state: a merge already
     /// out or done takes its PR out of the mergeable count.
     static func of(_ snapshot: GitHubSnapshot?, state: GitHubLoadState, hidden: Set<String>,
-                   mergeActivity: [String: PRMergeActivity] = [:]) -> GitHubGlance {
+                   mergeActivity: [String: PRMergeActivity]) -> GitHubGlance {
         switch state {
         case .loaded:
             return snapshot.map { of($0.hiding(hidden), mergeActivity: mergeActivity) } ?? .empty
@@ -430,7 +431,11 @@ struct GitHubGlance: Equatable, Sendable {
         if let first = blocked.first {
             line2Rest += " · " + blockedReason(first)
         }
-        let mergeable = s.mine.filter { isMergeableNow($0, activity: mergeActivity[$0.id]) }
+        // Only the rows the popover draws (the rest fold into "외 N건" with
+        // no button), so the glyph never says yes to a merge the popover
+        // can't offer.
+        let mergeable = s.mine.prefix(Config.githubSectionCaps.mine)
+            .filter { isMergeableNow($0, activity: mergeActivity[$0.id]) }
         var line3Rest = ""
         if let first = mergeable.first {
             line3Rest = "\(first.repositoryName) #\(first.number)"
@@ -442,7 +447,7 @@ struct GitHubGlance: Equatable, Sendable {
         return GitHubGlance(count: requested + blocked.count, dot: dot, lines: lines, stateLabel: "")
     }
 
-    /// The popover's merge button would be drawn on it (Decision #52): the
+    /// The popover's merge button would be drawn on its row (Decision #52): the
     /// same `canOffer`, minus a merge already out or done — search indexes
     /// a merged PR late, and until then it would read as one still to merge.
     /// A failed attempt still counts: the button is offered again.
