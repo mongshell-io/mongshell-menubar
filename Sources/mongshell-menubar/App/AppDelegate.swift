@@ -324,12 +324,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// same way the hover watchdog judges it: the cursor's screen position
     /// against the region's frame on screen. Routing by the click event's
     /// location in the button sent clicks on the GitHub region to the Claude
-    /// popover on a real menu bar (Decision #45). Falls back to `.claude` when
-    /// the cursor is not over the GitHub region — including keyboard or
-    /// accessibility activation, and a GitHub region with no width.
+    /// popover on a real menu bar (Decision #45). The cursor is only read for
+    /// a mouse click: keyboard or accessibility activation opens `.claude`
+    /// wherever the cursor happens to rest. A mouse click away from the
+    /// GitHub region, or on one with no width, opens `.claude` too.
     @objc private func statusItemClicked() {
-        togglePopover(isCursorOver(.github) ? .github : .claude)
+        let isMouseClick = NSApp.currentEvent.map { Self.mouseClickTypes.contains($0.type) } ?? false
+        togglePopover(isMouseClick && isCursorOver(.github) ? .github : .claude)
     }
+
+    private static let mouseClickTypes: Set<NSEvent.EventType> = [
+        .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp,
+    ]
 
     private func togglePopover(_ region: Region) {
         guard let button = statusItem.button, let rect = regionRect(region),
