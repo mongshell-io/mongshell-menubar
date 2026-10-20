@@ -28,7 +28,9 @@ enum SnapshotRenderer {
             "openClawStatusURL": "https://openclaw-server.example.ts.net:8443/0123456789abcdef0123456789abcdef",
             "menuBarTarget": MenuBarTarget.claudeAndOpenClaw.rawValue,
         ], forName: UserDefaults.argumentDomain)
-        let now = Date()
+        // Floored to an even second: the running-check dot blinks on the
+        // clock's parity, and the run's wall time would otherwise pick the frame.
+        let now = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 / 2).rounded(.down) * 2)
         OpenClawModel.shared.presentForSnapshot(.snapshotOK(now: now), now: now)
 
         write(MenuBarStrip(scheme: .dark).frame(width: 700, height: 44)
