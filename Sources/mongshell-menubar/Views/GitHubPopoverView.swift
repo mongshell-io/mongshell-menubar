@@ -355,15 +355,12 @@ private struct PRRow: View {
         self.popoverSession = popoverSession
     }
 
-    /// The confirm state, as drawn and as the second click reads it. Worked
-    /// out from the arm rather than trusted as stored: the disarm paths below
-    /// hang on view lifecycle callbacks, and should one not come (AppKit
-    /// reuses the popover's hosting view), an arm for another head, from an
-    /// earlier opening, or on a row that no longer offers the merge still
-    /// reads as not armed — never as one click from a merge.
+    /// The confirm state, as drawn and as the second click reads it
+    /// (`GitHubMergePolicy.isArmed` — why it is worked out, not stored).
     private var armed: Bool {
-        guard let arm, offersMerge else { return false }
-        return arm.head == pr.headSHA && arm.session == popoverSession
+        GitHubMergePolicy.isArmed(armHead: arm?.head, armSession: arm?.session,
+                                  currentHead: pr.headSHA, session: popoverSession,
+                                  offers: offersMerge)
     }
 
     private var checksLine: ChecksLine { ChecksLine.fold(pr.checks) }

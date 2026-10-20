@@ -846,6 +846,20 @@ do {
               && GitHubMergePolicy.confirmCeilingSeconds < window)
 }
 
+print("▸ 머지 확인 상태 (GitHubMergePolicy.isArmed)")
+do {
+    func armed(head: String? = "abc", session: Int? = 3, current: String? = "abc",
+               now: Int = 3, offers: Bool = true) -> Bool {
+        GitHubMergePolicy.isArmed(armHead: head, armSession: session, currentHead: current,
+                                  session: now, offers: offers)
+    }
+    check("같은 head · 같은 열림 · 노출 중 → 확인 상태", armed())
+    check("head 가 바뀜 → 확인 아님", !armed(current: "def"))
+    check("다른 열림에서 건 확인 → 확인 아님", !armed(now: 4))
+    check("버튼 노출 조건을 잃음 → 확인 아님", !armed(offers: false))
+    check("확인을 건 적 없음 → 확인 아님", !armed(head: nil, session: nil))
+}
+
 print("▸ 머지 요청 판정 (GitHubMergePolicy.gate)")
 do {
     let ready = pr("mongshell/bookdam", 57, merge: .clean, nodeID: "PR_57", headSHA: "abc")

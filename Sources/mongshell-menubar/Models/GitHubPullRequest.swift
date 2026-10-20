@@ -245,6 +245,19 @@ enum GitHubMergePolicy {
         case expired
     }
 
+    /// Whether a row reads as armed — one click from a merge. Worked out
+    /// from what the first click saw rather than trusted as stored: the
+    /// view's disarm paths hang on lifecycle callbacks, and should one not
+    /// come (AppKit reuses the popover's hosting view), an arm for another
+    /// head, from an earlier opening, or on a row that no longer offers the
+    /// merge still reads as not armed. No arm (nil head or session) is not
+    /// armed.
+    static func isArmed(armHead: String?, armSession: Int?, currentHead: String?,
+                        session: Int, offers: Bool) -> Bool {
+        guard offers, let armHead, let armSession else { return false }
+        return armHead == currentHead && armSession == session
+    }
+
     /// `NSEvent.doubleClickInterval`, held between the floor and the ceiling.
     static func confirmMinimum(doubleClickInterval: TimeInterval) -> TimeInterval {
         min(max(doubleClickInterval, confirmFloorSeconds), confirmCeilingSeconds)
