@@ -72,6 +72,12 @@ struct GitHubPullRequest: Equatable, Identifiable, Sendable {
     let checksListComplete: Bool
     let updatedAt: Date?
     let mergedAt: Date?
+    /// GraphQL node id — what `mergePullRequest` takes. nil when the response
+    /// didn't carry one; such a PR is never offered a merge.
+    let nodeID: String?
+    /// `headRefOid`, the commit the row shows. A merge is sent with it as
+    /// `expectedHeadOid` so GitHub refuses one whose head moved meanwhile.
+    let headSHA: String?
 
     var id: String { url?.absoluteString ?? "\(repository)#\(number)" }
 
@@ -147,6 +153,152 @@ enum PRVerdict: Int, Comparable, Sendable {
             break
         }
         return approved ? .approved : .awaitingReview
+    }
+}
+
+// MARK: - Merge (Decision #49)
+
+/// Which popover list a row sits in.
+enum PRSection: Sendable {
+    case reviewRequested, mine, merged
+}
+
+/// Where one PR's merge stands, as its row shows it. No entry means none
+/// was asked for.
+enum PRMergeActivity: Equatable, Sendable {
+    case merging
+    /// GitHub said `MERGED`. The list can still show the PR open for a
+    /// moment — search is indexed after the fact — so the row says so
+    /// instead of offering the merge again.
+    case merged
+    /// The line under the row, until the next successful refresh.
+    case failed(String)
+}
+
+enum GitHubMergePolicy {
+    /// The merge button is drawn — never greyed out — only on my own PR,
+    /// when GitHub's own verdict is `CLEAN` (the one signal a solo repo has:
+    /// no review rules, no `reviewDecision`), it isn't a draft, the
+    /// response carried what the mutation needs, and its link survived the
+    /// https · github.com filter — a PR whose URL was dropped is data we
+    /// don't trust enough to offer an irreversible write on.
+    static func canOffer(_ pr: GitHubPullRequest, section: PRSection) -> Bool {
+        section == .mine && pr.mergeState == .clean && !pr.isDraft
+            && pr.nodeID != nil && pr.headSHA != nil && pr.url != nil
+    }
+
+    /// The row's line when the list moved to a new head between the first
+    /// click and the second: nothing was sent.
+    static let headMovedReason = "그 사이 새 커밋이 올라왔어요 — 다시 확인해 주세요"
+
+    /// The row's line when the token changed after the list on screen was
+    /// fetched: nothing was sent, and the new token's list is on its way.
+    static let listStaleReason = "토큰이 바뀌어 목록을 다시 받는 중이에요 — 받은 뒤 다시 눌러 주세요"
+
+    /// Whether the region's state lets a merge go out: loaded, or loading /
+    /// rate-limited on an earlier answer (the same states `GitHubGlance`
+    /// reads a snapshot in). A rejected token, a failed PAT save, an error,
+    /// no token, a refused Keychain or a region switched off sends nothing.
+    /// The state alone doesn't say the list came from the token in use — a
+    /// token swap leaves `.loaded` standing until the next answer — so
+    /// `gate` also compares the list's generation with the current one.
+    static func allowsMerge(in state: GitHubLoadState) -> Bool {
+        switch state {
+        case .loaded, .loading, .rateLimited: return true
+        case .off, .noToken, .keychainDenied, .unauthorized, .patSaveFailed, .error: return false
+        }
+    }
+
+    /// What the model does with a confirmed click.
+    enum Gate: Equatable, Sendable {
+        case send(nodeID: String)
+        /// The list now holds another head than the one confirmed.
+        case headMoved
+        /// The list was fetched before the token last changed, so it speaks
+        /// for another token than the one the merge would go out with.
+        case listStale
+        /// Nothing to send and nothing to say: a merge already out or done,
+        /// a stopped state, or a PR the list no longer offers a merge on.
+        case ignore
+    }
+
+    /// Judged on the PR as `mine` holds it now — looked up by id, never the
+    /// copy the row drew from — so the node id, the head and `canOffer` all
+    /// come from the current list. `listGeneration` is the model's
+    /// generation when that list arrived, `generation` its generation now.
+    static func gate(id: String, expectedHead: String, mine: [GitHubPullRequest]?,
+                     listGeneration: Int, generation: Int,
+                     state: GitHubLoadState, activity: PRMergeActivity?) -> Gate {
+        guard allowsMerge(in: state), activity != .merging, activity != .merged,
+              let current = mine?.first(where: { $0.id == id }),
+              canOffer(current, section: .mine),
+              let nodeID = current.nodeID else { return .ignore }
+        guard listGeneration == generation else { return .listStale }
+        guard current.headSHA == expectedHead else { return .headMoved }
+        return .send(nodeID: nodeID)
+    }
+
+    /// How long the armed "확인 — #N 머지" waits for the second click.
+    static let confirmWindowSeconds = 3
+    /// The least time between the first click and a second that counts:
+    /// anything sooner is the other half of a double-click — one gesture,
+    /// not a decision. Never under this, whatever the system interval says.
+    static let confirmFloorSeconds: TimeInterval = 0.4
+    /// …and never so long that the window leaves no room to confirm (the
+    /// slowest double-click setting runs to seconds).
+    static let confirmCeilingSeconds: TimeInterval = 1.5
+
+    enum ConfirmClick: Equatable, Sendable {
+        /// Too soon after arming: ignored, and the confirm stays up.
+        case tooSoon
+        case confirms
+        /// Past the window — the confirm should already have dropped, so
+        /// the click is a fresh first one.
+        case expired
+    }
+
+    /// Whether a row reads as armed — one click from a merge. Worked out
+    /// from what the first click saw rather than trusted as stored: the
+    /// view's disarm paths hang on lifecycle callbacks, and should one not
+    /// come (AppKit reuses the popover's hosting view), an arm for another
+    /// head, from an earlier opening, or on a row that no longer offers the
+    /// merge still reads as not armed. No arm (nil head or session) is not
+    /// armed.
+    static func isArmed(armHead: String?, armSession: Int?, currentHead: String?,
+                        session: Int, offers: Bool) -> Bool {
+        guard offers, let armHead, let armSession else { return false }
+        return armHead == currentHead && armSession == session
+    }
+
+    /// `NSEvent.doubleClickInterval`, held between the floor and the ceiling.
+    static func confirmMinimum(doubleClickInterval: TimeInterval) -> TimeInterval {
+        min(max(doubleClickInterval, confirmFloorSeconds), confirmCeilingSeconds)
+    }
+
+    /// How a click on an armed button reads. Times are monotonic seconds
+    /// (`ProcessInfo.systemUptime`), so a wall-clock change can't stretch
+    /// or shrink the gap.
+    static func confirmClick(armedAt: TimeInterval, now: TimeInterval,
+                             minimum: TimeInterval) -> ConfirmClick {
+        let elapsed = now - armedAt
+        if elapsed < minimum { return .tooSoon }
+        if elapsed > TimeInterval(confirmWindowSeconds) { return .expired }
+        return .confirms
+    }
+
+    /// What a successful refresh keeps: a merge still out, and a finished
+    /// one whose PR the list still shows open. Failure lines end here — the
+    /// list they were about has been replaced.
+    static func carryOver(_ activity: [String: PRMergeActivity],
+                          into mine: [GitHubPullRequest]) -> [String: PRMergeActivity] {
+        let listed = Set(mine.map(\.id))
+        return activity.filter { id, state in
+            switch state {
+            case .merging: return true
+            case .merged:  return listed.contains(id)
+            case .failed:  return false
+            }
+        }
     }
 }
 

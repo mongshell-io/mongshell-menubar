@@ -18,7 +18,7 @@ non_goals:
 | 종류 | 예 | 규칙 |
 |---|---|---|
 | 상태 소유 객체 | `UsageModel`, `OpenClawModel`, `ClaudeSettingsModel`, `Preferences`, `LoginItemModel`, `GitHubModel` | `@MainActor final class … : ObservableObject` |
-| 값 타입 | `UsageSnapshot`, `ModelUsage`, `OpenClawHealth`, `ServerHost` / `ServerHostPower` / `ServerHostDisk` / `ServerHostLevel`, `ServerHostHealth` | `struct`/`enum`, `Equatable`, 로직 없음에 가깝게. 단 판정 규칙을 테스트 가능하게 담는 순수 값 타입은 허용 (`OpenClawReading` — 두절 판정, `OpenClawHealWatch` — 복구 알림 판정, `ServerHostAlertWatch` — 서버 호스트 알림 판정, `GitHubPullRequest` — PR 배지·점·숫자 판정) |
+| 값 타입 | `UsageSnapshot`, `ModelUsage`, `OpenClawHealth`, `ServerHost` / `ServerHostPower` / `ServerHostDisk` / `ServerHostLevel`, `ServerHostHealth` | `struct`/`enum`, `Equatable`, 로직 없음에 가깝게. 단 판정 규칙을 테스트 가능하게 담는 순수 값 타입은 허용 (`OpenClawReading` — 두절 판정, `OpenClawHealWatch` — 복구 알림 판정, `ServerHostAlertWatch` — 서버 호스트 알림 판정, `GitHubPullRequest` — PR 배지·점·숫자 판정, `GitHubMergePolicy` — 머지 버튼 노출·확인·머지 상태 이월 판정) |
 
 ## `@MainActor` 격리
 
@@ -60,10 +60,10 @@ non_goals:
 
 ## GitHub PR 판정과 폴링 주기
 
-Decision #45 의 모델 쪽 규약은 넷이다. 주기와 요청 정지 규칙은 [docs/architecture.md § 4. GitHub PR 폴링](../../../docs/architecture.md#4-github-pr-폴링-선택-경로) 이 권위다.
+Decision #45·#49 의 모델 쪽 규약은 넷이다. 주기와 요청 정지 규칙은 [docs/architecture.md § 4. GitHub PR 폴링](../../../docs/architecture.md#4-github-pr-폴링-선택-경로) 이 권위다.
 
-- 판정은 `GitHubPullRequest.swift` 의 순수 값 타입에 둔다 — 배지 우선순위, 메뉴바 숫자(리뷰 요청 + 내 PR 중 막힌 것), 점 색, 검사 칩 접기. `GitHubModel` 은 API 결과를 그 타입에 넘겨 호출만 하고, 판정 규칙을 모델 안에 다시 적지 않는다. 규칙은 `scripts/test.sh` 가 고정한다.
-- 팝오버의 열림·닫힘은 `setPopoverOpen(_:)` 으로 받는다 (AppDelegate 가 `NSPopover.didCloseNotification` 으로 부른다). hover 는 갱신을 일으키지 않는다.
+- 판정은 `GitHubPullRequest.swift` 의 순수 값 타입에 둔다 — 배지 우선순위, 메뉴바 숫자(리뷰 요청 + 내 PR 중 막힌 것), 점 색, 검사 칩 접기, 머지 버튼 노출·확인 클릭 간격·요청 판정(스냅샷에서 다시 꺼낸 PR · `loadState` · 스냅샷 세대로)·머지 상태의 갱신 간 이월(`GitHubMergePolicy`, Decision #49). `GitHubModel` 은 API 결과를 그 타입에 넘겨 호출만 하고, 판정 규칙을 모델 안에 다시 적지 않는다. 규칙은 `scripts/test.sh` 가 고정한다.
+- 팝오버의 열림·닫힘은 `setPopoverOpen(_:)` 으로 받는다 (AppDelegate 가 `NSPopover.didCloseNotification` 으로 부른다). hover 는 갱신을 일으키지 않는다. 닫힘은 `popoverSession` 도 올려, 뷰에 남은 머지 확인 상태를 무효로 만든다.
 - gh 항목의 Keychain 접근 거부(`.denied`)는 모델이 세션 동안 기억하고 설정에서만 재시도한다 — 폴링마다 대화상자가 뜨지 않도록.
 - 1초 경과 시간은 모델의 일이 아니다 — 팝오버 뷰의 `TimelineView` 가 그린다. 모델은 검사의 `startedAt`/`completedAt` 을 저장만 한다.
 

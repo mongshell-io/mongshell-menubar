@@ -104,6 +104,20 @@ enum SnapshotRenderer {
         github.presentForSnapshot(.sample(now: now), state: .loaded(.ghCLI(account: "mongshellio")), now: now)
         write(GitHubHoverPreview(github: github), to: base, "github_hover", scale: 2)
         write(GitHubPopoverPreview(github: github), to: base, "github_popover", scale: 2)
+        // The squash merge control on the CLEAN row (Decision #49): armed by
+        // a first click, and after GitHub refused the merge.
+        let sample = GitHubSnapshot.sample(now: now)
+        if let mergeable = sample.mine.first(where: { GitHubMergePolicy.canOffer($0, section: .mine) }) {
+            write(GitHubPopoverPreview(github: github, armedPRID: mergeable.id),
+                  to: base, "github_popover_merge_confirm", scale: 2)
+            github.presentForSnapshot(sample, state: .loaded(.ghCLI(account: "mongshellio")), now: now,
+                                      mergeActivity: [mergeable.id: .failed(
+                                        GitHubMergeResult.notMergeable("Required status check \"build\" is expected.")
+                                            .failureReason ?? "")])
+            write(GitHubPopoverPreview(github: github), to: base, "github_popover_merge_failed", scale: 2)
+        } else {
+            report("github_popover_merge_*: no mergeable row in the sample")
+        }
         github.presentForSnapshot(.sampleOverflow(now: now), state: .loaded(.pat), now: now)
         write(GitHubPopoverPreview(github: github), to: base, "github_popover_overflow", scale: 2)
         github.presentForSnapshot(nil, state: .noToken, now: now)
@@ -361,14 +375,16 @@ private extension GitHubSnapshot {
                 draft: Bool = false, review: PRReviewDecision = PRReviewDecision.none,
                 mergeable: PRMergeable = .mergeable, mergeState: PRMergeState = .blocked,
                 rollup: PRChecksRollup,
-                checks: [PRCheck], mergedAgo: TimeInterval? = nil) -> GitHubPullRequest {
+                checks: [PRCheck], mergedAgo: TimeInterval? = nil,
+                nodeID: String? = nil, headSHA: String? = nil) -> GitHubPullRequest {
             GitHubPullRequest(repository: repo, number: number, title: title,
                               url: URL(string: "https://github.com/\(repo)/pull/\(number)"),
                               isDraft: draft, reviewDecision: review, mergeable: mergeable,
                               mergeState: mergeState, checksRollup: rollup, checks: checks,
                               checksListComplete: true,
                               updatedAt: now.addingTimeInterval(-updatedAgo),
-                              mergedAt: mergedAgo.map { now.addingTimeInterval(-$0) })
+                              mergedAt: mergedAgo.map { now.addingTimeInterval(-$0) },
+                              nodeID: nodeID, headSHA: headSHA)
         }
         return GitHubSnapshot(
             reviewRequested: [
@@ -394,10 +410,12 @@ private extension GitHubSnapshot {
                    updatedAgo: hour, draft: true, rollup: .success,
                    checks: passed(3, total: 2 * minute + 40)),
                 // No review rules (reviewDecision null) but GitHub says CLEAN —
-                // "머지 가능" without an approval (a solo repo).
+                // "머지 가능" without an approval (a solo repo), so it offers
+                // the squash merge. Fixture ids, not a real PR's.
                 pr("mongshell/bookdam", 57, "refactor: auth 라우트의 세션 조회를 미들웨어로",
                    updatedAgo: 2 * day, mergeState: .clean, rollup: .success,
-                   checks: passed(5, total: 6 * minute + 12)),
+                   checks: passed(5, total: 6 * minute + 12),
+                   nodeID: "PR_snapshot57", headSHA: "57575757575757575757575757575757575757aa"),
                 pr("mongshell/bookdam", 55, "feat: 대화 내보내기 (markdown)",
                    updatedAgo: 4 * day, review: .reviewRequired, rollup: .success,
                    checks: passed(4, total: 5 * minute + 58)
@@ -436,7 +454,8 @@ private extension GitHubSnapshot {
                               reviewDecision: PRReviewDecision.none, mergeable: .mergeable,
                               mergeState: .blocked, checksRollup: PRChecksRollup.none, checks: [],
                               checksListComplete: true,
-                              updatedAt: template.updatedAt, mergedAt: nil)
+                              updatedAt: template.updatedAt, mergedAt: nil,
+                              nodeID: nil, headSHA: nil)
         }
         snapshot.recentlyMerged.append(snapshot.recentlyMerged[0])
         return snapshot
@@ -476,8 +495,10 @@ private struct GitHubHoverPreview: View {
 
 private struct GitHubPopoverPreview: View {
     @ObservedObject var github: GitHubModel
+    var armedPRID: String? = nil
     var body: some View {
-        GitHubPopoverView(model: github, prefs: .shared, onOpenSettings: {})
+        GitHubPopoverView(model: github, prefs: .shared, onOpenSettings: {},
+                          previewArmedPRID: armedPRID)
             .padding(24)
             .background(Color(hex: 0xE8E6E1))
     }

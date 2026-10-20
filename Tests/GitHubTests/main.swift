@@ -29,10 +29,15 @@ func pr(_ repo: String = "mongshell/bookdam", _ number: Int = 45,
         merge: PRMergeState = .unknown,
         rollup: PRChecksRollup = .success,
         checks: [PRCheck] = [],
-        complete: Bool = false) -> GitHubPullRequest {
-    GitHubPullRequest(repository: repo, number: number, title: "t", url: nil, isDraft: draft,
+        complete: Bool = false,
+        nodeID: String? = nil, headSHA: String? = nil,
+        linked: Bool = true) -> GitHubPullRequest {
+    GitHubPullRequest(repository: repo, number: number, title: "t",
+                      url: linked ? URL(string: "https://github.com/\(repo)/pull/\(number)") : nil,
+                      isDraft: draft,
                       reviewDecision: review, mergeable: mergeable, mergeState: merge, checksRollup: rollup,
-                      checks: checks, checksListComplete: complete, updatedAt: now, mergedAt: nil)
+                      checks: checks, checksListComplete: complete, updatedAt: now, mergedAt: nil,
+                      nodeID: nodeID, headSHA: headSHA)
 }
 
 func chk(_ name: String, _ outcome: PRCheckOutcome, start: TimeInterval? = 0, end: TimeInterval? = 60) -> PRCheck {
@@ -400,13 +405,15 @@ do {
 func node(_ repo: String = "mongshell/bookdam", _ number: Int = 45, typename: String = "PullRequest",
           mergeable: String = "MERGEABLE", mergeState: String? = nil, review: Any = "APPROVED",
           rollup: String? = #"{"state":"SUCCESS","contexts":{"nodes":[]}}"#,
-          url: String? = nil) -> String {
+          url: String? = nil, id: String? = nil, headRefOid: String? = nil) -> String {
     let reviewJSON = review is NSNull ? "null" : "\"\(review)\""
     let rollupJSON = rollup ?? "null"
     let urlText = url ?? "https://github.com/\(repo)/pull/\(number)"
     let mergeStateJSON = mergeState.map { "\"mergeStateStatus\":\"\($0)\"," } ?? ""
+    let idJSON = id.map { "\"id\":\"\($0)\"," } ?? ""
+    let headJSON = headRefOid.map { "\"headRefOid\":\"\($0)\"," } ?? ""
     return """
-    {"__typename":"\(typename)","number":\(number),"title":"t","url":"\(urlText)",
+    {"__typename":"\(typename)",\(idJSON)\(headJSON)"number":\(number),"title":"t","url":"\(urlText)",
      "isDraft":false,"reviewDecision":\(reviewJSON),"mergeable":"\(mergeable)",\(mergeStateJSON)
      "updatedAt":"2026-09-29T03:12:45Z","mergedAt":null,
      "repository":{"nameWithOwner":"\(repo)"},
@@ -683,6 +690,212 @@ do {
     check("같은 순간이 UTC 로는 전날", GitHubAPIClient.query(mergedSince: since, calendar: utc).contains("merged:>=2026-10-13"))
     let lateNight = cal.date(from: DateComponents(year: 2026, month: 10, day: 13, hour: 1))!
     check("서울 01시 = UTC 전날 → 달력이 결정", GitHubAPIClient.query(mergedSince: lateNight, calendar: utc).contains("merged:>=2026-10-12"))
+}
+
+// MARK: - 11b. 머지 mutation (Decision #49)
+
+print("▸ PR 노드 id · head SHA")
+do {
+    let full = parsed(body(mine: [node(id: "PR_kwDOabc", headRefOid: "0123abcd")]))?.mine.first
+    check("id → nodeID", full?.nodeID == "PR_kwDOabc", "\(String(describing: full?.nodeID))")
+    check("headRefOid → headSHA", full?.headSHA == "0123abcd")
+    let bare = parsed(body(mine: [node()]))?.mine.first
+    check("id·headRefOid 없음 → nil (행은 남음)", bare != nil && bare?.nodeID == nil && bare?.headSHA == nil)
+    let empty = parsed(body(mine: [node(id: "", headRefOid: "")]))?.mine.first
+    check("빈 문자열 → nil", empty?.nodeID == nil && empty?.headSHA == nil)
+    let q = GitHubAPIClient.query(mergedSince: now)
+    check("query 가 id·headRefOid 를 요청", q.contains(" id number ") && q.contains(" headRefOid "))
+}
+
+print("▸ 머지 mutation")
+do {
+    let m = GitHubAPIClient.mergeMutation
+    check("mutation 이다", m.hasPrefix("mutation"))
+    check("mergeMethod: SQUASH", m.contains("mergeMethod: SQUASH"))
+    check("expectedHeadOid 를 변수로 넘김", m.contains("expectedHeadOid: $expectedHeadOid")
+              && m.contains("$expectedHeadOid: GitObjectID!"))
+    check("pullRequestId 를 변수로 넘김", m.contains("pullRequestId: $pullRequestId") && m.contains("$pullRequestId: ID!"))
+    check("브랜치 삭제·커밋 문구 인자 없음",
+          !m.contains("deleteBranch") && !m.contains("commitHeadline") && !m.contains("commitBody"))
+    check("결과로 state 를 받음", m.contains("pullRequest { number state mergedAt }"))
+    let b = GitHubAPIClient.mergeRequestBody(pullRequestId: "PR_x", expectedHeadOid: "abc")
+    let vars = b["variables"] as? [String: String]
+    check("본문 variables 에 두 id", vars == ["pullRequestId": "PR_x", "expectedHeadOid": "abc"])
+    check("본문 query 는 mutation 원문", b["query"] as? String == m)
+}
+
+print("▸ 머지 응답 해석")
+do {
+    func merge(_ code: Int, _ json: String = "", _ headers: [String: String] = [:]) -> GitHubMergeResult {
+        GitHubAPIClient.interpretMerge(statusCode: code, headers: headers, data: Data(json.utf8))
+    }
+    let merged = #"{"data":{"mergePullRequest":{"pullRequest":{"number":57,"state":"MERGED","mergedAt":"2026-10-20T03:00:00Z"}}}}"#
+    check("state MERGED → merged", merge(200, merged) == .merged)
+    check("성공은 실패 사유 없음", GitHubMergeResult.merged.failureReason == nil)
+    let moved = #"{"data":{"mergePullRequest":null},"errors":[{"type":"UNPROCESSABLE","path":["mergePullRequest"],"message":"Head branch was modified. Review and try the merge again."}]}"#
+    check("head 바뀜 메시지 → headChanged", merge(200, moved) == .headChanged, "\(merge(200, moved))")
+    let refused = #"{"data":{"mergePullRequest":null},"errors":[{"type":"UNPROCESSABLE","message":"Pull Request is not mergeable"}]}"#
+    check("머지 불가 → GitHub 메시지", merge(200, refused) == .notMergeable("Pull Request is not mergeable"))
+    let badVar = #"{"errors":[{"message":"Variable $expectedHeadOid of type GitObjectID! was provided invalid value"}]}"#
+    check("expectedHeadOid 변수 오류 → head 바뀜 아님 (GitHub 원문)",
+          merge(200, badVar) == .notMergeable("Variable $expectedHeadOid of type GitObjectID! was provided invalid value"),
+          "\(merge(200, badVar))")
+    let movedLower = #"{"errors":[{"message":"head branch was modified"}]}"#
+    check("head 바뀜 문구는 대소문자 무시", merge(200, movedLower) == .headChanged)
+    check("머지 불가 사유 문구에 GitHub 메시지", GitHubMergeResult.notMergeable("x y").failureReason?.contains("x y") == true)
+    let protected = #"{"errors":[{"message":"Repository rule violations found\n\nRequired status check \"build\" is expected."}]}"#
+    check("여러 줄 메시지 → 한 줄",
+          merge(200, protected) == .notMergeable(#"Repository rule violations found Required status check "build" is expected."#),
+          "\(merge(200, protected))")
+    let forbidden = #"{"data":{"mergePullRequest":null},"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by personal access token"}]}"#
+    check("errors FORBIDDEN → forbidden", merge(200, forbidden) == .forbidden)
+    check("403 (한도 헤더 없음) → forbidden", merge(403) == .forbidden)
+    check("403 + x-ratelimit-remaining 0 → rateLimited", merge(403, "", ["X-RateLimit-Remaining": "0"]) == .rateLimited)
+    check("403 + retry-after → rateLimited", merge(403, "", ["retry-after": "30"]) == .rateLimited)
+    check("429 → rateLimited", merge(429) == .rateLimited)
+    check("errors RATE_LIMITED → rateLimited",
+          merge(200, #"{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded"}]}"#) == .rateLimited)
+    check("401 → unauthorized", merge(401) == .unauthorized)
+    let both = #"{"data":{"mergePullRequest":{"pullRequest":{"number":57,"state":"MERGED"}}},"errors":[{"type":"SOMETHING","message":"partial"}]}"#
+    check("errors + data(MERGED) 동반 → merged (머지는 일어났다)", merge(200, both) == .merged)
+    let open = #"{"data":{"mergePullRequest":{"pullRequest":{"number":57,"state":"OPEN"}}}}"#
+    check("errors 없이 OPEN → 머지 아님", { if case .notMergeable = merge(200, open) { return true }; return false }())
+    let oddState = #"{"data":{"mergePullRequest":{"pullRequest":{"number":57,"state":"QUEUED\n ghp_abcdef123 \#(String(repeating: "x", count: 200))"}}}}"#
+    let oddReason: String = { if case .notMergeable(let why) = merge(200, oddState) { return why }; return "" }()
+    check("서버 state 도 정규화 (한 줄·마스킹·자르기)",
+          !oddReason.contains("\n") && !oddReason.contains("ghp_") && oddReason.contains("•••")
+              && oddReason.count == GitHubAPIClient.mergeMessageMaxLength + 1 && oddReason.hasSuffix("…"),
+          oddReason)
+    check("깨진 JSON → failed(badResponse)", merge(200, "<html>") == .failed(.badResponse))
+    check("data·errors 둘 다 없음 → failed(badResponse)", merge(200, "{}") == .failed(.badResponse))
+    check("502 → failed(http(502))", merge(502) == .failed(.http(502)))
+    check("302 → failed(http(302))", merge(302) == .failed(.http(302)))
+    check("전송 실패 사유는 GitHubAPIError.detail",
+          GitHubMergeResult.failed(.offline).failureReason == GitHubAPIError.offline.detail)
+
+    // The row shows GitHub's text; a token-shaped string must never reach it.
+    let token = "ghp_" + String(repeating: "A1b2", count: 9)
+    let leaky = #"{"errors":[{"message":"bad credentials for \#(token) and github_pat_11ABC_def"}]}"#
+    let reason = merge(200, leaky).failureReason ?? ""
+    check("오류 문구에 토큰 문자열 없음", !reason.contains(token) && !reason.contains("github_pat_11ABC_def")
+              && reason.contains("•••"), reason)
+    for result in [GitHubMergeResult.headChanged, .forbidden, .unauthorized, .rateLimited,
+                   .failed(.network), .notMergeable("x")] {
+        check("고정 문구에 토큰 접두 없음 (\(result))", !(result.failureReason ?? "").contains("ghp_"))
+    }
+    let long = String(repeating: "가", count: 300)
+    let cut = GitHubAPIClient.mergeMessage(long)
+    check("긴 메시지는 잘림", cut.count == GitHubAPIClient.mergeMessageMaxLength + 1 && cut.hasSuffix("…"))
+    check("짧은 메시지는 그대로", GitHubAPIClient.mergeMessage("Pull Request is not mergeable") == "Pull Request is not mergeable")
+}
+
+print("▸ 머지 버튼 노출 (GitHubMergePolicy.canOffer)")
+do {
+    func offer(_ p: GitHubPullRequest, _ section: PRSection = .mine) -> Bool {
+        GitHubMergePolicy.canOffer(p, section: section)
+    }
+    let ready = pr(merge: .clean, nodeID: "PR_1", headSHA: "abc")
+    check("CLEAN + 내 PR + id·SHA → 있음", offer(ready))
+    for state in [PRMergeState.blocked, .dirty, .unknown, .behind, .unstable, .hasHooks, .draft] {
+        check("\(state) → 없음", !offer(pr(merge: state, nodeID: "PR_1", headSHA: "abc")))
+    }
+    check("Draft (CLEAN 이어도) → 없음", !offer(pr(draft: true, merge: .clean, nodeID: "PR_1", headSHA: "abc")))
+    check("리뷰 요청 섹션 → 없음", !offer(ready, .reviewRequested))
+    check("최근 머지 섹션 → 없음", !offer(ready, .merged))
+    check("nodeID 없음 → 없음", !offer(pr(merge: .clean, headSHA: "abc")))
+    check("headSHA 없음 → 없음", !offer(pr(merge: .clean, nodeID: "PR_1")))
+    check("링크 없음 (URL 이 https·github.com 검사를 못 넘김) → 없음",
+          !offer(pr(merge: .clean, nodeID: "PR_1", headSHA: "abc", linked: false)))
+    check("reviewDecision 없어도 CLEAN 이면 있음 (혼자 쓰는 저장소)",
+          offer(pr(review: .none, merge: .clean, rollup: .none, nodeID: "PR_1", headSHA: "abc")))
+}
+
+print("▸ 머지 상태 이월 (GitHubMergePolicy.carryOver)")
+do {
+    let open = pr("mongshell/bookdam", 57)
+    let gone = pr("mongshell/bookdam", 58)
+    let before: [String: PRMergeActivity] = [
+        open.id: .merged, gone.id: .merged,
+        pr("mongshell/bookdam", 59).id: .merging,
+        pr("mongshell/bookdam", 60).id: .failed("머지 불가 — x"),
+    ]
+    let after = GitHubMergePolicy.carryOver(before, into: [open, pr("mongshell/bookdam", 60)])
+    check("목록에 남은 머지됨 PR → 유지 (search 색인 지연)", after[open.id] == .merged)
+    check("목록에서 빠진 머지됨 PR → 지움", after[gone.id] == nil)
+    check("진행 중 → 유지", after[pr("mongshell/bookdam", 59).id] == .merging)
+    check("실패 사유 → 다음 성공 갱신에서 지움", after[pr("mongshell/bookdam", 60).id] == nil)
+}
+
+print("▸ 머지 확인 클릭 간격 (GitHubMergePolicy.confirmClick)")
+do {
+    func click(_ elapsed: TimeInterval, minimum: TimeInterval = 0.5) -> GitHubMergePolicy.ConfirmClick {
+        GitHubMergePolicy.confirmClick(armedAt: 100, now: 100 + elapsed, minimum: minimum)
+    }
+    let window = TimeInterval(GitHubMergePolicy.confirmWindowSeconds)
+    check("더블클릭 간격 안 → 무시 (확인 유지)", click(0.2) == .tooSoon)
+    check("최소 간격 직전 → 무시", click(0.499) == .tooSoon)
+    check("최소 간격 정각 → 확정", click(0.5) == .confirms)
+    check("창 끝 정각 → 확정", click(window) == .confirms)
+    check("창 넘김 → 새 첫 클릭", click(window + 0.01) == .expired)
+    check("시각이 거꾸로 → 무시", click(-1) == .tooSoon)
+    let minimum = GitHubMergePolicy.confirmMinimum
+    check("시스템 간격이 하한보다 짧으면 하한", minimum(0.2) == GitHubMergePolicy.confirmFloorSeconds)
+    check("시스템 간격이 길면 그 값", minimum(0.8) == 0.8)
+    check("시스템 간격이 아주 길어도 상한 — 확정할 틈이 남는다",
+          minimum(5) == GitHubMergePolicy.confirmCeilingSeconds
+              && GitHubMergePolicy.confirmCeilingSeconds < window)
+}
+
+print("▸ 머지 확인 상태 (GitHubMergePolicy.isArmed)")
+do {
+    func armed(head: String? = "abc", session: Int? = 3, current: String? = "abc",
+               now: Int = 3, offers: Bool = true) -> Bool {
+        GitHubMergePolicy.isArmed(armHead: head, armSession: session, currentHead: current,
+                                  session: now, offers: offers)
+    }
+    check("같은 head · 같은 열림 · 노출 중 → 확인 상태", armed())
+    check("head 가 바뀜 → 확인 아님", !armed(current: "def"))
+    check("다른 열림에서 건 확인 → 확인 아님", !armed(now: 4))
+    check("버튼 노출 조건을 잃음 → 확인 아님", !armed(offers: false))
+    check("확인을 건 적 없음 → 확인 아님", !armed(head: nil, session: nil))
+}
+
+print("▸ 머지 요청 판정 (GitHubMergePolicy.gate)")
+do {
+    let ready = pr("mongshell/bookdam", 57, merge: .clean, nodeID: "PR_57", headSHA: "abc")
+    let loaded = GitHubLoadState.loaded(.pat)
+    func gate(_ mine: [GitHubPullRequest]?, head: String = "abc", state: GitHubLoadState = loaded,
+              activity: PRMergeActivity? = nil, id: String? = nil,
+              listGeneration: Int = 2, generation: Int = 2) -> GitHubMergePolicy.Gate {
+        GitHubMergePolicy.gate(id: id ?? ready.id, expectedHead: head, mine: mine,
+                               listGeneration: listGeneration, generation: generation,
+                               state: state, activity: activity)
+    }
+    check("현재 목록의 머지 가능 PR, 같은 head → 보냄", gate([ready]) == .send(nodeID: "PR_57"))
+    check("확인한 head 와 목록의 head 가 다름 → headMoved", gate([ready], head: "old") == .headMoved)
+    // The row's copy said CLEAN; the list now says BLOCKED — the list wins.
+    let nowBlocked = pr("mongshell/bookdam", 57, merge: .blocked, nodeID: "PR_57", headSHA: "abc")
+    check("목록에서 다시 꺼낸 PR 이 더는 머지 불가 → 무시", gate([nowBlocked]) == .ignore)
+    let newNode = pr("mongshell/bookdam", 57, merge: .clean, nodeID: "PR_57b", headSHA: "abc")
+    check("node id 는 목록의 것", gate([newNode]) == .send(nodeID: "PR_57b"))
+    check("목록에 없음 → 무시", gate([pr("mongshell/bookdam", 58, merge: .clean, nodeID: "x", headSHA: "abc")]) == .ignore)
+    check("스냅샷 없음 → 무시", gate(nil) == .ignore)
+    check("진행 중 → 무시", gate([ready], activity: .merging) == .ignore)
+    check("머지됨 → 무시", gate([ready], activity: .merged) == .ignore)
+    check("실패 후 재시도 → 보냄", gate([ready], activity: .failed("x")) == .send(nodeID: "PR_57"))
+    // A PAT applied or cleared bumps the generation; `.loaded` and the old
+    // list stay up until the new token answers.
+    check("토큰을 바꾼 뒤 아직 옛 목록 (세대가 다름) → 보내지 않고 사유", gate([ready], generation: 3) == .listStale)
+    check("옛 목록에서 head 도 바뀜 → 세대 사유가 먼저", gate([ready], head: "old", generation: 3) == .listStale)
+    check("세대가 달라도 이미 나간 머지 → 무시", gate([ready], activity: .merging, generation: 3) == .ignore)
+    check("세대가 달라도 정지 상태 → 무시", gate([ready], state: .patSaveFailed(-1), generation: 3) == .ignore)
+    let retry = Date(timeIntervalSince1970: 0)
+    for state in [GitHubLoadState.loaded(.ghCLI(account: "a")), .loading, .rateLimited(retryAt: retry)] {
+        check("\(state) → 보낼 수 있음", GitHubMergePolicy.allowsMerge(in: state) && gate([ready], state: state) == .send(nodeID: "PR_57"))
+    }
+    for state in [GitHubLoadState.off, .noToken, .keychainDenied, .unauthorized, .patSaveFailed(-1), .error("x")] {
+        check("\(state) → 보내지 않음", !GitHubMergePolicy.allowsMerge(in: state) && gate([ready], state: state) == .ignore)
+    }
 }
 
 // MARK: - 12. gh Keychain 값 디코딩
