@@ -26,6 +26,7 @@
 | #25 | openclaw 감시를 원격 서버 에이전트 + Funnel 정적 상태 파일로 (로컬 모드 제거) | active (상태 문서에 서버 호스트 신호를 더한 것은 #31) |
 | #31 | 상태 문서에 서버 호스트 신호(전원·디스크) 추가 — 판정은 에이전트, 메뉴바는 두 줄 스택 | active |
 | #40 | 최소 지원을 macOS 26 으로 — 배포 타깃이 바이너리의 SDK 버전으로 찍혀 호환 동작을 정하므로 | active |
+| #45 | GitHub PR 을 단일 status item 안의 옵트인 두 번째 영역으로 — gh Keychain 재사용, GraphQL 1요청 폴링 | active |
 
 ---
 
@@ -219,3 +220,37 @@
   - 배포 타깃을 14 로 되돌리면 빈 창이 돌아온다 (15 에서는 뜨지 않았다).
   - macOS 15 이하에서는 실행되지 않는다. `platforms` 는 패키지 단위라 서버 에이전트도 같다 — 서버 맥도 macOS 26 이상이어야 한다.
   - `PackageDescription` 의 `.v26` 은 tools-version 6.2 부터라, tools-version 6.0 을 유지하려고 문자열 형태 `.macOS("26.0")` 로 적는다.
+
+## Decision #45: GitHub PR 을 단일 status item 안의 옵트인 두 번째 영역으로
+
+- **도입**: 미정 (#45)
+- **컨텍스트**: 내 PR 의 리뷰 요청·검사·머지 가능 여부는 브라우저를 열어 확인하러 가는 왕복이 실재한다 ([PHILOSOPHY.md](PHILOSOPHY.md) § Admission Criteria 1). 그러나 #31 이 세로 스택 두 줄을 다 써서, 기준 4(폭을 늘리지 않는다)로는 들어올 자리가 없었다. 두 번째 status item 은 #5 가 배제했고, 신호등 점 하나로 접는 것도 답이 아니었다 — 막힌 PR 의 번호와 개수가 글랜스의 핵심이라 점 하나로는 부족하다. 스택은 Tauri 같은 웹 스택으로 별도 앱을 만드는 안도 검토했으나, 영역 분리 자체가 단일 프로세스를 요구하고 NSPopover 가 공짜로 주는 열기·닫기를 다시 만들어야 해서(#35·#37·#38 의 실패) 배제했다.
+- **결정**:
+  - (a) [PHILOSOPHY.md](PHILOSOPHY.md) § Admission Criteria 4 에 "옵트인 두 번째 영역" 예외를 신설한다. 같은 status item 안에 세로 헤어라인으로 나뉜 GitHub 영역 — 글리프 `arrow.triangle.pull` · 신호등 점 · 처리할 PR 수 — 을 두고, 기본값은 꺼짐이다.
+  - (b) 영역은 AppKit 자식 호스팅 뷰 2개(`PassthroughHostingView`)로 나눈다. 영역 rect 는 자식 뷰의 프레임이고, hover 트래킹 영역·클릭 판정(`NSApp.currentEvent` 의 위치를 버튼 좌표로 변환해 GitHub 호스트의 프레임과 대조)·팝오버 앵커(`show(relativeTo: host.frame, of: button)`)가 모두 그 하나를 읽는다. 팝오버는 영역별 NSPopover 2쌍 — 클릭은 `.transient` 로 버튼에, hover 는 `.applicationDefined` 로 보조창에 — 이며 #33/#34/#39 의 구조를 그대로 쓴다. hover 보조창은 하나를 공유하고 영역 프레임에 맞춘다.
+  - (c) 인증은 gh CLI 의 Keychain 항목을 Decision 1 과 같은 방식으로 재사용한다 — service `gh:github.com`, account 는 GitHub 사용자명이라 service 만으로 조회한다. 없으면 PAT(classic, `repo`)를 자체 항목(`Config.ownKeychainService` 공유, account `github-pat`)에 둔다. 읽기 순서는 자체 PAT → gh.
+  - (d) 갱신은 GraphQL 요청 1회다 — search alias 3개(`review-requested:@me` / `author:@me is:open` / `author:@me is:merged merged:>=7일 전`)와 `rateLimit { cost remaining resetAt }` 를 한 요청에 묶는다. 주기는 백그라운드 3분(설정 1~10분), 팝오버를 열 때 즉시 1회, 열려 있고 진행중 검사(running 또는 queued)가 있으면 30초. 잔량이 200 미만이거나 429/403/`RATE_LIMITED` 를 받으면 사용량 폴링과 같은 지수 백오프다. 팝오버의 열림·닫힘은 AppDelegate 가 `NSPopover.didCloseNotification` 으로 모델에 알린다. 1초 경과 타이머는 팝오버 뷰의 `TimelineView` 가 맡고, 스냅샷은 시계를 고정한다.
+  - (e) 판정 — 배지 우선순위(충돌 > 검사 실패 > 변경 요청 > 내 리뷰 대기 > Draft > 리뷰 대기 > 승인 > 머지 가능), 메뉴바 숫자(리뷰 요청 + 내 PR 중 막힌 것), 점(빨강/주황/초록, 토큰 없음·오류는 회색), 칩 접기, 시간 포맷 — 은 순수 값 타입에 두고 `scripts/test.sh` 로 고정한다. 모델(`GitHubModel`)은 싱글턴이 아니라 AppDelegate 가 소유하고 주입한다.
+- **이유**:
+  - 자식 뷰 2개로 나누는 이유 — SwiftUI 좌표를 AppKit 으로 넘기면 영역 rect 의 출처가 비동기 preference 하나가 되고, 그것을 hover·클릭·앵커 셋이 나눠 쓴다. 뷰 프레임은 AppKit 이 동기로 보장한다.
+  - gh 토큰을 읽는 이유 — Decision 1 과 같다: 켜자마자 실데이터. gh 는 zalando/go-keyring 으로 저장하므로 Keychain 값에 `go-keyring-base64:` 접두 + base64 가 붙는다 (구버전은 `go-keyring-encoded:` + hex, 더 구버전은 평문). 이 맥에서 실측으로 확인했고, 디코딩은 이 사실에 의존한다.
+  - 1요청인 이유 — 한도는 토큰당 시간당 5,000 포인트이고 요청 수가 아니라 노드 수로 과금한다. 묶어도 비용은 같고 왕복과 2차 한도 노출이 준다. 무료 계정도 같은 한도다.
+  - 30초인 이유 — 경과 시간이 1초마다 흐르는 동안 상태가 따라와야 한다. 열려 있을 때만이라 비용은 보고 있는 동안만 든다.
+  - 싱글턴이 아닌 이유 — Models/CLAUDE.md 의 규칙대로다. AppKit 호스트와 뷰가 같은 인스턴스를 봐야 한다는 싱글턴의 근거는 AppDelegate 가 모든 뷰를 만들어 주입하면 그것으로 성립한다.
+  - "승인" 배지를 둔 이유 — 승인됐지만 검사가 도는 PR 에 "리뷰 대기" 를 찍지 않기 위해.
+- **결과**:
+  - 메뉴바 폭이 켠 경우 약 46pt 는다. 노치 맥북에서 자리가 모자라면 macOS 가 item 전체를 숨긴다 — 끄거나 게이지 표시를 줄이는 것 외에 대책은 없다.
+  - 클릭 팝오버가 열린 동안 status item 전체(두 영역)가 강조된다 (#39 와 같은 수용).
+  - `mergeable == UNKNOWN` 은 충돌이 아니다 — 다음 폴링에서 확정된다.
+  - 섹션당 표시 상한은 리뷰 요청 6 · 내 PR 8 · 최근 머지 3 이고, 넘치면 "외 N건" 행이다. 스크롤은 없다.
+  - 토큰 없음·접근 거부·401·한도 초과는 배너다. 빈 목록으로 가장하지 않는다. `x-oauth-scopes` 에 `repo` 가 없으면 "비공개 레포가 빠질 수 있음" 배너다.
+  - Keychain 접근 거부는 세션 동안 기억하고 설정에서만 재시도한다 — 기억하지 않으면 3분마다 대화상자가 뜬다. 첫 읽기는 설정 토글을 켜는 동작에서 한다.
+  - 라인 diff 는 보여주지 않는다 — 검사별 칩과 소요시간이 그 자리다.
+- **트레이드오프**:
+  - gh 다중 계정 미지원 — 같은 service 의 항목 중 임의의 하나를 읽고, 배너에 계정명만 표시한다.
+  - 팀 단위 리뷰 요청(`team-review-requested`)은 포함하지 않는다.
+  - 옛 Commit Status 는 소요시간이 없다.
+  - Keychain "항상 허용" 이 ad-hoc 재빌드마다 초기화된다 (Decision 3).
+  - 주기를 1분으로 두면 시간당 요청 60회다 — 요청당 비용은 받는 PR·검사 수에 따라 달라, 시간당 수백에서 900 포인트 안팎까지 간다.
+- **폐기 조건**: GitHub 가 GraphQL search 비용을 크게 올리거나 PAT 의 search 접근을 막으면 REST 로 재작성하지 않고 기능을 끈다 — 옵트인이라 사라져도 주인공에 영향이 없다.
+- **구현 라운드**: R0 docs → R1 AppDelegate 영역 파라미터화(동작 보존) → R2 서비스·모델·테스트 → R3 뷰·연결·스냅샷·실기 → R4 문서 마감. "도입" 은 R4 에서 버전으로 채운다.
