@@ -253,6 +253,210 @@ do {
     check("base 상한 600", wait(base: 10_000) == 600)
 }
 
+// MARK: - 9. parse 관대함
+
+func node(_ repo: String = "mongshell/bookdam", _ number: Int = 45, typename: String = "PullRequest",
+          mergeable: String = "MERGEABLE", review: Any = "APPROVED",
+          rollup: String? = #"{"state":"SUCCESS","contexts":{"nodes":[]}}"#) -> String {
+    let reviewJSON = review is NSNull ? "null" : "\"\(review)\""
+    let rollupJSON = rollup ?? "null"
+    return """
+    {"__typename":"\(typename)","number":\(number),"title":"t","url":"https://github.com/\(repo)/pull/\(number)",
+     "isDraft":false,"reviewDecision":\(reviewJSON),"mergeable":"\(mergeable)",
+     "updatedAt":"2026-09-29T03:12:45Z","mergedAt":null,
+     "repository":{"nameWithOwner":"\(repo)"},
+     "commits":{"nodes":[{"commit":{"statusCheckRollup":\(rollupJSON)}}]}}
+    """
+}
+
+func body(review: [String] = [], mine: [String] = [], merged: [String]? = [],
+          rateLimit: String? = #"{"cost":12,"remaining":4812,"limit":5000,"resetAt":"2026-09-29T04:00:00Z"}"#,
+          errors: String? = nil) -> Data {
+    var data = ["\"reviewRequested\":{\"nodes\":[\(review.joined(separator: ","))]}",
+                "\"mine\":{\"nodes\":[\(mine.joined(separator: ","))]}"]
+    if let merged { data.append("\"merged\":{\"nodes\":[\(merged.joined(separator: ","))]}") }
+    if let rateLimit { data.append("\"rateLimit\":\(rateLimit)") }
+    var root = ["\"data\":{\(data.joined(separator: ","))}"]
+    if let errors { root.append("\"errors\":\(errors)") }
+    return Data("{\(root.joined(separator: ","))}".utf8)
+}
+
+func parsed(_ data: Data) -> GitHubSnapshot? { try? GitHubAPIClient.parse(data, now: now) }
+
+print("▸ parse 관대함")
+do {
+    let s = parsed(body(review: [node()], mine: [node("mongshell/menubar", 7)], merged: nil))
+    check("alias 누락(merged) → 그 목록만 빈 배열, 나머지는 채움",
+          s?.reviewRequested.count == 1 && s?.mine.count == 1 && s?.recentlyMerged.isEmpty == true,
+          "\(String(describing: s))")
+    check("rateLimit 읽음", s?.rateLimit == GitHubRateLimit(cost: 12, remaining: 4812, limit: 5000,
+                                                        resetAt: ISO8601DateFormatter().date(from: "2026-09-29T04:00:00Z")))
+    check("URL·repository·number 읽음",
+          s?.reviewRequested.first?.url?.absoluteString == "https://github.com/mongshell/bookdam/pull/45"
+              && s?.reviewRequested.first?.repository == "mongshell/bookdam"
+              && s?.reviewRequested.first?.number == 45)
+
+    let typed = parsed(body(mine: [node(typename: "Issue"), node("mongshell/menubar", 8)]))
+    check("__typename 이 PullRequest 가 아닌 노드는 건너뜀",
+          typed?.mine.map(\.number) == [8], "\(String(describing: typed?.mine.map(\.number)))")
+
+    check("rateLimit 누락 → nil", parsed(body(rateLimit: nil))?.rateLimit == nil)
+    check("rateLimit 있어도 목록은 독립", parsed(body(rateLimit: nil))?.mine.isEmpty == true)
+
+    let odd = parsed(body(mine: [node(mergeable: "SOMETHING_NEW")]))
+    check("mergeable 모르는 문자열 → unknown (충돌도 머지 가능도 아님)",
+          odd?.mine.first?.mergeable == .unknown)
+    check("mergeable UNKNOWN → unknown", parsed(body(mine: [node(mergeable: "UNKNOWN")]))?.mine.first?.mergeable == .unknown)
+    check("mergeable CONFLICTING → conflicting",
+          parsed(body(mine: [node(mergeable: "CONFLICTING")]))?.mine.first?.mergeable == .conflicting)
+
+    let noRollup = parsed(body(mine: [node(rollup: nil)]))?.mine.first
+    check("statusCheckRollup null → rollup none + 빈 checks",
+          noRollup?.checksRollup == PRChecksRollup.none && noRollup?.checks.isEmpty == true)
+    let newState = parsed(body(mine: [node(rollup: #"{"state":"WEIRD","contexts":{"nodes":[]}}"#)]))?.mine.first
+    check("rollup 모르는 state → pending (success 아님)", newState?.checksRollup == .pending)
+    check("rollup FAILURE·ERROR → failure",
+          parsed(body(mine: [node(rollup: #"{"state":"ERROR"}"#)]))?.mine.first?.checksRollup == .failure
+              && parsed(body(mine: [node(rollup: #"{"state":"FAILURE"}"#)]))?.mine.first?.checksRollup == .failure)
+
+    check("reviewDecision null → none", parsed(body(mine: [node(review: NSNull())]))?.mine.first?.reviewDecision == PRReviewDecision.none)
+    check("reviewDecision 모르는 값 → none (approved 아님)",
+          parsed(body(mine: [node(review: "BLESSED")]))?.mine.first?.reviewDecision == PRReviewDecision.none)
+
+    let contexts = #"""
+    {"state":"PENDING","contexts":{"nodes":[
+      {"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS",
+       "startedAt":"2026-09-29T03:00:00Z","completedAt":"2026-09-29T03:01:30Z","detailsUrl":"https://x/1"},
+      {"__typename":"StatusContext","context":"ci/legacy","state":"PENDING","createdAt":"2026-09-29T03:00:00Z","targetUrl":"https://x/2"},
+      {"__typename":"Mystery","name":"?"}]}}
+    """#
+    let chips = parsed(body(mine: [node(rollup: contexts)]))?.mine.first?.checks ?? []
+    check("CheckRun·StatusContext 를 한 어휘로, 모르는 typename 은 건너뜀",
+          chips.map(\.name) == ["build", "ci/legacy"] && chips.map(\.outcome) == [.passed, .queued],
+          "\(chips.map(\.name))")
+    check("CheckRun 은 시각 둘 다, StatusContext 는 둘 다 nil",
+          chips.first?.startedAt != nil && chips.first?.completedAt != nil
+              && chips.last?.startedAt == nil && chips.last?.completedAt == nil)
+    check("CheckRun 소요 90s", chips.first.flatMap { c in c.completedAt.flatMap { e in c.startedAt.map { e.timeIntervalSince($0) } } } == 90)
+
+    check("data 없음 → badResponse (빈 목록으로 가장하지 않음)",
+          parsed(Data(#"{"errors":[{"message":"bad query"}]}"#.utf8)) == nil)
+    check("JSON 아님 → badResponse", parsed(Data("<html>".utf8)) == nil)
+    check("숫자가 아닌 number 는 건너뜀",
+          parsed(Data(#"{"data":{"mine":{"nodes":[{"__typename":"PullRequest","number":true,"repository":{"nameWithOwner":"a/b"}}]}}}"#.utf8))?.mine.isEmpty == true)
+}
+
+// MARK: - 10. interpret
+
+print("▸ interpret (상태 코드·헤더)")
+do {
+    func interpret(_ code: Int, _ headers: [String: String] = [:], _ data: Data = Data()) -> Result<GitHubFetchResult, GitHubAPIError> {
+        do { return .success(try GitHubAPIClient.interpret(statusCode: code, headers: headers, data: data, now: now)) }
+        catch { return .failure(error) }
+    }
+    check("401 → unauthorized", interpret(401) == .success(.unauthorized))
+    check("403 + retry-after → rateLimited(now + 30)",
+          interpret(403, ["retry-after": "30"]) == .success(.rateLimited(retryAt: now.addingTimeInterval(30))))
+    check("429 + retry-after → rateLimited",
+          interpret(429, ["Retry-After": "7"]) == .success(.rateLimited(retryAt: now.addingTimeInterval(7))))
+    check("403 + remaining 0 → rateLimited(reset epoch)",
+          interpret(403, ["x-ratelimit-remaining": "0", "x-ratelimit-reset": "1790003600"])
+              == .success(.rateLimited(retryAt: Date(timeIntervalSince1970: 1_790_003_600))))
+    check("403 맨몸 → http(403)", interpret(403) == .failure(.http(403)))
+    check("200 + remaining 0 → rateLimited (데이터보다 우선)",
+          interpret(200, ["x-ratelimit-remaining": "0"], body(mine: [node()]))
+              == .success(.rateLimited(retryAt: nil)))
+    check("errors RATE_LIMITED + data 동반 → rateLimited 가 데이터보다 우선",
+          interpret(200, ["x-ratelimit-reset": "1790003600"], body(mine: [node()], errors: #"[{"type":"RATE_LIMITED","message":"slow down"}]"#))
+              == .success(.rateLimited(retryAt: Date(timeIntervalSince1970: 1_790_003_600))))
+    check("다른 errors + data → 데이터는 읽음",
+          { if case .success(.snapshot(let s)) = interpret(200, [:], body(mine: [node()], errors: #"[{"type":"NOT_FOUND"}]"#)) { return s.mine.count == 1 }; return false }())
+
+    func scopes(_ headers: [String: String]) -> Bool?? {
+        if case .success(.snapshot(let s)) = interpret(200, headers, body()) { return .some(s.tokenScopesLackRepo) }
+        return nil
+    }
+    check("x-oauth-scopes 에 repo 있음 → false", scopes(["x-oauth-scopes": "repo, read:org"]) == .some(false))
+    check("x-oauth-scopes 에 repo 없음 → true", scopes(["X-OAuth-Scopes": "public_repo, gist"]) == .some(true))
+    check("x-oauth-scopes 헤더 없음 → nil", scopes([:]) == .some(nil))
+    check("500 → http(500)", interpret(500) == .failure(.http(500)))
+    check("302(리다이렉트 거부 결과) → http(302)", interpret(302) == .failure(.http(302)))
+    check("200 + JSON 아님 → badResponse", interpret(200, [:], Data("nope".utf8)) == .failure(.badResponse))
+    check("2xx 만 본문 읽음", GitHubAPIClient.readsBody(statusCode: 200)
+              && !GitHubAPIClient.readsBody(statusCode: 401) && !GitHubAPIClient.readsBody(statusCode: 403))
+    check("URLError.cancelled → cancelled", GitHubAPIError.transport(.cancelled) == .cancelled)
+    check("오프라인 → offline", GitHubAPIError.transport(.notConnectedToInternet) == .offline)
+}
+
+// MARK: - 11. query
+
+print("▸ query")
+do {
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: "Asia/Seoul")!
+    let since = cal.date(from: DateComponents(year: 2026, month: 10, day: 13, hour: 9))!
+    let q = GitHubAPIClient.query(mergedSince: since, calendar: cal)
+    check("merged:>=YYYY-MM-DD (로컬 달력)", q.contains("merged:>=2026-10-13"), q)
+    check("alias 3개", q.contains("reviewRequested: search(") && q.contains("mine: search(") && q.contains("merged: search("))
+    check("검색어", q.contains("is:pr is:open review-requested:@me") && q.contains("is:pr is:open author:@me")
+              && q.contains("is:pr is:merged author:@me"))
+    check("rateLimit 포함", q.contains("rateLimit { cost remaining limit resetAt }"))
+    check("statusCheckRollup 과 두 컨텍스트 타입",
+          q.contains("statusCheckRollup { state") && q.contains("... on CheckRun {") && q.contains("... on StatusContext {"))
+    check("first: 20 / contexts first: 30", q.contains("first: 20)") && q.contains("contexts(first: 30)"))
+    check("mutation 아님", !q.contains("mutation"))
+    // The day boundary follows the calendar handed in, not UTC.
+    var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
+    check("같은 순간이 UTC 로는 전날", GitHubAPIClient.query(mergedSince: since, calendar: utc).contains("merged:>=2026-10-13"))
+    let lateNight = cal.date(from: DateComponents(year: 2026, month: 10, day: 13, hour: 1))!
+    check("서울 01시 = UTC 전날 → 달력이 결정", GitHubAPIClient.query(mergedSince: lateNight, calendar: utc).contains("merged:>=2026-10-12"))
+}
+
+// MARK: - 12. gh Keychain 값 디코딩
+
+print("▸ decodeGHKeyringValue")
+do {
+    let decode = GitHubCredentialStore.decodeGHKeyringValue
+    check("base64 접두", decode("go-keyring-base64:Z2hvX2FiYzEyMw==") == "gho_abc123", decode("go-keyring-base64:Z2hvX2FiYzEyMw=="))
+    check("hex 접두", decode("go-keyring-encoded:67686f5f616263313233") == "gho_abc123")
+    check("hex 대문자", decode("go-keyring-encoded:67686F5F616263313233") == "gho_abc123")
+    check("접두 없음 → 그대로", decode("gho_plain") == "gho_plain")
+    check("앞뒤 공백·개행 트림", decode("  gho_plain\n") == "gho_plain")
+    check("접두 앞 공백도 트림 후 인식", decode("\ngo-keyring-base64:Z2hvX2FiYzEyMw==\n") == "gho_abc123")
+    check("깨진 base64 → 원문", decode("go-keyring-base64:!!!") == "go-keyring-base64:!!!")
+    check("깨진 hex(홀수 길이) → 원문", decode("go-keyring-encoded:abc") == "go-keyring-encoded:abc")
+    check("디코딩 결과의 개행도 트림", decode("go-keyring-base64:Z2hvX2FiYzEyMwo=") == "gho_abc123")
+}
+
+// MARK: - CheckRun / StatusContext → outcome
+
+print("▸ 검사 어휘 매핑")
+do {
+    let run = GitHubAPIClient.checkRunOutcome
+    check("COMPLETED+SUCCESS → passed", run("COMPLETED", "SUCCESS") == .passed)
+    for c in ["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"] {
+        check("COMPLETED+\(c) → failed", run("COMPLETED", c) == .failed)
+    }
+    check("COMPLETED+NEUTRAL → skipped", run("COMPLETED", "NEUTRAL") == .skipped)
+    check("COMPLETED+SKIPPED → skipped", run("COMPLETED", "SKIPPED") == .skipped)
+    check("COMPLETED+모르는 conclusion → failed (초록 아님·대기 아님)", run("COMPLETED", "NEW_THING") == .failed)
+    check("COMPLETED+conclusion null → failed", run("COMPLETED", nil) == .failed)
+    check("IN_PROGRESS → running", run("IN_PROGRESS", nil) == .running)
+    for s in ["QUEUED", "WAITING", "PENDING", "REQUESTED", "SOMETHING_NEW"] {
+        check("\(s) → queued", run(s, nil) == .queued)
+    }
+    check("status nil → queued", run(nil, "SUCCESS") == .queued)
+
+    let ctx = GitHubAPIClient.statusContextOutcome
+    check("StatusContext SUCCESS → passed", ctx("SUCCESS") == .passed)
+    check("StatusContext FAILURE → failed", ctx("FAILURE") == .failed)
+    check("StatusContext ERROR → failed", ctx("ERROR") == .failed)
+    check("StatusContext PENDING → queued", ctx("PENDING") == .queued)
+    check("StatusContext EXPECTED → queued", ctx("EXPECTED") == .queued)
+    check("StatusContext 모르는 값 → queued", ctx("WHATEVER") == .queued)
+    check("StatusContext nil → queued", ctx(nil) == .queued)
+}
+
 print("")
 if failures.isEmpty {
     print("✓ \(caseCount) cases passed")

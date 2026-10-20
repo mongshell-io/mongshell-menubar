@@ -85,7 +85,10 @@ swiftc -o "$OUT/github-tests" \
   "$APP/Design/Palette.swift" \
   "$APP/Models/GitHubState.swift" \
   "$APP/Models/GitHubPullRequest.swift" \
+  "$APP/Services/BoundedHTTP.swift" \
   "$APP/Services/Config.swift" \
+  "$APP/Services/GitHubAPIClient.swift" \
+  "$APP/Services/GitHubCredentials.swift" \
   "$APP/Services/TimeText.swift" \
   "$ROOT/Tests/GitHubTests/main.swift"
 
