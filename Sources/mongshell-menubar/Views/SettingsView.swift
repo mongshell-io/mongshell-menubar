@@ -6,6 +6,7 @@ struct SettingsView: View {
     @ObservedObject var openClaw: OpenClawModel
     @ObservedObject var claude: ClaudeSettingsModel
     @ObservedObject var loginItem: LoginItemModel
+    @ObservedObject var github: GitHubModel
 
     private let intervals = [180, 300, 600, 900]
 
@@ -71,6 +72,10 @@ struct SettingsView: View {
 
             Section("서버") {
                 OpenClawSettingsSection(prefs: prefs, openClaw: openClaw)
+            }
+
+            Section("GitHub") {
+                GitHubSettingsSection(model: github, prefs: prefs)
             }
 
             Section("계정") {

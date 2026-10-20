@@ -35,8 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The one status item (Decision #5) is split into side-by-side regions,
     /// laid out left to right in this order. Each region has its own host
     /// view in the button and, when registered, its own hover summary and
-    /// click popover, so hover and click are judged per region. Only `.claude`
-    /// has content for now; `.github` is a zero-width placeholder.
+    /// click popover, so hover and click are judged per region. `.github` is
+    /// the opt-in second region (Decision #45) and has zero width while off.
     enum Region: CaseIterable {
         case claude
         case github
@@ -78,6 +78,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Not a singleton: only the settings window observes it (Models/CLAUDE.md —
     // 그 이유가 없는 상태는 소유자에게 주입).
     private let loginItem = LoginItemModel()
+    // Not a singleton either: every view that observes it is made here and
+    // handed this instance (Decision #45).
+    private let github = GitHubModel(prefs: Preferences.shared)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // QA hook: render reference PNGs offscreen, then exit.
@@ -91,9 +94,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let icon = MenuBarIconView(model: model, prefs: prefs, openClaw: openClaw)
         install(PassthroughHostingView(rootView: icon), as: .claude)
-        // Explicit zero frame: a bare EmptyView makes the hosting view report
-        // SwiftUI's 10×10 default size, which would widen the status item.
-        install(PassthroughHostingView(rootView: EmptyView().frame(width: 0, height: 0)), as: .github)
+        install(PassthroughHostingView(rootView: GitHubMenuBarView(model: github, prefs: prefs)),
+                as: .github)
 
         if let button = statusItem.button {
             // Regions sit side by side from the button's leading edge; the
@@ -148,6 +150,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hoverPopover.contentViewController = hoverHC
         hoverPopovers[.claude] = hoverPopover
 
+        let githubPopover = NSPopover()
+        githubPopover.behavior = .transient
+        let githubHC = NSHostingController(rootView: GitHubPopoverView(
+            model: github, prefs: prefs,
+            onOpenSettings: { [weak self] in self?.openSettings() }))
+        githubHC.sizingOptions = [.preferredContentSize]
+        githubPopover.contentViewController = githubHC
+        clickPopovers[.github] = githubPopover
+        // The model's cadence follows the popover: open = refresh at once and
+        // the fast cadence while a check runs; closed = back to the base
+        // interval. AppKit closes a .transient popover itself, so the close
+        // is learned from its notification rather than from `togglePopover`.
+        NotificationCenter.default.publisher(for: NSPopover.didCloseNotification, object: githubPopover)
+            .sink { [weak self] _ in self?.github.setPopoverOpen(false) }
+            .store(in: &cancellables)
+
+        let githubHover = NSPopover()
+        githubHover.behavior = .applicationDefined
+        githubHover.animates = false
+        let githubHoverHC = NSHostingController(rootView: GitHubHoverSummaryView(model: github))
+        githubHoverHC.sizingOptions = [.preferredContentSize]
+        githubHover.contentViewController = githubHoverHC
+        hoverPopovers[.github] = githubHover
+
         // Keep the status-item width in sync with icon content.
         model.$snapshot.receive(on: RunLoop.main).sink { [weak self] _ in self?.resizeStatusItem() }
             .store(in: &cancellables)
@@ -162,6 +188,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main).sink { [weak self] _ in
                 DispatchQueue.main.async { self?.resizeStatusItem() }
             }.store(in: &cancellables)
+        // The GitHub region's count comes and goes (and changes digit count).
+        // Switching the region on or off is covered by the `prefs` sink above.
+        github.$glance.removeDuplicates()
+            .receive(on: RunLoop.main).sink { [weak self] _ in
+                DispatchQueue.main.async { self?.resizeStatusItem() }
+            }.store(in: &cancellables)
 
         resizeStatusItem()
         model.start()
@@ -173,6 +205,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // is already truthful when opened and tracks CLI-side edits live.
         // No-op if Claude Code isn't installed.
         claude.start()
+
+        // Parks in .off (no polling, no Keychain read) until switched on in
+        // settings.
+        github.start()
     }
 
     /// Registers a region's host view. The hover callbacks capture the region
@@ -310,6 +346,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if region == .claude, prefs.showsOpenClaw {
             openClaw.refreshNow()
         }
+        // Same idea for GitHub, through the model's open/closed cadence.
+        if region == .github {
+            github.setPopoverOpen(true)
+        }
         // Anchored to the button, not to the region's host: that is the
         // condition under which AppKit opens a .transient popover on the first
         // click and closes it on a click outside (Decision #8, #36/#39). Only
@@ -332,7 +372,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let view = SettingsView(model: model, prefs: prefs, openClaw: openClaw,
-                                claude: claude, loginItem: loginItem)
+                                claude: claude, loginItem: loginItem, github: github)
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 380, height: 700),
             styleMask: [.titled, .closable],

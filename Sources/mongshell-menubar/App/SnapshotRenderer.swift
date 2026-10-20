@@ -268,7 +268,7 @@ private struct SettingsPreview: View {
     var body: some View {
         SettingsView(model: .shared, prefs: .shared,
                      openClaw: .shared, claude: .shared,
-                     loginItem: LoginItemModel())
+                     loginItem: LoginItemModel(), github: GitHubModel(prefs: .shared))
     }
 }
 
