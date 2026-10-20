@@ -131,7 +131,7 @@
 
 ## Decision #11-2: 뷰 로컬 상태는 `@State` 매크로 대신 `State<Value>` 수동 펼침
 
-- **도입**: 미정 (CLT 27.0 대응)
+- **도입**: 미정 (#24)
 - **컨텍스트**: Command Line Tools 27.0 (2026-09) 은 macOS 27 SDK 를 기본으로 쓰고, 이 SDK 에서 `@State` 는 프로퍼티 래퍼가 아니라 `SwiftUIMacros` 플러그인이 전개하는 **매크로**가 됐다. 그 플러그인은 Xcode 에만 동봉되고 CLT 에는 없어서 `@State` 가 한 줄만 있어도 CLT 빌드가 실패한다. "Xcode 없이 빌드 가능" 은 Decision 3 / #11-1 이 세운 전제다.
 - **결정**: `@State` 를 쓰지 않는다. `State<Value>` 프로퍼티 래퍼 타입은 SDK 에 그대로 남아 있으므로, 매크로가 만들었을 저장 프로퍼티(`_x = State(initialValue:)`)와 접근자(`wrappedValue` get / nonmutating set)를 직접 적는다.
 - **이유**: 대안은 셋이었다. (a) 스크립트에서 이전 SDK(26.5) 를 고정 — 다음 CLT 업데이트에서 그 SDK 가 빠지면 도리어 설치 부담이 생긴다. (b) Xcode 설치 요구 — 전제를 깬다. (c) 수동 펼침 — 의미가 `@State` 와 동일하고 수정 범위가 뷰 한 곳이라 가장 싸다. `@StateObject` + `ObservableObject` 로 바꾸는 것도 되지만 생명주기 의미가 달라져 동작 보존이 아니다.
