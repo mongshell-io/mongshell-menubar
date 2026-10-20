@@ -138,7 +138,11 @@ enum PRVerdict: Int, Comparable, Sendable {
             // never gets a reviewDecision, so approval can't be asked for.
             if checksClear { return .mergeable }
         case .unknown:
-            if approved && checksClear && pr.mergeable == .mergeable { return .mergeable }
+            // Without GitHub's verdict the chips are all there is, and a
+            // required status that hasn't reported yet is not among them —
+            // only the rollup's PENDING/EXPECTED says it is still owed.
+            if approved && checksClear && pr.checksRollup != .pending
+                && pr.mergeable == .mergeable { return .mergeable }
         default:
             break
         }

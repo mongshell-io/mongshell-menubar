@@ -111,6 +111,9 @@ do {
           verdict(pr(review: .approved, mergeable: .mergeable, merge: .blocked, rollup: .success)) == .approved)
     check("승인 + mergeState unknown + success + MERGEABLE → 머지 가능 (기존 경로)",
           verdict(pr(review: .approved, mergeable: .mergeable, merge: .unknown, rollup: .success)) == .mergeable)
+    check("mergeState unknown + 칩 전부 통과인데 rollup pending(보고 전 필수 검사) → 승인, 머지 가능 아님",
+          verdict(pr(review: .approved, mergeable: .mergeable, merge: .unknown, rollup: .pending,
+                     checks: [chk("build", .passed)], complete: true)) == .approved)
     check("mergeState unknown + 리뷰 규칙 없음 → 리뷰 대기 (CLEAN 을 추정하지 않음)",
           verdict(pr(review: .none, merge: .unknown)) == .awaitingReview)
     check("reviewRequired 인데 CLEAN → GitHub 의 종합 판정을 믿어 머지 가능",
