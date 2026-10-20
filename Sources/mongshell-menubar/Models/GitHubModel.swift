@@ -120,12 +120,22 @@ final class GitHubModel: ObservableObject {
     }
 
     /// Saves a pasted classic PAT and reads with it at once. Empty input is
-    /// ignored — clearing is `clearPAT()`.
+    /// ignored — clearing is `clearPAT()`. A failed save is a banner, and
+    /// nothing is requested: whatever the Keychain holds now is not the
+    /// token the user just gave.
     func applyPAT(_ raw: String) {
         let token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else { return }
-        credentials.savePAT(token)
+        let status = credentials.savePAT(token)
+        // The item was replaced either way, so a request still out with the
+        // previous token no longer speaks for what is stored.
         generation += 1
+        guard status == errSecSuccess else {
+            guard prefs.githubEnabled else { return }
+            loadState = .error("PAT 를 Keychain 에 저장하지 못했어요 (\(status))")
+            updateGlance()
+            return
+        }
         refreshNow()
     }
 

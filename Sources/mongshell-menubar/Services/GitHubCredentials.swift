@@ -39,11 +39,14 @@ struct GitHubCredentialStore: Sendable {
         return token
     }
 
-    func savePAT(_ token: String) {
+    /// Replaces the PAT. Returns `SecItemAdd`'s status — `errSecSuccess`
+    /// when the new token is stored — so the caller can say so instead of
+    /// polling on as if it were.
+    func savePAT(_ token: String) -> OSStatus {
         SecItemDelete(Self.ownItemQuery as CFDictionary)
         var attrs = Self.ownItemQuery
         attrs[kSecValueData as String] = Data(token.utf8)
-        SecItemAdd(attrs as CFDictionary, nil)
+        return SecItemAdd(attrs as CFDictionary, nil)
     }
 
     func clearPAT() {
