@@ -267,6 +267,12 @@ do {
     check("base 상한 600", wait(base: 10_000) == 600)
 }
 
+print("▸ GitHubPollPolicy.refreshesOnOpen")
+do {
+    check("백오프 없음 → 열면 즉시 갱신", GitHubPollPolicy.refreshesOnOpen(backoff: 0))
+    check("백오프 중 → 열어도 요청 안 함", !GitHubPollPolicy.refreshesOnOpen(backoff: 1))
+}
+
 // MARK: - 9. parse 관대함
 
 func node(_ repo: String = "mongshell/bookdam", _ number: Int = 45, typename: String = "PullRequest",

@@ -101,4 +101,11 @@ enum GitHubPollPolicy {
         if popoverOpen && hasPendingChecks { return Config.githubOpenPollSeconds }
         return base
     }
+
+    /// Whether opening the popover asks GitHub at once. Not while backing
+    /// off — looking at the popover must not add requests to a budget that
+    /// is already short; the loop's backed-off wait stands.
+    static func refreshesOnOpen(backoff: Int) -> Bool {
+        backoff == 0
+    }
 }

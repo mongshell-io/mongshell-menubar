@@ -27,7 +27,19 @@ final class GitHubModel: ObservableObject {
     private let prefs: Preferences
     private let credentials: GitHubCredentialStore
     private let client: GitHubAPIClient
+    /// The one poll loop. It lives while the region is on: opening the
+    /// popover or swapping the token wakes it (`refreshNow()`) rather than
+    /// replacing it, so a refresh asked for mid-request is not lost with a
+    /// cancelled loop. Kept after cancelling so the next loop can wait for
+    /// it to wind down.
     private var pollTask: Task<Void, Never>?
+    /// The loop's current sleep. Cancelling it wakes the loop without
+    /// cancelling the loop itself.
+    private var napTask: Task<Void, Never>?
+    /// Bumped whenever the token or the on/off switch changes. A response is
+    /// applied only under the generation it was requested in, so an old
+    /// token's answer never lands over what the new token is about to show.
+    private var generation = 0
     private var backoff = 0
     private var popoverOpen = false
     /// The user refused the Keychain prompt for gh's item. Remembered for the
@@ -55,7 +67,7 @@ final class GitHubModel: ObservableObject {
             updateGlance()
             return
         }
-        restartPolling()
+        startPolling()
     }
 
     /// The settings toggle. Switching on is the user gesture the first
@@ -63,9 +75,9 @@ final class GitHubModel: ObservableObject {
     /// region leaves no trace and the next switch-on starts clean.
     func setEnabled(_ on: Bool) {
         prefs.githubEnabled = on
+        generation += 1
         guard on else {
             pollTask?.cancel()
-            pollTask = nil
             snapshot = nil
             tokenSource = nil
             backoff = 0
@@ -75,23 +87,32 @@ final class GitHubModel: ObservableObject {
             return
         }
         ghKeychainDenied = false
-        restartPolling()
+        refreshNow()
     }
 
+    /// Refreshes on the running loop and lets it work out the next wait
+    /// afterwards: mid-request, the coalesced follow-up runs; asleep, the
+    /// loop is woken. Starts the loop if none is running.
     func refreshNow() {
         guard prefs.githubEnabled else { return }
-        Task { await refreshOnce() }
+        guard isPolling else { startPolling(); return }
+        if refreshInFlight {
+            refreshRequested = true
+        } else {
+            napTask?.cancel()
+        }
     }
 
     /// From AppDelegate on open and on `NSPopover.didCloseNotification`.
     /// Opening refreshes at once and, with a check still running, keeps the
     /// fast cadence; closing only lets the loop fall back to the base
-    /// interval at its next wake — no extra request for a close.
+    /// interval at its next wake — no extra request for a close. While
+    /// backing off, opening only records the flag.
     func setPopoverOpen(_ open: Bool) {
         guard open != popoverOpen else { return }
         popoverOpen = open
-        guard open, prefs.githubEnabled else { return }
-        restartPolling()
+        guard open, GitHubPollPolicy.refreshesOnOpen(backoff: backoff) else { return }
+        refreshNow()
     }
 
     /// Saves a pasted classic PAT and reads with it at once. Empty input is
@@ -100,15 +121,15 @@ final class GitHubModel: ObservableObject {
         let token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else { return }
         credentials.savePAT(token)
-        guard prefs.githubEnabled else { return }
-        restartPolling()
+        generation += 1
+        refreshNow()
     }
 
     /// Drops the PAT; the next read falls through to gh's item.
     func clearPAT() {
         credentials.clearPAT()
-        guard prefs.githubEnabled else { return }
-        restartPolling()
+        generation += 1
+        refreshNow()
     }
 
     /// Settings-only: forget the refusal and ask the Keychain again.
@@ -131,8 +152,8 @@ final class GitHubModel: ObservableObject {
     /// Snapshot hook: shows a given snapshot and state without any network,
     /// so reference images are deterministic and never carry real PRs.
     func presentForSnapshot(_ snapshot: GitHubSnapshot?, state: GitHubLoadState, now: Date) {
+        generation += 1
         pollTask?.cancel()
-        pollTask = nil
         self.snapshot = snapshot
         loadState = state
         if case .loaded(let source) = state { tokenSource = source } else { tokenSource = nil }
@@ -142,19 +163,34 @@ final class GitHubModel: ObservableObject {
 
     // MARK: Polling
 
-    private func restartPolling() {
-        pollTask?.cancel()
-        pollTask = Task { [weak self] in await self?.pollLoop() }
+    private var isPolling: Bool { pollTask.map { !$0.isCancelled } ?? false }
+
+    private func startPolling() {
+        let previous = pollTask
+        previous?.cancel()
+        pollTask = Task { [weak self] in
+            // A cancelled loop may still be finishing its request; until it
+            // has, `refreshInFlight` would turn this loop's first refresh
+            // into a follow-up that the cancelled loop never runs.
+            await previous?.value
+            await self?.pollLoop()
+        }
     }
 
     private func pollLoop() async {
         while !Task.isCancelled {
             await refreshOnce()
-            let wait = GitHubPollPolicy.nextWait(
-                base: prefs.githubPollSeconds, backoff: backoff,
-                popoverOpen: popoverOpen, hasPendingChecks: snapshot?.hasPendingChecks ?? false)
-            try? await Task.sleep(for: .seconds(wait))
+            await nap(seconds: nextWait())
         }
+    }
+
+    /// Sleeps in a task of its own so `refreshNow()` can cut it short while
+    /// the loop carries on; cancelling the loop cancels the nap too.
+    private func nap(seconds: Int) async {
+        let nap = Task<Void, Never> { try? await Task.sleep(for: .seconds(seconds)) }
+        napTask = nap
+        await withTaskCancellationHandler { await nap.value } onCancel: { nap.cancel() }
+        if napTask == nap { napTask = nil }
     }
 
     private func refreshOnce() async {
@@ -164,7 +200,7 @@ final class GitHubModel: ObservableObject {
         repeat {
             refreshRequested = false
             await performRefresh()
-        } while refreshRequested
+        } while refreshRequested && !Task.isCancelled
     }
 
     // MARK: Token resolution (Decision #45 (c): own PAT → gh)
@@ -196,6 +232,7 @@ final class GitHubModel: ObservableObject {
     /// value lands back here.
     private func performRefresh() async {
         guard prefs.githubEnabled else { return }
+        let requestedIn = generation
         let token: String
         let source: GitHubTokenSource
         switch resolveToken() {
@@ -217,9 +254,9 @@ final class GitHubModel: ObservableObject {
         } catch {
             outcome = .failure(error)
         }
-        // A cancelled poll belongs to a loop that has been replaced; the
-        // region may have been switched off or the token swapped meanwhile.
-        guard !Task.isCancelled, prefs.githubEnabled else { return }
+        // The token was swapped or the region switched off meanwhile; the
+        // follow-up refresh `refreshNow()` queued speaks for the new state.
+        guard requestedIn == generation, prefs.githubEnabled else { return }
 
         switch outcome {
         case .success(.snapshot(let snap)):
