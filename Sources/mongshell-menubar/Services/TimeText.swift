@@ -54,13 +54,31 @@ enum TimeText {
         return "\(clock) · \(ago(date, now: now))"
     }
 
-    /// "23분 전" / "3시간 전" / "2일 전".
-    private static func ago(_ date: Date, now: Date) -> String {
+    /// "23분 전" / "3시간 전" / "2일 전". Also the PR popover's "updated N ago".
+    static func ago(_ date: Date, now: Date = Date()) -> String {
         let minutes = max(0, Int(now.timeIntervalSince(date)) / 60)
         if minutes < 60 { return "\(minutes)분 전" }
         let hours = minutes / 60
         if hours < 24 { return "\(hours)시간 전" }
         return "\(hours / 24)일 전"
+    }
+
+    /// Check duration: "48s" / "1m 12s" / "1h 05m" (mockup § D). Minutes and
+    /// seconds are zero-padded once a larger unit leads, so columns of chips
+    /// line up. Negative input is clamped to "0s".
+    static func duration(_ seconds: Int) -> String {
+        let total = max(0, seconds)
+        let secondsPerMinute = 60, minutesPerHour = 60
+        if total < secondsPerMinute { return "\(total)s" }
+        let minutes = total / secondsPerMinute
+        if minutes < minutesPerHour {
+            return "\(minutes)m \(twoDigits(total % secondsPerMinute))s"
+        }
+        return "\(minutes / minutesPerHour)h \(twoDigits(minutes % minutesPerHour))m"
+    }
+
+    private static func twoDigits(_ n: Int) -> String {
+        n < 10 ? "0\(n)" : "\(n)"
     }
 
     /// Absolute clock time of the last successful fetch, e.g. "오후 2:32 갱신".
