@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The instant hover summary of the GitHub region (layout only: mockup
-/// § B2 — the rows' content is architecture.md § 4): two rows in
+/// § B2 — the rows' content is architecture.md § 4): three rows in
 /// the same three-column grid, type sizes and padding as `HoverSummaryView`,
 /// so crossing from one region to the other reads as one app. Reads the
 /// glance the model already computed — hover never triggers a refresh. The
@@ -26,6 +26,13 @@ struct GitHubHoverSummaryView: View {
                         labelCell("내 PR")
                         numberCell(lines.mine, color: lines.blocked > 0 ? Palette.red : nil)
                         restCell(lines.mineRest, separated: true)
+                    }
+                    // Mergeable now (Decision #52): green whenever there is
+                    // any, and "0" said outright rather than left out.
+                    GridRow {
+                        labelCell("머지 가능")
+                        numberCell(lines.mergeable, color: lines.mergeable > 0 ? Palette.green : nil)
+                        restCell(lines.mergeableRest, separated: true)
                     }
                 }
             } else {

@@ -29,6 +29,7 @@
 | #45 | GitHub PR 을 단일 status item 안의 옵트인 두 번째 영역으로 — gh Keychain 재사용, GraphQL 1요청 폴링 | active |
 | #47 | 앱 번들 버전(`CFBundleShortVersionString`)은 빌드 시 가장 가까운 `vX.Y.Z` 태그에서 찍는다 | active |
 | #49 | 내 PR 의 squash 머지를 팝오버에서 — 첫 원격 쓰기 (`CLEAN` 인 내 PR 만, 한 번 클릭, `expectedHeadOid`) | active (두 번 누르기 → 한 번 클릭은 후속) |
+| #52 | 머지 가능한 내 PR 을 메뉴바 글리프로 — 숫자를 늘리지 않고 글리프를 바꾼다, 개수는 hover | active |
 
 ---
 
@@ -228,7 +229,7 @@
 - **도입**: 미정 (#45)
 - **컨텍스트**: 내 PR 의 리뷰 요청·검사·머지 가능 여부는 브라우저를 열어 확인하러 가는 왕복이 실재한다 ([PHILOSOPHY.md](PHILOSOPHY.md) § Admission Criteria 1). 그러나 #31 이 세로 스택 두 줄을 다 써서, 기준 4(폭을 늘리지 않는다)로는 들어올 자리가 없었다. 두 번째 status item 은 #5 가 배제했고, 신호등 점 하나로 접는 것도 답이 아니었다 — 막힌 PR 의 번호와 개수가 글랜스의 핵심이라 점 하나로는 부족하다. 스택은 Tauri 같은 웹 스택으로 별도 앱을 만드는 안도 검토했으나, 영역 분리 자체가 단일 프로세스를 요구하고 NSPopover 가 공짜로 주는 열기·닫기를 다시 만들어야 해서(#35·#37·#38 의 실패) 배제했다.
 - **결정**:
-  - (a) [PHILOSOPHY.md](PHILOSOPHY.md) § Admission Criteria 4 에 "옵트인 두 번째 영역" 예외를 신설한다. 같은 status item 안에 세로 헤어라인으로 나뉜 GitHub 영역 — 글리프 `arrow.triangle.pull` · 신호등 점 · 처리할 PR 수 — 을 두고, 기본값은 꺼짐이다.
+  - (a) [PHILOSOPHY.md](PHILOSOPHY.md) § Admission Criteria 4 에 "옵트인 두 번째 영역" 예외를 신설한다. 같은 status item 안에 세로 헤어라인으로 나뉜 GitHub 영역 — 글리프 `arrow.triangle.pull` · 신호등 점 · 처리할 PR 수 — 을 두고, 기본값은 꺼짐이다. (#52 부터 글리프는 머지 가능한 내 PR 이 있으면 `arrow.triangle.merge` 초록으로 바뀐다.)
   - (b) 영역은 AppKit 자식 호스팅 뷰 2개(`PassthroughHostingView`)로 나눈다. 영역 rect 는 자식 뷰의 프레임이고, hover 트래킹 영역·클릭 판정(마우스 클릭이면 커서의 화면 위치 `NSEvent.mouseLocation` 을 GitHub 영역의 화면 사각형과 대조 — hover 감시와 같은 판정; 키보드·접근성 활성화는 커서와 무관하게 Claude 영역)·팝오버 앵커(`show(relativeTo: host.frame, of: button)`)가 모두 그 하나를 읽는다. 팝오버는 영역별 NSPopover 2쌍 — 클릭은 `.transient` 로 버튼에, hover 는 `.applicationDefined` 로 보조창에 — 이며 #33/#34/#39 의 구조를 그대로 쓴다. hover 보조창은 하나를 공유하고 영역 프레임에 맞춘다.
   - (c) 인증은 gh CLI 의 Keychain 항목을 Decision 1 과 같은 방식으로 재사용한다 — service `gh:github.com`, account 는 GitHub 사용자명이라 service 만으로 조회한다. 없으면 PAT(classic, `repo`)를 자체 항목(`Config.ownKeychainService` 공유, account `github-pat`)에 둔다. 읽기 순서는 자체 PAT → gh. gh 값의 go-keyring 접두 디코딩은 자격증명 저장소(`GitHubCredentialStore.loadGHToken`)가 끝내고, 모델은 보낼 수 있는 토큰만 받는다. 전송 코드는 openclaw 클라이언트와 `BoundedHTTP` 로 공유한다 — 리다이렉트 거부, 응답 4MB 캡.
   - (d) 갱신은 GraphQL 요청 1회다 — search alias 3개(`review-requested:@me` / `author:@me is:open` / `author:@me is:merged merged:>=7일 전`, 모두 `sort:updated-desc`, 페이지 20)와 `rateLimit { cost remaining limit resetAt }` 를 한 요청에 묶는다. 주기는 백그라운드 3분(설정 1~10분), 팝오버를 열 때 즉시 1회, 열려 있고 진행중 검사(running 또는 queued)가 있으면 30초. 잔량이 200 미만이거나 429/403/`RATE_LIMITED` 를 받으면 사용량 폴링과 같은 지수 백오프이고, 물러나 있는 동안에는 팝오버를 열어도 즉시 요청을 보내지 않는다. 401 을 받으면 자동 폴링을 멈추고 수동 재개(팝오버의 재시도·새로고침, PAT 적용·지우기, gh 토큰 다시 시도, GitHub 표시 다시 켜기)만 남긴다 — 재개한 요청이 다시 401 이면 다시 멈춘다. 401 이나 PAT 저장 실패 상태에서는 팝오버를 열어도 요청하지 않는다. 팝오버의 열림·닫힘은 AppDelegate 가 `NSPopover.didCloseNotification` 으로 모델에 알리되, 닫힘은 요청을 내지도 루프를 재시작하지도 않는다 — 플래그만 바꾸고 다음 깨어남부터 base 주기로 돌아간다. 응답 해석은 `throws(GitHubAPIError)` 다: 401·403/429·2xx 외의 코드(3xx·5xx)와 `data` 없는 본문은 오류이지 빈 목록이 아니다. 그 안에서는 관대하다 — alias 하나가 빠지면 그 목록만 비고, `PullRequest` 가 아닌 노드와 `rateLimit` 누락은 건너뛴다. 1초 경과 타이머는 팝오버 뷰의 `TimelineView` 가 맡고, 스냅샷은 시계를 고정한다.
@@ -311,3 +312,24 @@
   - 버튼 라벨에 PR 번호를 넣는다 ("#N 머지") — 갱신으로 레이아웃이 움직인 순간의 클릭이 어느 PR 에 간 것인지 버튼이 말한다.
   - "머지 중…" · "머지됨" 라벨도 버튼과 같은 자리·같은 폭에서 클릭을 흡수한다 — 더블클릭의 두 번째 클릭이 행의 링크로 떨어져 브라우저를 열지 않는다.
   - 목록을 받은 토큰 출처(PAT · gh 계정)와 머지에 쓸 토큰의 출처가 다르면 보내지 않는다 — 앱 밖의 `gh auth switch` 는 세대를 바꾸지 않아, 이전 계정이 본 목록으로 다른 계정의 머지가 나갈 수 있었다.
+
+## Decision #52: 머지 가능한 내 PR 을 메뉴바 글리프로
+
+- **도입**: 미정 (#52)
+- **컨텍스트**: #49 로 팝오버에서 머지할 수 있게 됐지만, GitHub 영역은 막힌 PR 이 없고 CI 가 돌지 않으면 초록 점만 보인다. 머지할 PR 이 있는지는 팝오버를 열어 머지 버튼을 찾아봐야 알아서, 그것을 확인하려고 계속 클릭하게 됐다. 그런데 영역은 #45 (a) 에서 "글리프 · 점 · 숫자 하나" 를 상한으로 받았고 숫자 칸은 이미 처리할 PR 수가 쓰고 있다.
+- **결정**:
+  - (a) "지금 머지 가능" 은 팝오버의 머지 버튼과 같은 기준이다 — 팝오버에 그려지는 내 PR 행(숨긴 레포 제외, 섹션 상한 `Config.githubSectionCaps.mine` 까지 — 그 너머는 "외 N건" 으로 접혀 버튼이 없다) 중 `GitHubMergePolicy.canOffer(_, section: .mine)` 이 참인 것. 그 PR 의 머지 요청이 나가 있거나(`.merging`) 끝난(`.merged`) 것은 세지 않는다. 실패(`.failed`)는 버튼이 다시 나오므로 센다. 판정은 `GitHubGlance` 의 순수 함수가 모델의 머지 상태를 인자로 받아 하고, 모델은 머지 상태가 바뀔 때마다 glance 를 다시 계산한다.
+  - (b) 메뉴바는 폭을 늘리지 않고 글리프로 말한다 — 하나 이상이면 `arrow.triangle.merge` 초록(`Palette.green`), 없으면 지금의 `arrow.triangle.pull` 회색. 두 글리프는 pull 글리프 폭의 고정 칸에 그린다. 색은 신호등 점처럼 `colorCoding` 대상이 아니다.
+  - (c) 개수와 어느 PR 인지는 hover 셋째 줄 "머지 가능 N · <레포 이름> #<번호> 외 K" 다. 0 이면 "머지 가능 0" 으로 없음을 말하고, 숫자는 1 이상일 때 초록이다. 메뉴바 숫자·점에는 더하지 않는다.
+- **이유**:
+  - 숫자를 하나 더 두지 않고 글리프를 바꾼 이유 — 영역 상한(글리프 · 점 · 숫자 하나)과 폭 불변을 지키는 유일한 자리가 글리프다. 묻는 것이 "머지할 게 있는가 / 없는가" 라 이진 신호로 충분하고, 개수는 흘긋 볼 때 필요하지 않아 hover 로 미룬다. 기존 숫자에 더하면 "처리할 것(막힘)" 과 "할 수 있는 것(머지)" 이 한 숫자에 섞여 빨강·주황 점과도 어긋난다.
+  - 팝오버 버튼과 같은 기준인 이유 — 메뉴바가 "있음" 이라 했는데 팝오버에 버튼이 없으면 신호를 믿지 못하게 된다. 판정 함수와 섹션 상한을 같은 원천에서 읽으면 두 곳이 갈라질 수 없다.
+  - `.merging` · `.merged` 를 빼는 이유 — 머지 직후 search 색인이 늦어 PR 이 잠시 "내 PR" 에 `CLEAN` 으로 남는다. 그 동안 글리프가 초록이면 방금 머지한 것을 "아직 할 일" 로 거짓 표시한다. 팝오버에서도 그 행은 버튼 대신 "머지 중"·"머지됨" 이다.
+  - 고정 칸인 이유 — merge 글리프가 pull 보다 약 2/3pt 넓어, 바뀔 때마다 status item 이 흔들린다. 칸을 pull 폭에 맞추면 꺼진 상태·#45 의 폭과 스냅샷이 그대로다.
+- **결과**:
+  - 메뉴바 폭은 그대로다 — 머지 가능 있음/없음 스트립 스냅샷이 글리프 칸 밖에서 픽셀 단위로 같다. merge 글리프는 칸 양옆으로 1/3pt 씩 넘쳐 간격에 걸친다.
+  - hover 가 세 줄이 된다.
+  - 머지 가능 PR 이 있어도 점은 초록 그대로다 — 막힘이 없고 CI 가 돌지 않는다는 뜻은 바뀌지 않는다.
+- **트레이드오프**:
+  - 글리프 모양 차이(pull ↔ merge)는 작다 — 색(회색 ↔ 초록)이 주 신호다. 색을 구분하기 어려우면 모양 차이만 남는다. 접근성 레이블("머지 가능한 PR 있음/없음")로 보완한다.
+  - 숨긴 레포의 머지 가능 PR 은 알리지 않는다 — 숨김은 어디에도 세지 않는다는 #45 의 규칙을 따른다.

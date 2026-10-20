@@ -104,6 +104,15 @@ enum SnapshotRenderer {
         write(GitHubMenuBarStrip(scheme: .dark, count: 0, dot: .amber)
                 .frame(width: 320, height: 44).environment(\.colorScheme, .dark),
               to: base, "github_menubar_strip_ci_dark", scale: 3)
+        // A mergeable PR of mine turns the glyph into the green merge arrow
+        // (Decision #52) in the same slot — compare with `_zero_dark`: the
+        // region must not move by a pixel.
+        for scheme in [ColorScheme.dark, .light] {
+            let name = scheme == .dark ? "dark" : "light"
+            write(GitHubMenuBarStrip(scheme: scheme, count: 0, dot: .green, mergeReady: true)
+                    .frame(width: 320, height: 44).environment(\.colorScheme, scheme),
+                  to: base, "github_menubar_strip_merge_\(name)", scale: 3)
+        }
 
         github.presentForSnapshot(.sample(now: now), state: .loaded(.ghCLI(account: "mongshellio")), now: now)
         write(GitHubHoverPreview(github: github), to: base, "github_hover", scale: 2)
@@ -465,13 +474,14 @@ private struct GitHubMenuBarStrip: View {
     let scheme: ColorScheme
     let count: Int
     let dot: GitHubDot
+    var mergeReady = false
     var body: some View {
         HStack(spacing: 0) {
             MenuBarContent(fiveHourUsed: 34, weeklyUsed: 61,
                            showRemaining: false, colorCoding: true,
                            showPercent: true, fiveHourReset: "19:00",
                            openClawDotColor: Palette.green)
-            GitHubMenuBarContent(count: count, dot: dot.color)
+            GitHubMenuBarContent(count: count, dot: dot.color, mergeReady: mergeReady)
         }
         .padding(.horizontal, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
