@@ -102,6 +102,19 @@ enum GitHubPollPolicy {
         return base
     }
 
+    /// The wait before the next automatic poll, or nil for none: after a
+    /// 401 the same rejected token would only be resent, and GitHub may
+    /// answer repeated failures by refusing that user's valid credentials
+    /// too (gh, the browser). Polling then resumes only on a user gesture —
+    /// refresh, PAT change, switching on, opening the popover — and stops
+    /// again if that also gets a 401.
+    static func nextAutoWait(after state: GitHubLoadState, base: Int, backoff: Int,
+                             popoverOpen: Bool, hasPendingChecks: Bool) -> Int? {
+        if state == .unauthorized { return nil }
+        return nextWait(base: base, backoff: backoff, popoverOpen: popoverOpen,
+                        hasPendingChecks: hasPendingChecks)
+    }
+
     /// Whether opening the popover asks GitHub at once. Not while backing
     /// off — looking at the popover must not add requests to a budget that
     /// is already short; the loop's backed-off wait stands.

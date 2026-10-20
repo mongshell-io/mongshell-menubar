@@ -267,6 +267,21 @@ do {
     check("base 상한 600", wait(base: 10_000) == 600)
 }
 
+print("▸ GitHubPollPolicy.nextAutoWait")
+do {
+    func auto(_ state: GitHubLoadState, backoff: Int = 0, open: Bool = false, pending: Bool = false) -> Int? {
+        GitHubPollPolicy.nextAutoWait(after: state, base: 180, backoff: backoff,
+                                      popoverOpen: open, hasPendingChecks: pending)
+    }
+    check("401 이후 자동 대기 없음 (무효 토큰 재전송 정지)", auto(.unauthorized) == nil)
+    check("401 이후엔 열림 + 진행중이어도 자동 대기 없음", auto(.unauthorized, open: true, pending: true) == nil)
+    check("401 이후엔 백오프 중이어도 자동 대기 없음", auto(.unauthorized, backoff: 2) == nil)
+    check("성공 후 → base", auto(.loaded(.pat)) == 180)
+    check("다른 오류 후 → base (정지는 401 만)", auto(.error("x")) == 180)
+    check("한도 초과 후 → 백오프 대기", auto(.rateLimited(retryAt: now), backoff: 1) == 360)
+    check("성공 후 열림 + 진행중 → 30", auto(.loaded(.pat), open: true, pending: true) == 30)
+}
+
 print("▸ GitHubPollPolicy.refreshesOnOpen")
 do {
     check("백오프 없음 → 열면 즉시 갱신", GitHubPollPolicy.refreshesOnOpen(backoff: 0))

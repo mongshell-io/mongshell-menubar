@@ -52,6 +52,10 @@ final class GitHubModel: ObservableObject {
     private var refreshRequested = false
 
     static let maxBackoff = 4
+    /// `Task.sleep` has no "forever": an open-ended nap sleeps in steps of
+    /// this many seconds until cancelled. Waking is by cancellation, so the
+    /// step never delays it.
+    private static let untilWokenStep = 3600
 
     init(prefs: Preferences, credentials: GitHubCredentialStore = .init(), client: GitHubAPIClient = .init()) {
         self.prefs = prefs
@@ -180,14 +184,23 @@ final class GitHubModel: ObservableObject {
     private func pollLoop() async {
         while !Task.isCancelled {
             await refreshOnce()
-            await nap(seconds: nextWait())
+            await nap(seconds: GitHubPollPolicy.nextAutoWait(
+                after: loadState, base: prefs.githubPollSeconds, backoff: backoff,
+                popoverOpen: popoverOpen, hasPendingChecks: snapshot?.hasPendingChecks ?? false))
         }
     }
 
     /// Sleeps in a task of its own so `refreshNow()` can cut it short while
-    /// the loop carries on; cancelling the loop cancels the nap too.
-    private func nap(seconds: Int) async {
-        let nap = Task<Void, Never> { try? await Task.sleep(for: .seconds(seconds)) }
+    /// the loop carries on; cancelling the loop cancels the nap too. nil
+    /// sleeps until woken.
+    private func nap(seconds: Int?) async {
+        let nap = Task<Void, Never> {
+            if let seconds {
+                try? await Task.sleep(for: .seconds(seconds))
+                return
+            }
+            while !Task.isCancelled { try? await Task.sleep(for: .seconds(Self.untilWokenStep)) }
+        }
         napTask = nap
         await withTaskCancellationHandler { await nap.value } onCancel: { nap.cancel() }
         if napTask == nap { napTask = nil }
