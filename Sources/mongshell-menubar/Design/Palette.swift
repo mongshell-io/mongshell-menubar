@@ -60,6 +60,11 @@ enum Palette {
     /// The failure line under a row.
     static let mergeFailedText  = red
 
+    // Merge-ready pill in the menu-bar GitHub region (#56). Fixed colors on
+    // both status-bar appearances: the pill is its own background.
+    static let mergePillFill  = green
+    static let mergePillGlyph = Color.white
+
     /// Usage → status color, honoring the color-coding toggle.
     static func statusColor(for pct: Int, colorCoding: Bool) -> Color {
         guard colorCoding else { return mono }

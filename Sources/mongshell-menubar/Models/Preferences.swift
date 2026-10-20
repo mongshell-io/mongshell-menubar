@@ -50,7 +50,7 @@ final class Preferences: ObservableObject {
 
     // MARK: GitHub (Decision #45)
 
-    /// 옵트인 두 번째 영역. 기본값 꺼짐 — 켜면 메뉴바 폭이 약 46pt 는다.
+    /// 옵트인 두 번째 영역. 기본값 꺼짐 — 켜면 메뉴바 폭이 약 52pt 는다.
     @AppStorage("githubEnabled") var githubEnabled: Bool = false
 
     /// 백그라운드 갱신 간격(초). 범위는 `Config.githubPollRange`, 적용은

@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The opt-in second region of the status item (Decision #45): a vertical
-/// hairline, the pull-request glyph (the green merge arrow while one of my
-/// PRs can be merged, Decision #52), the traffic-light dot and — when there
+/// hairline, the pull-request glyph (a green pill with the merge arrow while
+/// one of my PRs can be merged, Decision #52 / #56), the traffic-light dot and — when there
 /// is something to act on — the count. Hosted in its own
 /// `PassthroughHostingView` to the right of `MenuBarIconView`; the hairline
 /// is part of this content, so switching the region off removes it too.
@@ -60,19 +60,31 @@ struct GitHubMenuBarContent: View {
         .fixedSize()
     }
 
-    /// The pull glyph's own width at 10pt medium — the region as shipped
-    /// in #45. The merge glyph is about two thirds of a point wider and
-    /// overhangs this slot into the spacing around it rather than widening
-    /// the status item, so a merge becoming possible moves nothing.
-    private static let glyphSlotWidth: CGFloat = 8
+    /// The merge pill's size, and so the glyph slot's width whether or not a
+    /// merge is possible: the slot never changes, so a merge becoming possible
+    /// moves nothing (#56). The pull glyph sits centered in the same slot.
+    private static let pillSize = CGSize(width: 14, height: 13)
 
     /// A yes/no in the glyph rather than a second number: the region holds
-    /// one glyph, one dot and one number (Decision #52).
+    /// one glyph, one dot and one number (Decision #52). A green tint on the
+    /// thin 10pt glyph alone was not noticeable at a glance, so merge-ready
+    /// fills a green pill and draws the glyph white and bold on it (#56).
     private var glyph: some View {
-        Image(systemName: mergeReady ? "arrow.triangle.merge" : "arrow.triangle.pull")
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(mergeReady ? AnyShapeStyle(Palette.green) : AnyShapeStyle(.secondary))
-            .frame(width: Self.glyphSlotWidth)
-            .accessibilityLabel(mergeReady ? "머지 가능한 PR 있음" : "머지 가능한 PR 없음")
+        ZStack {
+            if mergeReady {
+                RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                    .fill(Palette.mergePillFill)
+                Image(systemName: "arrow.triangle.merge")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Palette.mergePillGlyph)
+            } else {
+                Image(systemName: "arrow.triangle.pull")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: Self.pillSize.width, height: Self.pillSize.height)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(mergeReady ? "머지 가능한 PR 있음" : "머지 가능한 PR 없음")
     }
 }
