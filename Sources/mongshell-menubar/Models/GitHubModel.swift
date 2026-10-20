@@ -408,6 +408,7 @@ final class GitHubModel: ObservableObject {
         case .failure(.cancelled):
             return
         case .failure(let error):
+            if GitHubPollPolicy.backsOff(after: error) { backOff() }
             loadState = .error(error.detail)
         }
         updateGlance()

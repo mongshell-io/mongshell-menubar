@@ -501,6 +501,23 @@ do {
     check("확인 중 + 지난 스냅샷 진행중 → base", auto(.loading, running: true) == 180)
 }
 
+print("▸ GitHubPollPolicy.backsOff")
+do {
+    check("헤더 없는 403 → 물러남 (보조 한도일 수 있음)", GitHubPollPolicy.backsOff(after: .http(403)))
+    check("헤더 없는 429 → 물러남", GitHubPollPolicy.backsOff(after: .http(429)))
+    check("500 → 물러나지 않음", !GitHubPollPolicy.backsOff(after: .http(500)))
+    check("네트워크 오류 → 물러나지 않음",
+          !GitHubPollPolicy.backsOff(after: .timedOut) && !GitHubPollPolicy.backsOff(after: .offline))
+    // What the model does with it: one step of backoff, the plain error.
+    let after403 = GitHubPollPolicy.backsOff(after: .http(403)) ? 1 : 0
+    let state403 = GitHubLoadState.error(GitHubAPIError.http(403).detail)
+    check("헤더 없는 403 뒤 → base·2 대기 (최소 1분 넘김, 진행중이어도 30 아님)",
+          GitHubPollPolicy.nextAutoWait(after: state403, base: 60, backoff: after403,
+                                        hasFreshRunningChecks: true) == 120)
+    check("헤더 없는 403 뒤 → 팝오버를 열어도 요청 안 함 (머지 성공 뒤 갱신도 같은 판정)",
+          !GitHubPollPolicy.refreshesOnOpen(after: state403, backoff: after403))
+}
+
 print("▸ GitHubPollPolicy.refreshesOnOpen")
 do {
     func opens(_ state: GitHubLoadState, backoff: Int = 0) -> Bool {

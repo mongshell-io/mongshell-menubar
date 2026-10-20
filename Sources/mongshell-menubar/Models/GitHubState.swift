@@ -130,6 +130,19 @@ enum GitHubPollPolicy {
         return nextWait(base: base, backoff: backoff)
     }
 
+    /// Whether a failed request backs off as a rate limit does. A 403 or
+    /// 429 without any rate-limit header (`interpret` throws `.http` for
+    /// it) may still be GitHub's secondary limit, whose guidance is to wait
+    /// at least a minute and then back off exponentially — retrying at base
+    /// would keep hitting it. The state stays the plain error: no header
+    /// says it was the limit, and a 403 can be a refusal as well.
+    static func backsOff(after error: GitHubAPIError) -> Bool {
+        switch error {
+        case .http(403), .http(429): return true
+        default: return false
+        }
+    }
+
     /// Whether opening the popover asks GitHub at once. Not while backing
     /// off — looking at the popover must not add requests to a budget that
     /// is already short; the loop's backed-off wait stands. Not while
