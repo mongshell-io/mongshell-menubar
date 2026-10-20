@@ -100,6 +100,10 @@ enum SnapshotRenderer {
         write(GitHubMenuBarStrip(scheme: .dark, count: 0, dot: .green)
                 .frame(width: 320, height: 44).environment(\.colorScheme, .dark),
               to: base, "github_menubar_strip_zero_dark", scale: 3)
+        // Nothing blocked, a check still running: amber, still no number.
+        write(GitHubMenuBarStrip(scheme: .dark, count: 0, dot: .amber)
+                .frame(width: 320, height: 44).environment(\.colorScheme, .dark),
+              to: base, "github_menubar_strip_ci_dark", scale: 3)
 
         github.presentForSnapshot(.sample(now: now), state: .loaded(.ghCLI(account: "mongshellio")), now: now)
         write(GitHubHoverPreview(github: github), to: base, "github_hover", scale: 2)
@@ -387,18 +391,6 @@ private extension GitHubSnapshot {
                               nodeID: nodeID, headSHA: headSHA)
         }
         return GitHubSnapshot(
-            reviewRequested: [
-                pr("mongshell/bookdam", 58, "feat: 대화 목록 무한 스크롤과 날짜 구분선",
-                   updatedAgo: day, rollup: .success, checks: passed(5, total: 7 * minute + 51)),
-                pr("mongshell/growdle", 121, "fix: 주간 리포트 집계가 UTC 자정에 끊기던 문제",
-                   updatedAgo: 3 * hour, rollup: .pending, checks: [
-                    check("static", .passed, startedAgo: 5 * minute, took: minute + 12),
-                    check("test", .running, startedAgo: 83),
-                    check("automerge", .skipped, startedAgo: 5 * minute, took: 1),
-                    check("Vercel", .running, startedAgo: 125),
-                    check("Preview Comments", .passed, startedAgo: 4 * minute, took: 4),
-                   ]),
-            ],
             mine: [
                 pr("mongshell/mongshell-menubar", 45, "feat: GitHub PR 영역을 메뉴바 두 번째 영역으로",
                    updatedAgo: 25 * minute, rollup: .failure, checks: [
@@ -409,6 +401,14 @@ private extension GitHubSnapshot {
                 pr("mongshell/mongshell-menubar", 46, "docs: PHILOSOPHY 에 옵트인 두 번째 영역 예외 추가",
                    updatedAgo: hour, draft: true, rollup: .success,
                    checks: passed(3, total: 2 * minute + 40)),
+                pr("mongshell/growdle", 121, "fix: 주간 리포트 집계가 UTC 자정에 끊기던 문제",
+                   updatedAgo: 3 * hour, rollup: .pending, checks: [
+                    check("static", .passed, startedAgo: 5 * minute, took: minute + 12),
+                    check("test", .running, startedAgo: 83),
+                    check("automerge", .skipped, startedAgo: 5 * minute, took: 1),
+                    check("Vercel", .running, startedAgo: 125),
+                    check("Preview Comments", .passed, startedAgo: 4 * minute, took: 4),
+                   ]),
                 // No review rules (reviewDecision null) but GitHub says CLEAN —
                 // "머지 가능" without an approval (a solo repo), so it offers
                 // the squash merge. Fixture ids, not a real PR's.
@@ -440,12 +440,11 @@ private extension GitHubSnapshot {
             tokenScopesLackRepo: nil)
     }
 
-    /// Past the section caps: no review requests ("없음"), ten of my PRs
-    /// (eight rows + "외 2건"), four merged (three + "외 1건").
+    /// Past the section caps: ten of my PRs (eight rows + "외 2건"), four
+    /// merged (three + "외 1건").
     static func sampleOverflow(now: Date) -> GitHubSnapshot {
         var snapshot = sample(now: now)
-        let template = snapshot.mine[3]
-        snapshot.reviewRequested = []
+        let template = snapshot.mine[4]
         snapshot.mine = (1...10).map { i in
             GitHubPullRequest(repository: "mongshell/bookdam", number: 100 + i,
                               title: "chore: 샘플 PR \(i)",
