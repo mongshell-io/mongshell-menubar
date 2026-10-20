@@ -48,6 +48,12 @@ final class GitHubModel: ObservableObject {
     /// answer, so the two differ exactly while the list speaks for a token
     /// no longer in use — `GitHubMergePolicy.gate` refuses a merge then.
     private var snapshotGeneration = 0
+    /// The token source `snapshot` was fetched with. `tokenSource` moves at
+    /// the start of every refresh, and `loadState` stops saying it while
+    /// loading or rate-limited, so the list's own is kept here — a
+    /// `gh auth switch` outside the app changes the account without a new
+    /// generation, and `GitHubMergePolicy.gate` compares this instead.
+    private var snapshotSource: GitHubTokenSource?
     private var backoff = 0
     private var popoverOpen = false
     /// The user refused the Keychain prompt for gh's item. Remembered for the
@@ -91,6 +97,7 @@ final class GitHubModel: ObservableObject {
         guard on else {
             pollTask?.cancel()
             snapshot = nil
+            snapshotSource = nil
             tokenSource = nil
             mergeActivity = [:]
             backoff = 0
@@ -184,13 +191,30 @@ final class GitHubModel: ObservableObject {
     /// head SHA the row showed as `expectedHeadOid`. What
     /// `GitHubMergePolicy.gate` says of the current list and state decides:
     /// nothing goes out in a stopped state (a 401 among them) or on a list
-    /// fetched before the token changed, and a head that moved since the
-    /// row was drawn is refused here, before GitHub is asked.
+    /// fetched before the token changed or with another account than the
+    /// one the token now resolves to, and a head that moved since the row
+    /// was drawn is refused here, before GitHub is asked.
     func merge(_ id: String, expectedHead: String) {
-        guard prefs.githubEnabled else { return }
+        // The token is resolved before the gate, because the gate compares
+        // its source with the list's. A stopped state is turned away first
+        // so it reads no Keychain and isn't overwritten by what that read
+        // finds — the gate would refuse it anyway.
+        guard prefs.githubEnabled, GitHubMergePolicy.allowsMerge(in: loadState) else { return }
+        let token: String
+        let source: GitHubTokenSource
+        switch resolveToken() {
+        case .token(let t, let s):
+            token = t; source = s
+        case .unavailable(let state):
+            tokenSource = nil
+            loadState = state
+            updateGlance()
+            return
+        }
         let nodeID: String
         switch GitHubMergePolicy.gate(id: id, expectedHead: expectedHead, mine: snapshot?.mine,
                                       listGeneration: snapshotGeneration, generation: generation,
+                                      listSource: snapshotSource, tokenSource: source,
                                       state: loadState, activity: mergeActivity[id]) {
         case .send(let node):
             nodeID = node
@@ -199,18 +223,12 @@ final class GitHubModel: ObservableObject {
             return
         case .listStale:
             mergeActivity[id] = .failed(GitHubMergePolicy.listStaleReason)
+            // A swap in the app has already asked for the new list; an
+            // account switched outside it has not. Same condition as after
+            // a merge: a backoff is not skipped.
+            if GitHubPollPolicy.refreshesOnOpen(after: loadState, backoff: backoff) { refreshNow() }
             return
         case .ignore:
-            return
-        }
-        let token: String
-        switch resolveToken() {
-        case .token(let t, _):
-            token = t
-        case .unavailable(let state):
-            tokenSource = nil
-            loadState = state
-            updateGlance()
             return
         }
         mergeActivity[id] = .merging
@@ -256,6 +274,7 @@ final class GitHubModel: ObservableObject {
         pollTask?.cancel()
         self.snapshot = snapshot
         snapshotGeneration = generation
+        if case .loaded(let source) = state { snapshotSource = source } else { snapshotSource = nil }
         self.mergeActivity = mergeActivity
         loadState = state
         if case .loaded(let source) = state { tokenSource = source } else { tokenSource = nil }
@@ -384,6 +403,7 @@ final class GitHubModel: ObservableObject {
         case .success(.snapshot(let snap)):
             snapshot = snap
             snapshotGeneration = requestedIn
+            snapshotSource = source
             mergeActivity = GitHubMergePolicy.carryOver(mergeActivity, into: snap.mine)
             loadState = .loaded(source)
             // Nearing the budget backs off like a 429 would, before one arrives.

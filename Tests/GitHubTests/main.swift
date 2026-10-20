@@ -832,9 +832,11 @@ do {
     let loaded = GitHubLoadState.loaded(.pat)
     func gate(_ mine: [GitHubPullRequest]?, head: String = "abc", state: GitHubLoadState = loaded,
               activity: PRMergeActivity? = nil, id: String? = nil,
-              listGeneration: Int = 2, generation: Int = 2) -> GitHubMergePolicy.Gate {
+              listGeneration: Int = 2, generation: Int = 2,
+              listSource: GitHubTokenSource? = .pat, tokenSource: GitHubTokenSource = .pat) -> GitHubMergePolicy.Gate {
         GitHubMergePolicy.gate(id: id ?? ready.id, expectedHead: head, mine: mine,
                                listGeneration: listGeneration, generation: generation,
+                               listSource: listSource, tokenSource: tokenSource,
                                state: state, activity: activity)
     }
     check("현재 목록의 머지 가능 PR, 같은 head → 보냄", gate([ready]) == .send(nodeID: "PR_57"))
@@ -855,6 +857,19 @@ do {
     check("옛 목록에서 head 도 바뀜 → 세대 사유가 먼저", gate([ready], head: "old", generation: 3) == .listStale)
     check("세대가 달라도 이미 나간 머지 → 무시", gate([ready], activity: .merging, generation: 3) == .ignore)
     check("세대가 달라도 정지 상태 → 무시", gate([ready], state: .patSaveFailed(-1), generation: 3) == .ignore)
+    // `gh auth switch` outside the app: same generation, another account.
+    let alice = GitHubTokenSource.ghCLI(account: "alice")
+    check("목록과 같은 gh 계정 → 보냄",
+          gate([ready], listSource: alice, tokenSource: alice) == .send(nodeID: "PR_57"))
+    check("목록을 받은 gh 계정과 지금 계정이 다름 → listStale",
+          gate([ready], listSource: alice, tokenSource: .ghCLI(account: "bob")) == .listStale)
+    check("gh 로 받은 목록, 지금은 PAT → listStale", gate([ready], listSource: alice, tokenSource: .pat) == .listStale)
+    check("PAT 로 받은 목록, 지금은 gh → listStale", gate([ready], listSource: .pat, tokenSource: alice) == .listStale)
+    check("목록의 출처를 모름 → listStale", gate([ready], listSource: nil, tokenSource: .pat) == .listStale)
+    check("계정이 달라도 head 보다 출처 사유가 먼저",
+          gate([ready], head: "old", listSource: alice, tokenSource: .pat) == .listStale)
+    check("계정이 달라도 이미 나간 머지 → 무시",
+          gate([ready], activity: .merging, listSource: alice, tokenSource: .pat) == .ignore)
     let retry = Date(timeIntervalSince1970: 0)
     for state in [GitHubLoadState.loaded(.ghCLI(account: "a")), .loading, .rateLimited(retryAt: retry)] {
         check("\(state) → 보낼 수 있음", GitHubMergePolicy.allowsMerge(in: state) && gate([ready], state: state) == .send(nodeID: "PR_57"))

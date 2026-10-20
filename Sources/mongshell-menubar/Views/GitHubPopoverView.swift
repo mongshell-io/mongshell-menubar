@@ -425,7 +425,9 @@ private struct PRRow: View {
     // MARK: Squash merge (Decision #49)
 
     /// What the control shows: the button at rest (and after a failure, to
-    /// retry), or the label of a merge out or done.
+    /// retry), or the label of a merge out or done. Every face names the PR
+    /// by number, so a click that lands after the list moved under the
+    /// cursor says which PR it was for.
     private enum MergeFace: CaseIterable {
         case button, merging, merged
     }
@@ -471,19 +473,19 @@ private struct PRRow: View {
         case .button:
             HStack(spacing: 4) {
                 Image(systemName: "arrow.triangle.merge").font(.system(size: 10, weight: .semibold))
-                Text("Squash 머지").font(.system(size: 11, weight: .medium))
+                Text("#\(String(pr.number)) 머지").font(.system(size: 11, weight: .medium))
             }
             .foregroundStyle(Palette.badgeGreenText)
         case .merging:
             HStack(spacing: 4) {
                 ProgressView().controlSize(.mini)
-                Text("머지 중…").font(.system(size: 11, weight: .medium))
+                Text("#\(String(pr.number)) 머지 중…").font(.system(size: 11, weight: .medium))
             }
             .foregroundStyle(Palette.textSecondary)
         case .merged:
             HStack(spacing: 4) {
                 Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold))
-                Text("머지됨").font(.system(size: 11, weight: .medium))
+                Text("#\(String(pr.number)) 머지됨").font(.system(size: 11, weight: .medium))
             }
             .foregroundStyle(Palette.badgeGreenText)
         }
