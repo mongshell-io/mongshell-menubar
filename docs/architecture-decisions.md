@@ -224,11 +224,11 @@
 ## Decision #47: 앱 번들 버전은 빌드 시 git tag 에서 찍는다
 
 - **도입**: 미정 (#47)
-- **컨텍스트**: 버전 SSOT 는 git tag 다 (`docs/architecture.md` § 배포, `/release` 는 태그만 만들고 파일을 고치지 않는다). 그런데 `Resources/Info.plist` 의 `CFBundleShortVersionString` 은 손으로 적은 `0.1.0` 이었고 `make_app.sh` 가 그대로 복사해, 태그가 `v1.1.2` 인데도 앱은 0.1.0 으로 찍혔다. 사용자에게 보이지 않아 드러나지 않다가, GitHub API 요청의 `User-Agent`(#45 의 `Config.githubUserAgent`)가 이 값을 싣게 되면서 실제 외부로 나가는 값이 됐다.
+- **컨텍스트**: 버전 SSOT 는 git tag 다 (`docs/architecture.md` § 배포, `/release` 는 태그만 만들고 파일을 고치지 않는다). 그런데 `Resources/Info.plist` 의 `CFBundleShortVersionString` 은 손으로 적은 `0.1.0` 이었고 `make_app.sh` 가 그대로 복사해, 태그가 `v1.1.2` 인데도 앱은 0.1.0 으로 찍혔다. 사용자에게 보이지 않아 드러나지 않았지만, GitHub PR 영역(#45)이 GitHub API 요청의 `User-Agent` 에 이 값을 싣도록 설계돼 외부로 나가는 값이 된다.
 - **결정**: `make_app.sh` 가 번들을 조립할 때 `git describe --tags --abbrev=0 --match 'v[0-9]*'` 로 가장 가까운 태그를 읽어, `vX.Y.Z` 형식이면 번들 안 `Info.plist` 사본의 `CFBundleShortVersionString` 을 그 값으로 바꾼다 (서명 전에). 저장소의 `Info.plist` 에는 `0.0.0` 자리표시만 둔다. `release.sh` 는 `make_app.sh` 를 거치므로 같은 값을 받는다.
 - **이유**: 대안은 셋이었다. (a) 릴리스마다 `Info.plist` 를 손으로 올림 — 태그와 파일 두 곳에 같은 값을 복제하는 것이고, `/release` 가 파일을 고치지 않는 불변식 때문에 별도 chore PR 이 매번 필요해 결국 밀린다 (지금 상태가 그 결과다). (b) `git describe` 전체 문자열(`1.1.2-5-gabc1234`)을 씀 — `CFBundleShortVersionString` 은 마침표로 나뉜 정수 세 개여야 해서 넣을 수 없다. (c) 빌드 시 가장 가까운 태그 — 파생 가능한 값을 복제하지 않고, 형식도 지킨다.
 - **결과**:
   - 태그 사이의 개발 빌드는 직전 릴리스 번호로 찍힌다 (`v1.1.2` 뒤 커밋도 1.1.2). 어느 커밋인지는 번들 버전으로 구분하지 않는다.
-  - 태그를 볼 수 없는 빌드(`.git` 없는 소스 사본, 태그를 fetch 하지 않은 clone)는 `0.0.0` 으로 남고 `make_app.sh` 가 그 사실을 출력한다. 태그가 `vX.Y.Z` 형식이 아니어도(예: `v1.2.0-rc1`) 같다.
+  - 태그를 볼 수 없는 빌드(`.git` 없는 소스 사본, 태그를 fetch 하지 않은 clone)는 `0.0.0` 으로 남고 `make_app.sh` 가 그 사실을 출력한다. 태그가 `vX.Y.Z` 형식이 아니어도(예: `v1.2.0-rc1`) 같다. 로컬 빌드는 그대로 진행하지만, 남에게 주는 `release.sh` 는 `0.0.0` 이면 서명·공증 전에 멈춘다.
   - `CFBundleVersion` 은 `1` 그대로 둔다 — 자동 업데이트 수단이 없어 빌드 번호를 비교하는 쪽이 없다.
-  - 되돌리려면 `make_app.sh` 의 버전 블록을 지우고 `Info.plist` 에 실제 버전을 적으면 된다.
+  - 되돌리려면 `make_app.sh` 의 버전 블록과 `release.sh` 의 `0.0.0` 검사를 지우고 `Info.plist` 에 실제 버전을 적으면 된다.
