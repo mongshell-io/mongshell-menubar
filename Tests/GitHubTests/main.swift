@@ -809,6 +809,26 @@ do {
     check("실패 사유 → 다음 성공 갱신에서 지움", after[pr("mongshell/bookdam", 60).id] == nil)
 }
 
+print("▸ 머지 확인 클릭 간격 (GitHubMergePolicy.confirmClick)")
+do {
+    func click(_ elapsed: TimeInterval, minimum: TimeInterval = 0.5) -> GitHubMergePolicy.ConfirmClick {
+        GitHubMergePolicy.confirmClick(armedAt: 100, now: 100 + elapsed, minimum: minimum)
+    }
+    let window = TimeInterval(GitHubMergePolicy.confirmWindowSeconds)
+    check("더블클릭 간격 안 → 무시 (확인 유지)", click(0.2) == .tooSoon)
+    check("최소 간격 직전 → 무시", click(0.499) == .tooSoon)
+    check("최소 간격 정각 → 확정", click(0.5) == .confirms)
+    check("창 끝 정각 → 확정", click(window) == .confirms)
+    check("창 넘김 → 새 첫 클릭", click(window + 0.01) == .expired)
+    check("시각이 거꾸로 → 무시", click(-1) == .tooSoon)
+    let minimum = GitHubMergePolicy.confirmMinimum
+    check("시스템 간격이 하한보다 짧으면 하한", minimum(0.2) == GitHubMergePolicy.confirmFloorSeconds)
+    check("시스템 간격이 길면 그 값", minimum(0.8) == 0.8)
+    check("시스템 간격이 아주 길어도 상한 — 확정할 틈이 남는다",
+          minimum(5) == GitHubMergePolicy.confirmCeilingSeconds
+              && GitHubMergePolicy.confirmCeilingSeconds < window)
+}
+
 // MARK: - 12. gh Keychain 값 디코딩
 
 print("▸ decodeGHKeyringValue")

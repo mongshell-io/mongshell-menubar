@@ -320,9 +320,6 @@ private struct PRRow: View {
     /// `GitHubModel.popoverSession`, bumped on every close of the popover.
     let popoverSession: Int
 
-    /// How long the armed "확인 — #N 머지" waits for the second click.
-    static let confirmWindowSeconds = 3
-
     // `@State` 를 손으로 펼친 것 (Decision #11-2, `MenuBarIconView.pulsing` 참조).
     private var _hovering = State(initialValue: false)
     private var hovering: Bool {
@@ -334,6 +331,8 @@ private struct PRRow: View {
     private struct MergeArm: Equatable {
         let head: String
         let session: Int
+        /// `ProcessInfo.systemUptime` at the first click.
+        let at: TimeInterval
     }
     private var _arm = State<MergeArm?>(initialValue: nil)
     private var arm: MergeArm? {
@@ -345,7 +344,7 @@ private struct PRRow: View {
          offersMerge: Bool, mergeActivity: PRMergeActivity?,
          onMerge: @escaping (_ expectedHead: String) -> Void,
          popoverSession: Int, armed: Bool = false) {
-        self._arm = State(initialValue: armed ? pr.headSHA.map { MergeArm(head: $0, session: popoverSession) } : nil)
+        self._arm = State(initialValue: armed ? pr.headSHA.map { MergeArm(head: $0, session: popoverSession, at: 0) } : nil)
         self.pr = pr
         self.verdict = verdict
         self.frozenNow = frozenNow
@@ -497,14 +496,7 @@ private struct PRRow: View {
     private static let controlHeight: CGFloat = 18
 
     private var mergeButton: some View {
-        Button {
-            if armed, let head = arm?.head {
-                arm = nil
-                onMerge(head)
-            } else if let head = pr.headSHA {
-                arm = MergeArm(head: head, session: popoverSession)
-            }
-        } label: {
+        Button(action: mergeClicked) {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.triangle.merge")
                     .font(.system(size: 10, weight: .semibold))
@@ -524,7 +516,7 @@ private struct PRRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 5))
         }
         .buttonStyle(.plain)
-        .help(armed ? "\(Self.confirmWindowSeconds)초 안에 다시 누르면 squash 머지 (앱은 브랜치를 지우지 않음)"
+        .help(armed ? "\(GitHubMergePolicy.confirmWindowSeconds)초 안에 다시 누르면 squash 머지 (앱은 브랜치를 지우지 않음)"
                     : "squash 머지 — 한 번 더 눌러 확정")
         // Disarms after the window, and also when the wait is cancelled: the
         // button leaving the hierarchy cancels it, and an arm left standing
@@ -532,8 +524,31 @@ private struct PRRow: View {
         // cleared — a newer one has a wait of its own.
         .task(id: arm) {
             guard let waitingFor = arm else { return }
-            try? await Task.sleep(for: .seconds(Self.confirmWindowSeconds))
+            try? await Task.sleep(for: .seconds(GitHubMergePolicy.confirmWindowSeconds))
             if arm == waitingFor { arm = nil }
+        }
+    }
+
+    /// First click arms; a second inside the window merges. A second click
+    /// within a double-click of the first is ignored with the confirm left
+    /// up, so one quick double-click never merges on its own.
+    private func mergeClicked() {
+        let now = ProcessInfo.processInfo.systemUptime
+        if armed, let arm {
+            let minimum = GitHubMergePolicy.confirmMinimum(doubleClickInterval: NSEvent.doubleClickInterval)
+            switch GitHubMergePolicy.confirmClick(armedAt: arm.at, now: now, minimum: minimum) {
+            case .tooSoon:
+                return
+            case .confirms:
+                self.arm = nil
+                onMerge(arm.head)
+                return
+            case .expired:
+                break
+            }
+        }
+        if let head = pr.headSHA {
+            arm = MergeArm(head: head, session: popoverSession, at: now)
         }
     }
 

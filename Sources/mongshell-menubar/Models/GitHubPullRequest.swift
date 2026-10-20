@@ -189,6 +189,41 @@ enum GitHubMergePolicy {
     /// click and the second: nothing was sent.
     static let headMovedReason = "그 사이 새 커밋이 올라왔어요 — 다시 확인해 주세요"
 
+    /// How long the armed "확인 — #N 머지" waits for the second click.
+    static let confirmWindowSeconds = 3
+    /// The least time between the first click and a second that counts:
+    /// anything sooner is the other half of a double-click — one gesture,
+    /// not a decision. Never under this, whatever the system interval says.
+    static let confirmFloorSeconds: TimeInterval = 0.4
+    /// …and never so long that the window leaves no room to confirm (the
+    /// slowest double-click setting runs to seconds).
+    static let confirmCeilingSeconds: TimeInterval = 1.5
+
+    enum ConfirmClick: Equatable, Sendable {
+        /// Too soon after arming: ignored, and the confirm stays up.
+        case tooSoon
+        case confirms
+        /// Past the window — the confirm should already have dropped, so
+        /// the click is a fresh first one.
+        case expired
+    }
+
+    /// `NSEvent.doubleClickInterval`, held between the floor and the ceiling.
+    static func confirmMinimum(doubleClickInterval: TimeInterval) -> TimeInterval {
+        min(max(doubleClickInterval, confirmFloorSeconds), confirmCeilingSeconds)
+    }
+
+    /// How a click on an armed button reads. Times are monotonic seconds
+    /// (`ProcessInfo.systemUptime`), so a wall-clock change can't stretch
+    /// or shrink the gap.
+    static func confirmClick(armedAt: TimeInterval, now: TimeInterval,
+                             minimum: TimeInterval) -> ConfirmClick {
+        let elapsed = now - armedAt
+        if elapsed < minimum { return .tooSoon }
+        if elapsed > TimeInterval(confirmWindowSeconds) { return .expired }
+        return .confirms
+    }
+
     /// What a successful refresh keeps: a merge still out, and a finished
     /// one whose PR the list still shows open. Failure lines end here — the
     /// list they were about has been replaced.
