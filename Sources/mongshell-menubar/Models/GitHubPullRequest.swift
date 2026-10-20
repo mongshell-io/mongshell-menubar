@@ -450,6 +450,11 @@ struct GitHubGlance: Equatable, Sendable {
         let blocked: Int
         /// After the my-PR count: "막힘 1 · #45 build 실패".
         let mineRest: String
+        /// My PR rows the popover draws with a merge button right now
+        /// (Decision #52) — rows past the section cap have none.
+        let mergeable: Int
+        /// After the mergeable count: "bookdam #57 외 1", or empty.
+        let mergeableRest: String
     }
 
     /// My PRs that are blocked.
@@ -461,6 +466,10 @@ struct GitHubGlance: Equatable, Sendable {
     let stateLabel: String
 
     static let empty = GitHubGlance(count: 0, dot: .grey, lines: nil, stateLabel: "")
+
+    /// Whether one of my PRs can be merged from the popover now — what turns
+    /// the menu-bar glyph into the green merge arrow. False without lines.
+    var hasMergeable: Bool { (lines?.mergeable ?? 0) > 0 }
 
     /// "CI 1 · growdle #121 Vercel 2m 05s…" / "CI 모두 통과", or the state
     /// label without lines.
@@ -476,22 +485,31 @@ struct GitHubGlance: Equatable, Sendable {
         return "내 PR \(lines.mine) · \(lines.mineRest)"
     }
 
+    /// "머지 가능 2 · bookdam #57 외 1", "머지 가능 0", or empty without lines.
+    var hoverMergeableLine: String {
+        guard let lines else { return "" }
+        return "머지 가능 \(lines.mergeable)" + (lines.mergeableRest.isEmpty ? "" : " · \(lines.mergeableRest)")
+    }
+
     /// A snapshot is only read for `.loaded`, and for `.loading` /
     /// `.rateLimited` when one was kept from before; every other state is a
     /// grey dot with its own hover label, whatever snapshot is lying around.
-    static func of(_ snapshot: GitHubSnapshot?, state: GitHubLoadState, hidden: Set<String>) -> GitHubGlance {
+    /// `mergeActivity` is the model's per-PR merge state: a merge already
+    /// out or done takes its PR out of the mergeable count.
+    static func of(_ snapshot: GitHubSnapshot?, state: GitHubLoadState, hidden: Set<String>,
+                   mergeActivity: [String: PRMergeActivity]) -> GitHubGlance {
         switch state {
         case .loaded:
-            return snapshot.map { of($0.hiding(hidden)) } ?? .empty
+            return snapshot.map { of($0.hiding(hidden), mergeActivity: mergeActivity) } ?? .empty
         case .loading, .rateLimited:
-            if let snapshot { return of(snapshot.hiding(hidden)) }
+            if let snapshot { return of(snapshot.hiding(hidden), mergeActivity: mergeActivity) }
             return GitHubGlance(count: 0, dot: .grey, lines: nil, stateLabel: state.hoverLabel)
         case .off, .noToken, .keychainDenied, .unauthorized, .patSaveFailed, .error:
             return GitHubGlance(count: 0, dot: .grey, lines: nil, stateLabel: state.hoverLabel)
         }
     }
 
-    private static func of(_ s: GitHubSnapshot) -> GitHubGlance {
+    private static func of(_ s: GitHubSnapshot, mergeActivity: [String: PRMergeActivity]) -> GitHubGlance {
         let blocked = s.mine.filter { PRVerdict.of($0).isBlocking }
         let ci = GitHubCILine.of(s.mine)
         let dot: GitHubDot = !blocked.isEmpty ? .red : (ci.isGoing ? .amber : .green)
@@ -500,8 +518,28 @@ struct GitHubGlance: Equatable, Sendable {
         if let first = blocked.first {
             mineRest += " · " + blockedReason(first)
         }
-        let lines = Lines(ci: ci, mine: s.mine.count, blocked: blocked.count, mineRest: mineRest)
+        // Only the rows the popover draws (the rest fold into "외 N건" with
+        // no button), so the glyph never says yes to a merge the popover
+        // can't offer.
+        let mergeable = s.mine.prefix(Config.githubSectionCaps.mine)
+            .filter { isMergeableNow($0, activity: mergeActivity[$0.id]) }
+        var mergeableRest = ""
+        if let first = mergeable.first {
+            mergeableRest = "\(first.repositoryName) #\(first.number)"
+            if mergeable.count > 1 { mergeableRest += " 외 \(mergeable.count - 1)" }
+        }
+        let lines = Lines(ci: ci, mine: s.mine.count, blocked: blocked.count, mineRest: mineRest,
+                          mergeable: mergeable.count, mergeableRest: mergeableRest)
         return GitHubGlance(count: blocked.count, dot: dot, lines: lines, stateLabel: "")
+    }
+
+    /// The popover's merge button would be drawn on its row (Decision #52): the
+    /// same `canOffer`, minus a merge already out or done — search indexes
+    /// a merged PR late, and until then it would read as one still to merge.
+    /// A failed attempt still counts: the button is offered again.
+    private static func isMergeableNow(_ pr: GitHubPullRequest, activity: PRMergeActivity?) -> Bool {
+        guard GitHubMergePolicy.canOffer(pr, section: .mine) else { return false }
+        return activity != .merging && activity != .merged
     }
 
     /// "#45 build 실패" / "#45 충돌" / "#45 변경 요청". A rollup failure with no

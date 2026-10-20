@@ -41,7 +41,7 @@ private var pulsing: Bool {
 
 | 표면 | 뷰 | 제약 |
 |---|---|---|
-| 메뉴바 | `MenuBarIconView`, `ClaudeMarkView`, `GitHubMenuBarView` | 폭이 유한하다. 상시 표시 항목 추가는 무엇을 뺄지 함께 제시해야 한다. 신호등은 세로로 **두 줄까지** 쌓는다 (Decision #31). 옵트인 두 번째 영역(Decision #45)은 글리프 · 점 · 숫자 하나까지 |
+| 메뉴바 | `MenuBarIconView`, `ClaudeMarkView`, `GitHubMenuBarView` | 폭이 유한하다. 상시 표시 항목 추가는 무엇을 뺄지 함께 제시해야 한다. 신호등은 세로로 **두 줄까지** 쌓는다 (Decision #31). 옵트인 두 번째 영역(Decision #45)은 글리프 · 점 · 숫자 하나까지 — 글리프가 머지 가능 여부를 겸한다 (#52, 칸 폭 고정) |
 | hover 요약 | `HoverSummaryView`, `GitHubHoverSummaryView` | 즉시 표시가 존재 이유다 — 지연을 만드는 애니메이션·비동기 로드 금지. hover 는 갱신을 일으키지 않는다 |
 | 클릭 팝오버 / 설정창 | `PopoverView`, `SettingsView`, `ClaudeSettingsSection`, `OpenClawSettingsSection`, `GitHubPopoverView`, `GitHubSettingsSection` | 정확한 숫자와 상세는 여기로 미룬다 |
 
