@@ -42,7 +42,7 @@ struct GitHubSettingsSection: View {
 
     var body: some View {
         Toggle("GitHub 표시", isOn: enabledBinding)
-        Text("메뉴바 오른쪽에 PR 영역이 생깁니다 — 리뷰 요청과 내 PR 의 막힘.")
+        Text("메뉴바 오른쪽에 PR 영역이 생깁니다 — 내 PR 의 막힘과 검사 진행.")
             .font(.caption).foregroundStyle(.secondary)
 
         if prefs.githubEnabled {

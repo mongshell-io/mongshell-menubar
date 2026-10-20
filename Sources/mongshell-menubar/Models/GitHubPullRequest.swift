@@ -10,7 +10,7 @@ import SwiftUI
 enum PRCheckOutcome: Equatable, Sendable {
     case passed, failed, running, queued, skipped
 
-    /// Still going — what keeps the open popover on the fast cadence.
+    /// Still going — a running chip ticks, a PR with one is "검사 진행중".
     var isPending: Bool { self == .running || self == .queued }
 }
 
@@ -106,7 +106,7 @@ struct GitHubPullRequest: Equatable, Identifiable, Sendable {
 /// The one badge a row gets. Declaration order is priority order (mockup
 /// § D): `min()` of several verdicts is the one that wins.
 enum PRVerdict: Int, Comparable, Sendable {
-    case conflict, checksFailed, changesRequested, myReviewPending, draft, awaitingReview, approved, mergeable
+    case conflict, checksFailed, changesRequested, draft, awaitingReview, approved, mergeable
 
     static func < (lhs: PRVerdict, rhs: PRVerdict) -> Bool { lhs.rawValue < rhs.rawValue }
 
@@ -119,7 +119,6 @@ enum PRVerdict: Int, Comparable, Sendable {
         case .conflict:         return "충돌"
         case .checksFailed:     return "검사 실패"
         case .changesRequested: return "변경 요청"
-        case .myReviewPending:  return "내 리뷰 대기"
         case .draft:            return "Draft"
         case .awaitingReview:   return "리뷰 대기"
         case .approved:         return "승인"
@@ -127,14 +126,11 @@ enum PRVerdict: Int, Comparable, Sendable {
         }
     }
 
-    /// - reviewRequested: the PR came from the review-requested list — someone
-    ///   else's PR waiting on me, which outranks its own draft state.
-    static func of(_ pr: GitHubPullRequest, reviewRequested: Bool) -> PRVerdict {
+    static func of(_ pr: GitHubPullRequest) -> PRVerdict {
         if pr.mergeable == .conflicting { return .conflict }
         let checks = pr.effectiveChecks
         if checks == .failure { return .checksFailed }
         if pr.reviewDecision == .changesRequested { return .changesRequested }
-        if reviewRequested { return .myReviewPending }
         if pr.isDraft { return .draft }
         let approved = pr.reviewDecision == .approved
         let checksClear = checks == .success || checks == .none
@@ -160,7 +156,7 @@ enum PRVerdict: Int, Comparable, Sendable {
 
 /// Which popover list a row sits in.
 enum PRSection: Sendable {
-    case reviewRequested, mine, merged
+    case mine, merged
 }
 
 /// Where one PR's merge stands, as its row shows it. No entry means none
@@ -306,22 +302,117 @@ enum GitHubDot: Equatable, Sendable {
     }
 }
 
+/// The hover's CI row (#51): how the checks on my PRs stand. A PR is read
+/// by its `effectiveChecks`, as its badge is — one whose checks already
+/// failed counts as failed even while another of its checks still runs.
+enum GitHubCILine: Equatable, Sendable {
+    /// `prs` of my PRs still have checks going. `subject` names the running
+    /// check that started first across all of them — "growdle #121 Vercel" —
+    /// and `since` is its start; nil when no running check carries one.
+    case running(prs: Int, subject: String, since: Date?)
+    /// Checks going, none of them running yet: the first queued one of the
+    /// first such PR.
+    case queued(prs: Int, subject: String)
+    /// Nothing going, `prs` failed. `rest` is "#45 build 실패".
+    case failed(prs: Int, rest: String)
+    case allPassed
+    /// None of my PRs has a check.
+    case noChecks
+
+    static func of(_ mine: [GitHubPullRequest]) -> GitHubCILine {
+        let going = mine.filter { $0.effectiveChecks == .pending }
+        if let firstGoing = going.first {
+            let running = going.flatMap { pr in
+                pr.checks.filter { $0.outcome == .running }.map { (pr: pr, check: $0) }
+            }
+            // Ties and untimed runs keep list order: `min(by:)` keeps the first.
+            let timed = running.compactMap { run in run.check.startedAt.map { (run: run, start: $0) } }
+            if let lead = timed.min(by: { $0.start < $1.start })?.run ?? running.first {
+                return .running(prs: going.count, subject: subject(lead.pr, lead.check.name),
+                                since: lead.check.startedAt)
+            }
+            for pr in going {
+                if let queued = pr.checks.first(where: { $0.outcome == .queued }) {
+                    return .queued(prs: going.count, subject: subject(pr, queued.name))
+                }
+            }
+            // Pending by the rollup alone (the chips were cut short): no
+            // check to name.
+            return .running(prs: going.count, subject: subject(firstGoing, "검사"), since: nil)
+        }
+        let failed = mine.filter { $0.effectiveChecks == .failure }
+        if let first = failed.first {
+            let name = first.firstFailedCheck?.name ?? "검사"
+            return .failed(prs: failed.count, rest: "#\(first.number) \(name) 실패")
+        }
+        if mine.contains(where: { $0.effectiveChecks != PRChecksRollup.none }) { return .allPassed }
+        return .noChecks
+    }
+
+    private static func subject(_ pr: GitHubPullRequest, _ check: String) -> String {
+        "\(pr.repositoryName) #\(pr.number) \(check)"
+    }
+
+    /// The count after "CI"; nil when the row says it in words.
+    var number: Int? {
+        switch self {
+        case .running(let prs, _, _), .queued(let prs, _), .failed(let prs, _): return prs
+        case .allPassed, .noChecks: return nil
+        }
+    }
+
+    /// The count's color: amber while checks run, red once they failed.
+    var tone: GitHubDot? {
+        switch self {
+        case .running, .queued: return .amber
+        case .failed:           return .red
+        case .allPassed, .noChecks: return nil
+        }
+    }
+
+    var isGoing: Bool {
+        switch self {
+        case .running, .queued: return true
+        case .failed, .allPassed, .noChecks: return false
+        }
+    }
+
+    /// Where the elapsed time counts from. Only then does the hover tick.
+    var runningSince: Date? {
+        if case .running(_, _, let since) = self { return since }
+        return nil
+    }
+
+    /// The text after the count, the elapsed time read against `now` — the
+    /// hover's clock, frozen for the snapshot renderer. Formatted as the
+    /// popover's running chip is.
+    func rest(now: Date) -> String {
+        switch self {
+        case .running(_, let subject, let since?):
+            return "\(subject) \(TimeText.duration(Int(now.timeIntervalSince(since))))…"
+        case .running(_, let subject, nil): return "\(subject) 진행중"
+        case .queued(_, let subject):        return "\(subject) 대기"
+        case .failed(_, let rest):           return rest
+        case .allPassed:                     return "모두 통과"
+        case .noChecks:                      return "없음"
+        }
+    }
+}
+
 /// What the menu-bar region and its hover show. Hidden repositories are
 /// removed before anything is counted.
 struct GitHubGlance: Equatable, Sendable {
-    /// The two hover rows, as parts: the hover view colors the numbers and
+    /// The hover rows, as parts: the hover view colors the numbers and
     /// greys the rest, so they are not pre-joined into one string.
     struct Lines: Equatable, Sendable {
-        let reviewRequested: Int
+        let ci: GitHubCILine
         let mine: Int
         let blocked: Int
-        /// After the review-requested count: "bookdam #58 외 1", or empty.
-        let line1Rest: String
         /// After the my-PR count: "막힘 1 · #45 build 실패".
-        let line2Rest: String
+        let mineRest: String
     }
 
-    /// Review requests + my PRs that are blocked.
+    /// My PRs that are blocked.
     let count: Int
     let dot: GitHubDot
     /// nil when no snapshot speaks for the region (token missing, refused,
@@ -331,16 +422,18 @@ struct GitHubGlance: Equatable, Sendable {
 
     static let empty = GitHubGlance(count: 0, dot: .grey, lines: nil, stateLabel: "")
 
-    /// "리뷰 요청 2 · bookdam #58 외 1", or the state label without lines.
-    var hoverLine1: String {
+    /// "CI 1 · growdle #121 Vercel 2m 05s…" / "CI 모두 통과", or the state
+    /// label without lines.
+    func hoverCILine(now: Date) -> String {
         guard let lines else { return stateLabel }
-        return "리뷰 요청 \(lines.reviewRequested)" + (lines.line1Rest.isEmpty ? "" : " · \(lines.line1Rest)")
+        let rest = lines.ci.rest(now: now)
+        return lines.ci.number.map { "CI \($0) · \(rest)" } ?? "CI \(rest)"
     }
 
     /// "내 PR 4 · 막힘 1 · #45 build 실패", or empty without lines.
-    var hoverLine2: String {
+    var hoverMineLine: String {
         guard let lines else { return "" }
-        return "내 PR \(lines.mine) · \(lines.line2Rest)"
+        return "내 PR \(lines.mine) · \(lines.mineRest)"
     }
 
     /// A snapshot is only read for `.loaded`, and for `.loading` /
@@ -359,30 +452,23 @@ struct GitHubGlance: Equatable, Sendable {
     }
 
     private static func of(_ s: GitHubSnapshot) -> GitHubGlance {
-        let blocked = s.mine.filter { PRVerdict.of($0, reviewRequested: false).isBlocking }
-        let requested = s.reviewRequested.count
-        let dot: GitHubDot = !blocked.isEmpty ? .red : (requested > 0 ? .amber : .green)
+        let blocked = s.mine.filter { PRVerdict.of($0).isBlocking }
+        let ci = GitHubCILine.of(s.mine)
+        let dot: GitHubDot = !blocked.isEmpty ? .red : (ci.isGoing ? .amber : .green)
 
-        var line1Rest = ""
-        if let first = s.reviewRequested.first {
-            line1Rest = "\(first.repositoryName) #\(first.number)"
-            if requested > 1 { line1Rest += " 외 \(requested - 1)" }
-        }
-
-        var line2Rest = "막힘 \(blocked.count)"
+        var mineRest = "막힘 \(blocked.count)"
         if let first = blocked.first {
-            line2Rest += " · " + blockedReason(first)
+            mineRest += " · " + blockedReason(first)
         }
-        let lines = Lines(reviewRequested: requested, mine: s.mine.count, blocked: blocked.count,
-                          line1Rest: line1Rest, line2Rest: line2Rest)
-        return GitHubGlance(count: requested + blocked.count, dot: dot, lines: lines, stateLabel: "")
+        let lines = Lines(ci: ci, mine: s.mine.count, blocked: blocked.count, mineRest: mineRest)
+        return GitHubGlance(count: blocked.count, dot: dot, lines: lines, stateLabel: "")
     }
 
     /// "#45 build 실패" / "#45 충돌" / "#45 변경 요청". A rollup failure with no
     /// failed chip (the failure sits past the thirty contexts read) names
     /// the badge instead of a check.
     private static func blockedReason(_ pr: GitHubPullRequest) -> String {
-        let verdict = PRVerdict.of(pr, reviewRequested: false)
+        let verdict = PRVerdict.of(pr)
         switch verdict {
         case .checksFailed:
             if let check = pr.firstFailedCheck { return "#\(pr.number) \(check.name) 실패" }

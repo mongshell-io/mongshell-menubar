@@ -46,14 +46,13 @@ func chk(_ name: String, _ outcome: PRCheckOutcome, start: TimeInterval? = 0, en
             completedAt: end.map { now.addingTimeInterval($0) }, url: nil)
 }
 
-func snap(review: [GitHubPullRequest] = [], mine: [GitHubPullRequest] = [],
-          merged: [GitHubPullRequest] = []) -> GitHubSnapshot {
-    GitHubSnapshot(reviewRequested: review, mine: mine, recentlyMerged: merged,
+func snap(mine: [GitHubPullRequest] = [], merged: [GitHubPullRequest] = []) -> GitHubSnapshot {
+    GitHubSnapshot(mine: mine, recentlyMerged: merged,
                    rateLimit: nil, fetchedAt: now, tokenScopesLackRepo: nil)
 }
 
-func verdict(_ p: GitHubPullRequest, requested: Bool = false) -> PRVerdict {
-    PRVerdict.of(p, reviewRequested: requested)
+func verdict(_ p: GitHubPullRequest) -> PRVerdict {
+    PRVerdict.of(p)
 }
 
 // MARK: - 1. 배지 우선순위
@@ -66,10 +65,8 @@ do {
           verdict(pr(review: .changesRequested, rollup: .failure)) == .checksFailed)
     check("변경 요청 + Draft → 변경 요청",
           verdict(pr(draft: true, review: .changesRequested)) == .changesRequested)
-    check("리뷰 요청받은 남의 PR 이 Draft → 내 리뷰 대기",
-          verdict(pr(draft: true), requested: true) == .myReviewPending)
-    check("리뷰 요청받은 PR 의 검사 실패는 내 리뷰 대기보다 앞",
-          verdict(pr(rollup: .failure), requested: true) == .checksFailed)
+    check("검사 실패 + Draft → 검사 실패",
+          verdict(pr(draft: true, rollup: .failure)) == .checksFailed)
     check("mergeable unknown → 충돌 아님 (리뷰 대기)",
           verdict(pr(mergeable: .unknown)) == .awaitingReview)
     check("리뷰 판정 없음·검사 통과 → 리뷰 대기",
@@ -79,7 +76,7 @@ do {
     check("우선순위 = 선언 순서 (min 이 이김)",
           [PRVerdict.draft, .conflict, .approved].min() == .conflict
               && PRVerdict.conflict < .checksFailed && PRVerdict.checksFailed < .changesRequested
-              && PRVerdict.changesRequested < .myReviewPending && PRVerdict.myReviewPending < .draft
+              && PRVerdict.changesRequested < .draft
               && PRVerdict.draft < .awaitingReview && PRVerdict.awaitingReview < .approved
               && PRVerdict.approved < .mergeable)
 }
@@ -141,7 +138,7 @@ do {
               && verdict(pr(draft: true, rollup: .failure)).isBlocking)
     check("충돌·검사 실패·변경 요청만 블로킹",
           PRVerdict.conflict.isBlocking && PRVerdict.checksFailed.isBlocking
-              && PRVerdict.changesRequested.isBlocking && !PRVerdict.myReviewPending.isBlocking
+              && PRVerdict.changesRequested.isBlocking
               && !PRVerdict.draft.isBlocking && !PRVerdict.awaitingReview.isBlocking
               && !PRVerdict.approved.isBlocking && !PRVerdict.mergeable.isBlocking)
     check("목록이 잘렸으면 검사 판정은 rollup — 칩에 실패가 있어도 rollup success 면 아님",
@@ -213,45 +210,63 @@ do {
 print("▸ Glance")
 do {
     let blocked = pr("mongshell/bookdam", 45, rollup: .failure, checks: [chk("build", .failed)])
+    let conflict = pr("mongshell/menubar", 12, mergeable: .conflicting)
     let fine = pr("mongshell/bookdam", 46)
-    let r1 = pr("mongshell/bookdam", 58), r2 = pr("mongshell/menubar", 12)
 
-    let g = GitHubGlance.of(snap(review: [r1, r2], mine: [blocked, fine]), state: .loaded(.pat), hidden: [])
-    check("리뷰 요청 2 + 내 PR 막힘 1 → count 3·빨강", g.count == 3 && g.dot == .red, "\(g)")
-
-    let amber = GitHubGlance.of(snap(review: [r1], mine: [fine]), state: .loaded(.pat), hidden: [])
-    check("리뷰 요청만 → 주황·1", amber.count == 1 && amber.dot == .amber, "\(amber)")
+    let g = GitHubGlance.of(snap(mine: [blocked, fine, conflict]), state: .loaded(.pat), hidden: [])
+    check("막힘 2 → count 2·빨강 (막히지 않은 PR 은 세지 않음)", g.count == 2 && g.dot == .red, "\(g)")
 
     let green = GitHubGlance.of(snap(mine: [fine]), state: .loaded(.pat), hidden: [])
     check("처리할 것 없음 → 초록·0", green.count == 0 && green.dot == .green, "\(green)")
 
-    let hidden = GitHubGlance.of(snap(review: [r1, r2], mine: [blocked, fine]),
+    let hidden = GitHubGlance.of(snap(mine: [blocked, fine, conflict]),
                                  state: .loaded(.pat), hidden: ["mongshell/bookdam"])
     check("숨긴 레포 → count·점·hover 어디에도 없음",
-          hidden.count == 1 && hidden.dot == .amber
-              && !hidden.hoverLine1.contains("bookdam") && !hidden.hoverLine2.contains("#45")
-              && hidden.hoverLine1 == "리뷰 요청 1 · menubar #12"
-              && hidden.hoverLine2 == "내 PR 0 · 막힘 0", "\(hidden)")
+          hidden.count == 1 && hidden.dot == .red
+              && !hidden.hoverMineLine.contains("#45")
+              && hidden.hoverMineLine == "내 PR 1 · 막힘 1 · #12 충돌", "\(hidden)")
     let hiddenUpper = GitHubGlance.of(snap(mine: [blocked]), state: .loaded(.pat), hidden: ["mongshell/bookdam"])
     check("숨김 비교는 소문자 기준", hiddenUpper.count == 0 && hiddenUpper.dot == .green)
     check("hiding 은 머지 목록도 거른다",
           snap(merged: [fine]).hiding(["mongshell/bookdam"]).recentlyMerged.isEmpty)
 
-    let noToken = GitHubGlance.of(snap(review: [r1], mine: [blocked]), state: .noToken, hidden: [])
+    let noToken = GitHubGlance.of(snap(mine: [blocked]), state: .noToken, hidden: [])
     check("noToken → 회색·0 (스냅샷이 있어도)", noToken.count == 0 && noToken.dot == .grey
-              && noToken.hoverLine1 == "GitHub 토큰 없음", "\(noToken)")
+              && noToken.hoverCILine(now: now) == "GitHub 토큰 없음" && noToken.hoverMineLine == "", "\(noToken)")
     for state: GitHubLoadState in [.off, .keychainDenied, .unauthorized, .patSaveFailed(-25299), .error("x")] {
-        let g = GitHubGlance.of(snap(review: [r1]), state: state, hidden: [])
+        let g = GitHubGlance.of(snap(mine: [blocked]), state: state, hidden: [])
         check("\(state) → 회색·0", g.count == 0 && g.dot == .grey)
     }
-    let loading = GitHubGlance.of(snap(review: [r1], mine: [blocked]), state: .loading, hidden: [])
-    check("loading + 마지막 스냅샷 → 값 유지", loading.count == 2 && loading.dot == .red)
-    let limited = GitHubGlance.of(snap(review: [r1]), state: .rateLimited(retryAt: now), hidden: [])
-    check("rateLimited + 마지막 스냅샷 → 값 유지", limited.count == 1 && limited.dot == .amber)
+    let loading = GitHubGlance.of(snap(mine: [blocked]), state: .loading, hidden: [])
+    check("loading + 마지막 스냅샷 → 값 유지", loading.count == 1 && loading.dot == .red)
+    let limited = GitHubGlance.of(snap(mine: [blocked]), state: .rateLimited(retryAt: now), hidden: [])
+    check("rateLimited + 마지막 스냅샷 → 값 유지", limited.count == 1 && limited.dot == .red)
     let loadingEmpty = GitHubGlance.of(nil, state: .loading, hidden: [])
     check("loading + 스냅샷 없음 → 회색·0", loadingEmpty.count == 0 && loadingEmpty.dot == .grey)
     check("draft 는 막힘이 아니다",
           GitHubGlance.of(snap(mine: [pr(draft: true)]), state: .loaded(.pat), hidden: []).dot == .green)
+
+    // #51: amber now means a check is still going on one of my PRs.
+    let running = pr("mongshell/bookdam", 50, rollup: .pending,
+                     checks: [chk("test", .running, start: -60, end: nil)], complete: true)
+    let queued = pr("mongshell/bookdam", 51, rollup: .pending,
+                    checks: [chk("lint", .queued, start: nil, end: nil)], complete: true)
+    let ci = GitHubGlance.of(snap(mine: [fine, running]), state: .loaded(.pat), hidden: [])
+    check("막힘 없음 + 진행중 → 주황·숫자 없음", ci.count == 0 && ci.dot == .amber, "\(ci)")
+    let ciQueued = GitHubGlance.of(snap(mine: [queued]), state: .loaded(.pat), hidden: [])
+    check("막힘 없음 + 대기(queued)만 → 주황", ciQueued.count == 0 && ciQueued.dot == .amber)
+    let ciBlocked = GitHubGlance.of(snap(mine: [running, blocked]), state: .loaded(.pat), hidden: [])
+    check("막힘 + 진행중 → 빨강·막힘만 셈", ciBlocked.count == 1 && ciBlocked.dot == .red, "\(ciBlocked)")
+    let ciHidden = GitHubGlance.of(snap(mine: [fine, running]), state: .loaded(.pat),
+                                   hidden: ["mongshell/bookdam"])
+    check("진행중이 숨긴 레포에만 → 주황 아님", ciHidden.dot == .green)
+    // A chip still running on a PR whose checks already failed is read as
+    // the badge reads it: failed, not running.
+    let failedButRunning = pr("mongshell/bookdam", 52, rollup: .pending,
+                              checks: [chk("build", .failed), chk("test", .running, start: -30, end: nil)],
+                              complete: true)
+    check("실패한 PR 의 남은 진행중 칩은 주황이 아니다 (빨강)",
+          GitHubGlance.of(snap(mine: [failedButRunning]), state: .loaded(.pat), hidden: []).dot == .red)
 }
 
 // MARK: - 5. hover 문구
@@ -261,44 +276,106 @@ do {
     let fail = pr("mongshell/bookdam", 45, rollup: .failure, checks: [chk("lint", .passed), chk("build", .failed)])
     let conflict = pr("mongshell/bookdam", 47, mergeable: .conflicting)
     let changes = pr("mongshell/bookdam", 48, review: .changesRequested)
-    let r1 = pr("mongshell/bookdam", 58), r2 = pr("mongshell/menubar", 12)
 
-    func line2(_ mine: [GitHubPullRequest]) -> String {
-        GitHubGlance.of(snap(mine: mine), state: .loaded(.pat), hidden: []).hoverLine2
+    func mineLine(_ mine: [GitHubPullRequest]) -> String {
+        GitHubGlance.of(snap(mine: mine), state: .loaded(.pat), hidden: []).hoverMineLine
     }
     check("검사 실패 → \"#45 build 실패\" (첫 실패 검사 이름)",
-          line2([pr("mongshell/bookdam", 1), fail]) == "내 PR 2 · 막힘 1 · #45 build 실패", line2([fail]))
-    check("충돌 → \"#47 충돌\"", line2([conflict]) == "내 PR 1 · 막힘 1 · #47 충돌", line2([conflict]))
-    check("변경 요청 → \"#48 변경 요청\"", line2([changes]) == "내 PR 1 · 막힘 1 · #48 변경 요청")
-    check("막힘 0 → 뒤에 아무것도 없음", line2([pr()]) == "내 PR 1 · 막힘 0", line2([pr()]))
-    check("막힘 여럿 → 첫 번째만", line2([conflict, fail]) == "내 PR 2 · 막힘 2 · #47 충돌")
+          mineLine([pr("mongshell/bookdam", 1), fail]) == "내 PR 2 · 막힘 1 · #45 build 실패", mineLine([fail]))
+    check("충돌 → \"#47 충돌\"", mineLine([conflict]) == "내 PR 1 · 막힘 1 · #47 충돌", mineLine([conflict]))
+    check("변경 요청 → \"#48 변경 요청\"", mineLine([changes]) == "내 PR 1 · 막힘 1 · #48 변경 요청")
+    check("막힘 0 → 뒤에 아무것도 없음", mineLine([pr()]) == "내 PR 1 · 막힘 0", mineLine([pr()]))
+    check("막힘 여럿 → 첫 번째만", mineLine([conflict, fail]) == "내 PR 2 · 막힘 2 · #47 충돌")
     let noChip = pr("mongshell/bookdam", 49, rollup: .failure, checks: [])
-    check("rollup 실패인데 실패 칩 없음 → 배지 이름", line2([noChip]) == "내 PR 1 · 막힘 1 · #49 검사 실패")
-
-    func line1(_ review: [GitHubPullRequest]) -> String {
-        GitHubGlance.of(snap(review: review), state: .loaded(.pat), hidden: []).hoverLine1
-    }
-    check("리뷰 요청 2 → \"리뷰 요청 2 · bookdam #58 외 1\"",
-          line1([r1, r2]) == "리뷰 요청 2 · bookdam #58 외 1", line1([r1, r2]))
-    check("리뷰 요청 1 → 외 N 없음", line1([r1]) == "리뷰 요청 1 · bookdam #58")
-    check("리뷰 요청 0 → 숫자만", line1([]) == "리뷰 요청 0")
+    check("rollup 실패인데 실패 칩 없음 → 배지 이름", mineLine([noChip]) == "내 PR 1 · 막힘 1 · #49 검사 실패")
 
     // The hover view draws the parts, not the joined strings: the numbers
     // get a color and the rest is greyed.
-    let parts = GitHubGlance.of(snap(review: [r1, r2], mine: [pr("mongshell/bookdam", 1), fail]),
+    let parts = GitHubGlance.of(snap(mine: [pr("mongshell/bookdam", 1), fail]),
                                 state: .loaded(.pat), hidden: []).lines
     check("lines 는 숫자와 나머지를 따로 든다",
-          parts == GitHubGlance.Lines(reviewRequested: 2, mine: 2, blocked: 1,
-                                      line1Rest: "bookdam #58 외 1",
-                                      line2Rest: "막힘 1 · #45 build 실패"), "\(String(describing: parts))")
-    check("리뷰 요청 0 → line1Rest 비어 있음",
-          GitHubGlance.of(snap(mine: [pr()]), state: .loaded(.pat), hidden: []).lines?.line1Rest == "")
-    let noLines = GitHubGlance.of(snap(review: [r1]), state: .unauthorized, hidden: [])
+          parts == GitHubGlance.Lines(ci: .failed(prs: 1, rest: "#45 build 실패"),
+                                      mine: 2, blocked: 1, mineRest: "막힘 1 · #45 build 실패"),
+          "\(String(describing: parts))")
+    let noLines = GitHubGlance.of(snap(mine: [fail]), state: .unauthorized, hidden: [])
     check("스냅샷을 읽지 않는 상태 → lines 없음·stateLabel 만",
           noLines.lines == nil && noLines.stateLabel == "토큰이 거부되었어요 (401)")
-    let saveFailed = GitHubGlance.of(snap(review: [r1]), state: .patSaveFailed(-25299), hidden: [])
+    let saveFailed = GitHubGlance.of(snap(mine: [fail]), state: .patSaveFailed(-25299), hidden: [])
     check("PAT 저장 실패 → stateLabel 에 상태 코드, 토큰 값 없음",
           saveFailed.stateLabel == "PAT 를 Keychain 에 저장하지 못했어요 (-25299)", saveFailed.stateLabel)
+}
+
+// MARK: - 5b. hover CI 줄 (#51)
+
+print("▸ hover CI 줄")
+do {
+    func ciLine(_ mine: [GitHubPullRequest], hidden: Set<String> = [], at: Date = now) -> String {
+        GitHubGlance.of(snap(mine: mine), state: .loaded(.pat), hidden: hidden).hoverCILine(now: at)
+    }
+    func going(_ repo: String, _ number: Int, _ checks: [PRCheck]) -> GitHubPullRequest {
+        pr(repo, number, rollup: .pending, checks: checks, complete: true)
+    }
+    let passed = pr("mongshell/bookdam", 40, checks: [chk("build", .passed)], complete: true)
+    let failed = pr("mongshell/bookdam", 45, rollup: .failure,
+                    checks: [chk("lint", .passed), chk("build", .failed)], complete: true)
+    // Started 100s ago on the first PR, 300s ago on the second: the second
+    // has run longest, whatever the list order.
+    let young = going("mongshell/bookdam", 46, [chk("test", .running, start: -100, end: nil)])
+    let old = going("mongshell/growdle", 121, [chk("lint", .passed),
+                                               chk("Vercel", .running, start: -300, end: nil)])
+
+    check("진행중 → \"CI 2 · growdle #121 Vercel 5m 00s…\" (가장 먼저 시작한 running, PR 을 넘어)",
+          ciLine([young, old]) == "CI 2 · growdle #121 Vercel 5m 00s…", ciLine([young, old]))
+    check("경과 시간은 넘긴 시각으로 흐른다",
+          ciLine([young, old], at: now.addingTimeInterval(5)) == "CI 2 · growdle #121 Vercel 5m 05s…")
+    let untimed = going("mongshell/bookdam", 47, [chk("ci", .running, start: nil, end: nil)])
+    check("시각 없는 running 은 시각 있는 running 을 이기지 못한다",
+          ciLine([untimed, young]) == "CI 2 · bookdam #46 test 1m 40s…", ciLine([untimed, young]))
+    check("running 이 전부 시각 없음 → 목록 순서 첫 것, \"진행중\"",
+          ciLine([untimed]) == "CI 1 · bookdam #47 ci 진행중", ciLine([untimed]))
+
+    let queuedA = going("mongshell/bookdam", 48, [chk("lint", .queued, start: nil, end: nil),
+                                                  chk("build", .queued, start: nil, end: nil)])
+    let queuedB = going("mongshell/growdle", 9, [chk("x", .queued, start: nil, end: nil)])
+    check("queued 만 → 목록 순서 첫 PR 의 첫 queued, 경과 없이 \"대기\"",
+          ciLine([queuedA, queuedB]) == "CI 2 · bookdam #48 lint 대기", ciLine([queuedA, queuedB]))
+    check("queued 가 앞에 있어도 running 이 있으면 running",
+          ciLine([queuedA, young]) == "CI 2 · bookdam #46 test 1m 40s…", ciLine([queuedA, young]))
+    let rollupOnly = pr("mongshell/bookdam", 49, rollup: .pending, checks: [], complete: false)
+    check("rollup 만 진행중(칩 없음) → \"검사 진행중\"",
+          ciLine([rollupOnly]) == "CI 1 · bookdam #49 검사 진행중", ciLine([rollupOnly]))
+
+    check("진행중이 실패보다 앞 — 숫자는 진행중 PR 수",
+          ciLine([failed, old]) == "CI 1 · growdle #121 Vercel 5m 00s…", ciLine([failed, old]))
+    check("실패만 → \"CI 1 · #45 build 실패\" (첫 실패 검사 이름)",
+          ciLine([passed, failed]) == "CI 1 · #45 build 실패", ciLine([passed, failed]))
+    let failed2 = pr("mongshell/growdle", 3, rollup: .failure, checks: [], complete: false)
+    check("실패 여럿 → 숫자는 실패 PR 수, 문구는 목록 순서 첫 PR",
+          ciLine([failed2, failed]) == "CI 2 · #3 검사 실패", ciLine([failed2, failed]))
+    check("모두 통과 → 숫자 없이 \"CI 모두 통과\"", ciLine([passed]) == "CI 모두 통과", ciLine([passed]))
+    check("검사 있는 PR 이 없음 → \"CI 없음\"",
+          ciLine([pr(rollup: .none)]) == "CI 없음" && ciLine([]) == "CI 없음", ciLine([pr(rollup: .none)]))
+    check("검사 없는 PR 이 섞여도 통과한 PR 이 있으면 모두 통과",
+          ciLine([pr(rollup: .none), passed]) == "CI 모두 통과")
+
+    check("숨긴 레포의 진행중·실패는 CI 줄에서도 빠진다",
+          ciLine([old, failed, passed], hidden: ["mongshell/growdle"]) == "CI 1 · #45 build 실패"
+              && ciLine([old, failed], hidden: ["mongshell/growdle", "mongshell/bookdam"]) == "CI 없음")
+
+    // The parts the view draws: a number only when there is a count, and
+    // its color telling running from failed.
+    let runningLine = GitHubCILine.of([young, old])
+    check("진행중 → 숫자·주황·경과 기준 시각",
+          runningLine.number == 2 && runningLine.tone == .amber
+              && runningLine.runningSince == now.addingTimeInterval(-300), "\(runningLine)")
+    let queuedLine = GitHubCILine.of([queuedA])
+    check("대기 → 숫자·주황·흐르는 시간 없음",
+          queuedLine.number == 1 && queuedLine.tone == .amber && queuedLine.runningSince == nil)
+    let failedLine = GitHubCILine.of([failed])
+    check("실패 → 숫자·빨강", failedLine.number == 1 && failedLine.tone == .red && failedLine.runningSince == nil)
+    check("모두 통과·없음 → 숫자·색 없음",
+          GitHubCILine.of([passed]).number == nil && GitHubCILine.of([passed]).tone == nil
+              && GitHubCILine.of([]).number == nil && GitHubCILine.of([]).tone == nil)
 }
 
 // MARK: - 6. 검사 칩 접기
@@ -333,10 +410,6 @@ do {
           PRCheckOutcome.running.isPending && PRCheckOutcome.queued.isPending
               && !PRCheckOutcome.passed.isPending && !PRCheckOutcome.failed.isPending
               && !PRCheckOutcome.skipped.isPending)
-    check("hasPendingChecks: 두 목록 중 하나라도 running/queued",
-          snap(review: [pr(checks: [chk("a", .queued)])]).hasPendingChecks
-              && snap(mine: [pr(checks: [chk("a", .running)])]).hasPendingChecks
-              && !snap(mine: [pr(checks: [chk("a", .passed)])], merged: [pr(checks: [chk("a", .running)])]).hasPendingChecks)
 }
 
 // MARK: - 7. 소요시간 표기
@@ -355,15 +428,55 @@ do {
 
 // MARK: - 8. 폴링 주기
 
+print("▸ GitHubSnapshot.hasFreshRunningChecks")
+do {
+    func fresh(_ mine: [GitHubPullRequest], merged: [GitHubPullRequest] = [],
+               hidden: Set<String> = []) -> Bool {
+        snap(mine: mine, merged: merged).hiding(hidden).hasFreshRunningChecks(now: now)
+    }
+    func running(minutesAgo: Double) -> PRCheck {
+        chk("build", .running, start: -minutesAgo * 60, end: nil)
+    }
+    check("10분 전 시작한 running → 빠른 주기",
+          fresh([pr(checks: [running(minutesAgo: 10)], complete: true)]))
+    check("정확히 60분 전 시작한 running → 빠른 주기 (상한 포함)",
+          fresh([pr(checks: [running(minutesAgo: 60)], complete: true)]))
+    check("61분 전 시작한 running → 아님 (끝나지 않는 실행이 붙잡지 않음)",
+          !fresh([pr(checks: [running(minutesAgo: 61)], complete: true)]))
+    check("1분 뒤 시작으로 보고된 running (시계 오차 안) → 빠른 주기",
+          fresh([pr(checks: [running(minutesAgo: -1)], complete: true)]))
+    check("정확히 5분 뒤 시작 (오차 경계) → 빠른 주기",
+          fresh([pr(checks: [running(minutesAgo: -5)], complete: true)]))
+    check("10분 뒤 시작으로 보고된 running → 아님 (미래 시각이 60분 상한을 넘지 못함)",
+          !fresh([pr(checks: [running(minutesAgo: -10)], complete: true)]))
+    check("오래된 running 옆에 막 시작한 running 이 있으면 → 빠른 주기",
+          fresh([pr(checks: [running(minutesAgo: 90), chk("lint", .running, start: -30, end: nil)],
+                    complete: true)]))
+    check("queued 만 → 아님 (꺼진 러너·승인 대기)",
+          !fresh([pr(checks: [chk("build", .queued, start: nil, end: nil)], complete: true)]))
+    check("rollup 만 pending (칩 잘림·보고 안 된 필수 검사) → 아님",
+          !fresh([pr(rollup: .pending, checks: [chk("a", .passed)], complete: false)])
+              && !fresh([pr(rollup: .pending, checks: [], complete: true)]))
+    check("startedAt 없는 running (StatusContext PENDING) → 아님",
+          !fresh([pr(checks: [chk("ci", .running, start: nil, end: nil)], complete: true)]))
+    check("칩이 이미 실패한 PR 의 남은 running → 아님",
+          !fresh([pr(rollup: .pending, checks: [chk("a", .failed), running(minutesAgo: 1)],
+                     complete: true)]))
+    check("숨긴 레포의 running → 아님",
+          !fresh([pr("mongshell/bookdam", 1, checks: [running(minutesAgo: 1)], complete: true)],
+                 hidden: ["mongshell/bookdam"]))
+    check("최근 머지 목록의 running → 아님 (내 PR 만)",
+          !fresh([pr(checks: [chk("a", .passed)], complete: true)],
+                 merged: [pr(checks: [running(minutesAgo: 1)], complete: true)]))
+}
+
 print("▸ GitHubPollPolicy.nextWait")
 do {
-    func wait(base: Int = 180, backoff: Int = 0, open: Bool = false, pending: Bool = false) -> Int {
-        GitHubPollPolicy.nextWait(base: base, backoff: backoff, popoverOpen: open, hasPendingChecks: pending)
+    func wait(base: Int = 180, backoff: Int = 0) -> Int {
+        GitHubPollPolicy.nextWait(base: base, backoff: backoff)
     }
-    check("열림 + 진행중 → 30", wait(open: true, pending: true) == 30)
-    check("열림 + 진행중 없음 → base", wait(open: true, pending: false) == 180)
-    check("닫힘 + 진행중 → base", wait(open: false, pending: true) == 180)
-    check("백오프 중엔 30 무시 → base·2^backoff", wait(backoff: 1, open: true, pending: true) == 360)
+    check("백오프 없음 → base", wait() == 180)
+    check("백오프 → base·2^backoff", wait(backoff: 1) == 360)
     check("백오프 상한 3600", wait(base: 600, backoff: 4) == 3600)
     check("base 하한 60", wait(base: 5) == 60)
     check("base 상한 600", wait(base: 10_000) == 600)
@@ -371,20 +484,46 @@ do {
 
 print("▸ GitHubPollPolicy.nextAutoWait")
 do {
-    func auto(_ state: GitHubLoadState, backoff: Int = 0, open: Bool = false, pending: Bool = false) -> Int? {
-        GitHubPollPolicy.nextAutoWait(after: state, base: 180, backoff: backoff,
-                                      popoverOpen: open, hasPendingChecks: pending)
+    func auto(_ state: GitHubLoadState, base: Int = 180, backoff: Int = 0, running: Bool = false) -> Int? {
+        GitHubPollPolicy.nextAutoWait(after: state, base: base, backoff: backoff,
+                                      hasFreshRunningChecks: running)
     }
     check("401 이후 자동 대기 없음 (무효 토큰 재전송 정지)", auto(.unauthorized) == nil)
-    check("401 이후엔 열림 + 진행중이어도 자동 대기 없음", auto(.unauthorized, open: true, pending: true) == nil)
+    check("401 이후엔 진행중이어도 자동 대기 없음", auto(.unauthorized, running: true) == nil)
     check("401 이후엔 백오프 중이어도 자동 대기 없음", auto(.unauthorized, backoff: 2) == nil)
     check("성공 후 → base", auto(.loaded(.pat)) == 180)
     check("PAT 저장 실패 후 자동 대기 없음 (다른 토큰으로 나가지 않음)", auto(.patSaveFailed(-25299)) == nil)
-    check("PAT 저장 실패 후엔 열림 + 진행중이어도 자동 대기 없음",
-          auto(.patSaveFailed(-25299), open: true, pending: true) == nil)
+    check("PAT 저장 실패 후엔 진행중이어도 자동 대기 없음",
+          auto(.patSaveFailed(-25299), running: true) == nil)
     check("다른 오류 후 → base (정지는 401·PAT 저장 실패만)", auto(.error("x")) == 180)
     check("한도 초과 후 → 백오프 대기", auto(.rateLimited(retryAt: now), backoff: 1) == 360)
-    check("성공 후 열림 + 진행중 → 30", auto(.loaded(.pat), open: true, pending: true) == 30)
+    check("성공 후 진행중 → 30 (팝오버가 닫혀 있어도)", auto(.loaded(.pat), running: true) == 30)
+    check("성공 후 진행중이면 긴 base 설정도 30", auto(.loaded(.ghCLI(account: "a")), base: 600, running: true) == 30)
+    check("백오프 중엔 성공 상태·진행중이어도 30 아님", auto(.loaded(.pat), backoff: 1, running: true) == 360)
+    check("한도 초과 백오프 중엔 진행중이어도 30 아님", auto(.rateLimited(retryAt: now), backoff: 1, running: true) == 360)
+    // #51 C1: a snapshot left from before the state went grey must not hold
+    // the fast cadence.
+    check("토큰 없음 + 지난 스냅샷 진행중 → base", auto(.noToken, running: true) == 180)
+    check("Keychain 거부 + 지난 스냅샷 진행중 → base", auto(.keychainDenied, running: true) == 180)
+    check("오류 + 지난 스냅샷 진행중 → base", auto(.error("x"), running: true) == 180)
+    check("확인 중 + 지난 스냅샷 진행중 → base", auto(.loading, running: true) == 180)
+}
+
+print("▸ GitHubPollPolicy.backsOff")
+do {
+    check("헤더 없는 403 → 물러남 (보조 한도일 수 있음)", GitHubPollPolicy.backsOff(after: .http(403)))
+    check("헤더 없는 429 → 물러남", GitHubPollPolicy.backsOff(after: .http(429)))
+    check("500 → 물러나지 않음", !GitHubPollPolicy.backsOff(after: .http(500)))
+    check("네트워크 오류 → 물러나지 않음",
+          !GitHubPollPolicy.backsOff(after: .timedOut) && !GitHubPollPolicy.backsOff(after: .offline))
+    // What the model does with it: one step of backoff, the plain error.
+    let after403 = GitHubPollPolicy.backsOff(after: .http(403)) ? 1 : 0
+    let state403 = GitHubLoadState.error(GitHubAPIError.http(403).detail)
+    check("헤더 없는 403 뒤 → base·2 대기 (최소 1분 넘김, 진행중이어도 30 아님)",
+          GitHubPollPolicy.nextAutoWait(after: state403, base: 60, backoff: after403,
+                                        hasFreshRunningChecks: true) == 120)
+    check("헤더 없는 403 뒤 → 팝오버를 열어도 요청 안 함 (머지 성공 뒤 갱신도 같은 판정)",
+          !GitHubPollPolicy.refreshesOnOpen(after: state403, backoff: after403))
 }
 
 print("▸ GitHubPollPolicy.refreshesOnOpen")
@@ -421,11 +560,10 @@ func node(_ repo: String = "mongshell/bookdam", _ number: Int = 45, typename: St
     """
 }
 
-func body(review: [String] = [], mine: [String] = [], merged: [String]? = [],
+func body(mine: [String] = [], merged: [String]? = [],
           rateLimit: String? = #"{"cost":12,"remaining":4812,"limit":5000,"resetAt":"2026-09-29T04:00:00Z"}"#,
           errors: String? = nil) -> Data {
-    var data = ["\"reviewRequested\":{\"nodes\":[\(review.joined(separator: ","))]}",
-                "\"mine\":{\"nodes\":[\(mine.joined(separator: ","))]}"]
+    var data = ["\"mine\":{\"nodes\":[\(mine.joined(separator: ","))]}"]
     if let merged { data.append("\"merged\":{\"nodes\":[\(merged.joined(separator: ","))]}") }
     if let rateLimit { data.append("\"rateLimit\":\(rateLimit)") }
     var root = ["\"data\":{\(data.joined(separator: ","))}"]
@@ -437,16 +575,16 @@ func parsed(_ data: Data) -> GitHubSnapshot? { try? GitHubAPIClient.parse(data, 
 
 print("▸ parse 관대함")
 do {
-    let s = parsed(body(review: [node()], mine: [node("mongshell/menubar", 7)], merged: nil))
+    let s = parsed(body(mine: [node()], merged: nil))
     check("alias 누락(merged) → 그 목록만 빈 배열, 나머지는 채움",
-          s?.reviewRequested.count == 1 && s?.mine.count == 1 && s?.recentlyMerged.isEmpty == true,
+          s?.mine.count == 1 && s?.recentlyMerged.isEmpty == true,
           "\(String(describing: s))")
     check("rateLimit 읽음", s?.rateLimit == GitHubRateLimit(cost: 12, remaining: 4812, limit: 5000,
                                                         resetAt: ISO8601DateFormatter().date(from: "2026-09-29T04:00:00Z")))
     check("URL·repository·number 읽음",
-          s?.reviewRequested.first?.url?.absoluteString == "https://github.com/mongshell/bookdam/pull/45"
-              && s?.reviewRequested.first?.repository == "mongshell/bookdam"
-              && s?.reviewRequested.first?.number == 45)
+          s?.mine.first?.url?.absoluteString == "https://github.com/mongshell/bookdam/pull/45"
+              && s?.mine.first?.repository == "mongshell/bookdam"
+              && s?.mine.first?.number == 45)
 
     let typed = parsed(body(mine: [node(typename: "Issue"), node("mongshell/menubar", 8)]))
     check("__typename 이 PullRequest 가 아닌 노드는 건너뜀",
@@ -576,7 +714,7 @@ do {
           pr1982.map { verdict($0) } == .awaitingReview, "\(String(describing: pr1982.map { verdict($0) }))")
     let g = full.map { GitHubGlance.of($0, state: .loaded(.pat), hidden: []) }
     check("Glance 도 정리된 판정 — 막힘 0·초록·\"막힘 0\"",
-          g?.count == 0 && g?.dot == .green && g?.hoverLine2 == "내 PR 1 · 막힘 0", "\(String(describing: g))")
+          g?.count == 0 && g?.dot == .green && g?.hoverMineLine == "내 PR 1 · 막힘 0", "\(String(describing: g))")
 
     let cut = parsed(body(mine: [node(rollup: rollup(totalCount: 40))]))?.mine.first
     check("totalCount > 받은 수(잘림) → rollup FAILURE 로 검사 실패",
@@ -619,7 +757,7 @@ do {
     let fs = parsed(body(mine: [node("mongshell/bookdam", 45, rollup: failing)]))
     check("최신 실행이 실패면 칩 하나·hover \"#45 test 실패\"",
           fs?.mine.first?.checks.count == 1
-              && fs.map { GitHubGlance.of($0, state: .loaded(.pat), hidden: []).hoverLine2 } == "내 PR 1 · 막힘 1 · #45 test 실패")
+              && fs.map { GitHubGlance.of($0, state: .loaded(.pat), hidden: []).hoverMineLine } == "내 PR 1 · 막힘 1 · #45 test 실패")
 }
 
 // MARK: - 10. interpret
@@ -673,9 +811,10 @@ do {
     let since = cal.date(from: DateComponents(year: 2026, month: 10, day: 13, hour: 9))!
     let q = GitHubAPIClient.query(mergedSince: since, calendar: cal)
     check("merged:>=YYYY-MM-DD (로컬 달력)", q.contains("merged:>=2026-10-13"), q)
-    check("alias 3개", q.contains("reviewRequested: search(") && q.contains("mine: search(") && q.contains("merged: search("))
-    check("검색어", q.contains("is:pr is:open review-requested:@me") && q.contains("is:pr is:open author:@me")
-              && q.contains("is:pr is:merged author:@me"))
+    check("alias 2개 (mine·merged)", q.contains("mine: search(") && q.contains("merged: search(")
+              && q.components(separatedBy: ": search(").count == 3)
+    check("리뷰 요청 검색 없음", !q.contains("review-requested") && !q.contains("reviewRequested"))
+    check("검색어", q.contains("is:pr is:open author:@me") && q.contains("is:pr is:merged author:@me"))
     check("rateLimit 포함", q.contains("rateLimit { cost remaining limit resetAt }"))
     check("statusCheckRollup 과 두 컨텍스트 타입",
           q.contains("statusCheckRollup { state") && q.contains("... on CheckRun {") && q.contains("... on StatusContext {"))
@@ -800,7 +939,6 @@ do {
         check("\(state) → 없음", !offer(pr(merge: state, nodeID: "PR_1", headSHA: "abc")))
     }
     check("Draft (CLEAN 이어도) → 없음", !offer(pr(draft: true, merge: .clean, nodeID: "PR_1", headSHA: "abc")))
-    check("리뷰 요청 섹션 → 없음", !offer(ready, .reviewRequested))
     check("최근 머지 섹션 → 없음", !offer(ready, .merged))
     check("nodeID 없음 → 없음", !offer(pr(merge: .clean, headSHA: "abc")))
     check("headSHA 없음 → 없음", !offer(pr(merge: .clean, nodeID: "PR_1")))
