@@ -234,9 +234,12 @@ final class GitHubModel: ObservableObject {
         switch result {
         case .merged:
             mergeActivity[id] = .merged
-            // The list catches up at once — unless backing off, or stopped:
-            // then the next regular wake does, and the row stays "머지됨"
-            // (carried over while listed) so it can't be clicked again.
+            // The list catches up at once — unless backing off, when the
+            // next regular wake does, or stopped by a 401 or a failed PAT
+            // save that landed while this merge was out (none is sent from
+            // a stopped state), when nothing does until the user resumes.
+            // Meanwhile the row stays "머지됨" (carried over while listed)
+            // so it can't be clicked again.
             if GitHubPollPolicy.refreshesOnOpen(after: loadState, backoff: backoff) { refreshNow() }
         case .unauthorized:
             mergeActivity[id] = nil
