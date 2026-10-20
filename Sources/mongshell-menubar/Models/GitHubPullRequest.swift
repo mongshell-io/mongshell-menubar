@@ -30,6 +30,14 @@ enum PRMergeable: Equatable, Sendable {
     case mergeable, conflicting, unknown
 }
 
+/// `mergeStateStatus` — GitHub's own verdict on whether the merge button is
+/// green, folding branch protection, required checks and required reviews
+/// together. `.unknown` is also what an unfamiliar or missing value becomes:
+/// it sends the verdict back to the older approved + checks + mergeable rule.
+enum PRMergeState: Equatable, Sendable {
+    case clean, blocked, behind, dirty, draft, hasHooks, unstable, unknown
+}
+
 enum PRReviewDecision: Equatable, Sendable {
     case approved, changesRequested, reviewRequired
     /// null (no review rules), or a value we don't know.
@@ -53,6 +61,7 @@ struct GitHubPullRequest: Equatable, Identifiable, Sendable {
     let isDraft: Bool
     let reviewDecision: PRReviewDecision
     let mergeable: PRMergeable
+    let mergeState: PRMergeState
     let checksRollup: PRChecksRollup
     let checks: [PRCheck]
     let updatedAt: Date?
@@ -103,11 +112,19 @@ enum PRVerdict: Int, Comparable, Sendable {
         if pr.reviewDecision == .changesRequested { return .changesRequested }
         if reviewRequested { return .myReviewPending }
         if pr.isDraft { return .draft }
-        if pr.reviewDecision == .approved {
-            let checksClear = pr.checksRollup == .success || pr.checksRollup == .none
-            return checksClear && pr.mergeable == .mergeable ? .mergeable : .approved
+        let approved = pr.reviewDecision == .approved
+        let checksClear = pr.checksRollup == .success || pr.checksRollup == .none
+        switch pr.mergeState {
+        case .clean:
+            // GitHub's merge button is green. A repo with no review rules
+            // never gets a reviewDecision, so approval can't be asked for.
+            if checksClear { return .mergeable }
+        case .unknown:
+            if approved && checksClear && pr.mergeable == .mergeable { return .mergeable }
+        default:
+            break
         }
-        return .awaitingReview
+        return approved ? .approved : .awaitingReview
     }
 }
 

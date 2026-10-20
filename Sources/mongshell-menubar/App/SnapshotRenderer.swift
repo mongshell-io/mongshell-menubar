@@ -359,12 +359,13 @@ private extension GitHubSnapshot {
         }
         func pr(_ repo: String, _ number: Int, _ title: String, updatedAgo: TimeInterval,
                 draft: Bool = false, review: PRReviewDecision = PRReviewDecision.none,
-                mergeable: PRMergeable = .mergeable, rollup: PRChecksRollup,
+                mergeable: PRMergeable = .mergeable, mergeState: PRMergeState = .blocked,
+                rollup: PRChecksRollup,
                 checks: [PRCheck], mergedAgo: TimeInterval? = nil) -> GitHubPullRequest {
             GitHubPullRequest(repository: repo, number: number, title: title,
                               url: URL(string: "https://github.com/\(repo)/pull/\(number)"),
                               isDraft: draft, reviewDecision: review, mergeable: mergeable,
-                              checksRollup: rollup, checks: checks,
+                              mergeState: mergeState, checksRollup: rollup, checks: checks,
                               updatedAt: now.addingTimeInterval(-updatedAgo),
                               mergedAt: mergedAgo.map { now.addingTimeInterval(-$0) })
         }
@@ -391,8 +392,10 @@ private extension GitHubSnapshot {
                 pr("mongshell/mongshell-menubar", 46, "docs: PHILOSOPHY 에 옵트인 두 번째 영역 예외 추가",
                    updatedAgo: hour, draft: true, rollup: .success,
                    checks: passed(3, total: 2 * minute + 40)),
+                // No review rules (reviewDecision null) but GitHub says CLEAN —
+                // "머지 가능" without an approval (a solo repo).
                 pr("mongshell/bookdam", 57, "refactor: auth 라우트의 세션 조회를 미들웨어로",
-                   updatedAgo: 2 * day, review: .approved, rollup: .success,
+                   updatedAgo: 2 * day, mergeState: .clean, rollup: .success,
                    checks: passed(5, total: 6 * minute + 12)),
                 pr("mongshell/bookdam", 55, "feat: 대화 내보내기 (markdown)",
                    updatedAgo: 4 * day, review: .reviewRequired, rollup: .success,
@@ -430,7 +433,7 @@ private extension GitHubSnapshot {
                               url: URL(string: "https://github.com/mongshell/bookdam/pull/\(100 + i)"),
                               isDraft: false,
                               reviewDecision: PRReviewDecision.none, mergeable: .mergeable,
-                              checksRollup: PRChecksRollup.none, checks: [],
+                              mergeState: .blocked, checksRollup: PRChecksRollup.none, checks: [],
                               updatedAt: template.updatedAt, mergedAt: nil)
         }
         snapshot.recentlyMerged.append(snapshot.recentlyMerged[0])

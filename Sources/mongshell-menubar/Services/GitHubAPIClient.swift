@@ -89,7 +89,7 @@ struct GitHubAPIClient: Sendable {
           rateLimit { cost remaining limit resetAt }
         }
         fragment PR on PullRequest {
-          __typename number title url isDraft reviewDecision mergeable updatedAt mergedAt
+          __typename number title url isDraft reviewDecision mergeable mergeStateStatus updatedAt mergedAt
           repository { nameWithOwner }
           commits(last: 1) { nodes { commit { statusCheckRollup { state
             contexts(first: \(contextsPageSize)) { nodes { __typename
@@ -254,6 +254,7 @@ struct GitHubAPIClient: Sendable {
             isDraft: node["isDraft"] as? Bool ?? false,
             reviewDecision: reviewDecision(node["reviewDecision"]),
             mergeable: mergeable(node["mergeable"]),
+            mergeState: mergeState(node["mergeStateStatus"]),
             checksRollup: checksRollup(rollup),
             checks: checks(rollup),
             updatedAt: isoDate(node["updatedAt"]),
@@ -278,6 +279,21 @@ struct GitHubAPIClient: Sendable {
         case "MERGEABLE":   return .mergeable
         case "CONFLICTING": return .conflicting
         default:            return .unknown
+        }
+    }
+
+    /// Missing (an older server) and unfamiliar values are `.unknown`, which
+    /// falls back to the approved + checks + mergeable rule — never `.clean`.
+    private static func mergeState(_ any: Any?) -> PRMergeState {
+        switch any as? String {
+        case "CLEAN":     return .clean
+        case "BLOCKED":   return .blocked
+        case "BEHIND":    return .behind
+        case "DIRTY":     return .dirty
+        case "DRAFT":     return .draft
+        case "HAS_HOOKS": return .hasHooks
+        case "UNSTABLE":  return .unstable
+        default:          return .unknown
         }
     }
 

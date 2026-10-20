@@ -26,10 +26,11 @@ func pr(_ repo: String = "mongshell/bookdam", _ number: Int = 45,
         draft: Bool = false,
         review: PRReviewDecision = .none,
         mergeable: PRMergeable = .mergeable,
+        merge: PRMergeState = .unknown,
         rollup: PRChecksRollup = .success,
         checks: [PRCheck] = []) -> GitHubPullRequest {
     GitHubPullRequest(repository: repo, number: number, title: "t", url: nil, isDraft: draft,
-                      reviewDecision: review, mergeable: mergeable, checksRollup: rollup,
+                      reviewDecision: review, mergeable: mergeable, mergeState: merge, checksRollup: rollup,
                       checks: checks, updatedAt: now, mergedAt: nil)
 }
 
@@ -91,6 +92,35 @@ do {
           verdict(pr(review: .approved, mergeable: .unknown)) == .approved)
     check("승인 아님 + 검사 통과 + mergeable → 머지 가능 아님",
           verdict(pr(review: .reviewRequired)) != .mergeable)
+}
+
+print("▸ mergeStateStatus")
+do {
+    check("리뷰 규칙 없음 + CLEAN + 검사 없음 → 머지 가능 (혼자 쓰는 저장소)",
+          verdict(pr(review: .none, merge: .clean, rollup: .none)) == .mergeable)
+    check("리뷰 규칙 없음 + CLEAN + 검사 통과 → 머지 가능",
+          verdict(pr(review: .none, merge: .clean, rollup: .success)) == .mergeable)
+    check("리뷰 규칙 없음 + CLEAN + 검사 진행중 → 리뷰 대기",
+          verdict(pr(review: .none, merge: .clean, rollup: .pending)) == .awaitingReview)
+    check("승인 + CLEAN + 검사 진행중 → 승인",
+          verdict(pr(review: .approved, merge: .clean, rollup: .pending)) == .approved)
+    check("리뷰 규칙 없음 + BLOCKED → 리뷰 대기",
+          verdict(pr(review: .none, merge: .blocked)) == .awaitingReview)
+    check("승인 + BLOCKED → 승인 (MERGEABLE·검사 통과여도)",
+          verdict(pr(review: .approved, mergeable: .mergeable, merge: .blocked, rollup: .success)) == .approved)
+    check("승인 + mergeState unknown + success + MERGEABLE → 머지 가능 (기존 경로)",
+          verdict(pr(review: .approved, mergeable: .mergeable, merge: .unknown, rollup: .success)) == .mergeable)
+    check("mergeState unknown + 리뷰 규칙 없음 → 리뷰 대기 (CLEAN 을 추정하지 않음)",
+          verdict(pr(review: .none, merge: .unknown)) == .awaitingReview)
+    check("reviewRequired 인데 CLEAN → GitHub 의 종합 판정을 믿어 머지 가능",
+          verdict(pr(review: .reviewRequired, merge: .clean)) == .mergeable)
+    check("Draft + CLEAN → Draft", verdict(pr(draft: true, merge: .clean)) == .draft)
+    check("충돌 + CLEAN → 충돌 (우선순위 불변)",
+          verdict(pr(mergeable: .conflicting, merge: .clean)) == .conflict)
+    check("CLEAN 이어도 검사 실패 → 검사 실패",
+          verdict(pr(merge: .clean, rollup: .failure)) == .checksFailed)
+    check("CLEAN 이어도 변경 요청 → 변경 요청",
+          verdict(pr(review: .changesRequested, merge: .clean)) == .changesRequested)
 }
 
 // MARK: - 3. 막힘 판정
@@ -304,15 +334,16 @@ do {
 // MARK: - 9. parse 관대함
 
 func node(_ repo: String = "mongshell/bookdam", _ number: Int = 45, typename: String = "PullRequest",
-          mergeable: String = "MERGEABLE", review: Any = "APPROVED",
+          mergeable: String = "MERGEABLE", mergeState: String? = nil, review: Any = "APPROVED",
           rollup: String? = #"{"state":"SUCCESS","contexts":{"nodes":[]}}"#,
           url: String? = nil) -> String {
     let reviewJSON = review is NSNull ? "null" : "\"\(review)\""
     let rollupJSON = rollup ?? "null"
     let urlText = url ?? "https://github.com/\(repo)/pull/\(number)"
+    let mergeStateJSON = mergeState.map { "\"mergeStateStatus\":\"\($0)\"," } ?? ""
     return """
     {"__typename":"\(typename)","number":\(number),"title":"t","url":"\(urlText)",
-     "isDraft":false,"reviewDecision":\(reviewJSON),"mergeable":"\(mergeable)",
+     "isDraft":false,"reviewDecision":\(reviewJSON),"mergeable":"\(mergeable)",\(mergeStateJSON)
      "updatedAt":"2026-09-29T03:12:45Z","mergedAt":null,
      "repository":{"nameWithOwner":"\(repo)"},
      "commits":{"nodes":[{"commit":{"statusCheckRollup":\(rollupJSON)}}]}}
@@ -368,6 +399,15 @@ do {
     check("rollup FAILURE·ERROR → failure",
           parsed(body(mine: [node(rollup: #"{"state":"ERROR"}"#)]))?.mine.first?.checksRollup == .failure
               && parsed(body(mine: [node(rollup: #"{"state":"FAILURE"}"#)]))?.mine.first?.checksRollup == .failure)
+
+    let states: [(String, PRMergeState)] = [("CLEAN", .clean), ("BLOCKED", .blocked), ("BEHIND", .behind),
+                                            ("DIRTY", .dirty), ("DRAFT", .draft), ("HAS_HOOKS", .hasHooks),
+                                            ("UNSTABLE", .unstable), ("UNKNOWN", .unknown), ("SHINY_NEW", .unknown)]
+    for (raw, expected) in states {
+        check("mergeStateStatus \(raw) → \(expected)",
+              parsed(body(mine: [node(mergeState: raw)]))?.mine.first?.mergeState == expected)
+    }
+    check("mergeStateStatus 누락 → unknown", parsed(body(mine: [node()]))?.mine.first?.mergeState == .unknown)
 
     check("reviewDecision null → none", parsed(body(mine: [node(review: NSNull())]))?.mine.first?.reviewDecision == PRReviewDecision.none)
     check("reviewDecision 모르는 값 → none (approved 아님)",
@@ -484,6 +524,7 @@ do {
     check("rateLimit 포함", q.contains("rateLimit { cost remaining limit resetAt }"))
     check("statusCheckRollup 과 두 컨텍스트 타입",
           q.contains("statusCheckRollup { state") && q.contains("... on CheckRun {") && q.contains("... on StatusContext {"))
+    check("mergeStateStatus 요청", q.contains(" mergeStateStatus "))
     check("first: 20 / contexts first: 30", q.contains("first: 20)") && q.contains("contexts(first: 30)"))
     check("mutation 아님", !q.contains("mutation"))
     // The day boundary follows the calendar handed in, not UTC.
