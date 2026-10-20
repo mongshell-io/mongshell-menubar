@@ -42,7 +42,8 @@ struct GitHubHoverSummaryView: View {
     }
 
     /// 59m 59s — with monospaced digits, the widest the elapsed time reads
-    /// under an hour; "1h 00m" and on are narrower.
+    /// under an hour; "1h 00m"–"9h 59m" are narrower. From "10h 00m" the
+    /// text is as many characters again and may run under a point wider.
     private static let widestElapsed: TimeInterval = 59 * 60 + 59
 
     /// Only a running check with a start time pays for the timeline. The
