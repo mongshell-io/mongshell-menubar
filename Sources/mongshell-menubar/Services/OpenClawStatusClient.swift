@@ -70,17 +70,10 @@ struct OpenClawStatusClient: Sendable {
     /// cap keeps whatever answers at that address from filling memory.
     static let maxResponseBytes: Int64 = 64 * 1024
 
-    /// Ephemeral + no cache: every poll must see the file as it is now — a
-    /// cached copy would look fresh while the agent is dead. Nothing (cookies,
-    /// the token-bearing URL in a cache DB) is persisted to disk either.
-    private static let session: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        config.urlCache = nil
-        config.timeoutIntervalForRequest = requestTimeout
-        config.timeoutIntervalForResource = requestTimeout
-        return URLSession(configuration: config, delegate: RedirectRefuser(), delegateQueue: nil)
-    }()
+    /// No cache and no redirects (`BoundedHTTP`): a cached copy would look
+    /// fresh while the agent is dead, and a 3xx would steer the token-bearing
+    /// URL elsewhere.
+    private static let session = BoundedHTTP.makeSession(timeout: requestTimeout)
 
     // MARK: URL
 
@@ -111,9 +104,11 @@ struct OpenClawStatusClient: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await Self.download(req)
-        } catch let error as OpenClawStatusError {
-            throw error
+            (data, response) = try await BoundedHTTP.download(
+                req, session: Self.session, maxBytes: Self.maxResponseBytes,
+                readsBody: Self.readsBody(statusCode:))
+        } catch is BoundedHTTP.ResponseTooLarge {
+            throw .badResponse
         } catch let error as URLError {
             throw .transport(error.code)
         } catch is CancellationError {
@@ -125,43 +120,18 @@ struct OpenClawStatusClient: Sendable {
         return try Self.interpret(statusCode: http.statusCode, data: data)
     }
 
-    /// Reads the body, giving up with `.badResponse` as soon as it's known to
-    /// pass `maxResponseBytes` — from the declared length when there is one,
-    /// otherwise while streaming. A non-200 answer is returned without its
-    /// body: `interpret` doesn't need it, and a large error page must still
-    /// surface as its status code (404 → the token hint), not as `.badResponse`.
-    private static func download(_ req: URLRequest) async throws -> (Data, URLResponse) {
-        let (bytes, response) = try await session.bytes(for: req)
-        if let http = response as? HTTPURLResponse, !readsBody(statusCode: http.statusCode) {
-            bytes.task.cancel()
-            return (Data(), response)
-        }
-        guard !exceedsSizeLimit(response.expectedContentLength) else {
-            bytes.task.cancel()
-            throw OpenClawStatusError.badResponse
-        }
-        var data = Data()
-        for try await byte in bytes {
-            data.append(byte)
-            if exceedsSizeLimit(Int64(data.count)) {
-                bytes.task.cancel()
-                throw OpenClawStatusError.badResponse
-            }
-        }
-        return (data, response)
-    }
-
     /// Only a 200 carries a status document; every other code is judged on
-    /// the code alone.
+    /// the code alone — so a large error page still surfaces as its status
+    /// code (404 → the token hint), not as `.badResponse`.
     static func readsBody(statusCode: Int) -> Bool {
         statusCode == okStatusCode
     }
 
     private static let okStatusCode = 200
 
-    /// Whether a byte count is over the cap. An unknown length (-1) isn't.
+    /// Whether a byte count is over `maxResponseBytes`. An unknown length (-1) isn't.
     static func exceedsSizeLimit(_ byteCount: Int64) -> Bool {
-        byteCount > maxResponseBytes
+        BoundedHTTP.exceedsSizeLimit(byteCount, maxBytes: maxResponseBytes)
     }
 
     /// Status code → document or error. Split from `fetch` so the 404 mapping
@@ -358,17 +328,5 @@ struct OpenClawStatusClient: Sendable {
         let withFrac = ISO8601DateFormatter()
         withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return withFrac.date(from: s) ?? ISO8601DateFormatter().date(from: s)
-    }
-}
-
-/// Refuses every redirect. The agent serves one file at one address, so a 3xx
-/// is either a misconfiguration or something steering the token-bearing
-/// request elsewhere. Returning nil hands the 3xx back as the response, which
-/// `interpret` reports as `.http(code)`.
-private final class RedirectRefuser: NSObject, URLSessionTaskDelegate, Sendable {
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest) async -> URLRequest? {
-        nil
     }
 }

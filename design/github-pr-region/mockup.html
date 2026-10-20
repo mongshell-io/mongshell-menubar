@@ -1,0 +1,555 @@
+<title>GitHub PR 영역 목업</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* 레이아웃: 문서 배경은 조용한 중립색, 목업 표면(메뉴바·팝오버)은 앱의 Palette 고정색을 그대로 쓴다.
+   팝오버는 앱 규약대로 라이트 고정, 메뉴바는 다크 상태바 기준으로 그린다. */
+:root {
+  --bg: #F3F3F5; --fg: #1D1D1F; --muted: #6E6E73; --line: rgba(0,0,0,.09); --card: #FFFFFF;
+  --note: #FFF8E6; --note-line: #E6D3A3;
+  /* Design/Palette.swift 와 같은 값 */
+  --p-green: #3F9E69; --p-amber: #D1962F; --p-red: #CF3B2C; --p-mono: #2B2B30;
+  --p-text1: #1D1D1F; --p-text2: #86868B; --p-text3: #A1A1A6;
+  --p-popbg: #FBFBFD; --p-hair: rgba(0,0,0,.07); --p-border: rgba(0,0,0,.08); --p-track: rgba(0,0,0,.07); --p-trackbar: rgba(0,0,0,.08);
+  --p-online: #34C759; --p-purple: #AF52DE; --p-claude: #D97757;
+  --font: -apple-system, "SF Pro Text", "Apple SD Gothic Neo", "Helvetica Neue", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#1A1A1C; --fg:#F2F2F4; --muted:#A0A0A6; --line:rgba(255,255,255,.12); --card:#242427; --note:#2C2718; --note-line:#5A4A1E; color-scheme: dark } }
+:root[data-theme="dark"] { --bg:#1A1A1C; --fg:#F2F2F4; --muted:#A0A0A6; --line:rgba(255,255,255,.12); --card:#242427; --note:#2C2718; --note-line:#5A4A1E; color-scheme: dark }
+
+body { background: var(--bg); color: var(--fg); font-family: var(--font); line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 32px 64px; }
+main { max-width: 1040px; margin: 0 auto; display: grid; gap: 44px; }
+h1 { font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 0 0 6px; text-wrap: balance; }
+h2 { font-size: 17px; font-weight: 650; margin: 0 0 4px; letter-spacing: -.01em; }
+h3 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 8px; text-transform: uppercase; letter-spacing: .06em; }
+p { margin: 0; max-width: 68ch; }
+.lead { color: var(--muted); font-size: 14px; }
+section { display: grid; gap: 16px; }
+.hd { display: grid; gap: 2px; }
+.hd p { color: var(--muted); font-size: 13.5px; }
+.grid { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.scene { display: grid; gap: 8px; min-width: 0; }
+.cap { font-size: 12.5px; color: var(--muted); max-width: 46ch; }
+.cap b { color: var(--fg); font-weight: 600; }
+.note { background: var(--note); border: 1px solid var(--note-line); border-radius: 10px; padding: 12px 14px; font-size: 13px; display: grid; gap: 6px; }
+.note ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+code { font-family: var(--mono); font-size: 12px; background: var(--line); padding: 1px 5px; border-radius: 4px; }
+.toggle { font-size: 13px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+
+/* ---------- 메뉴바 ---------- */
+.bar { background: linear-gradient(#2A2A2E, #202024); height: 22px; display: flex; align-items: center; justify-content: flex-end; gap: 0; padding: 0 10px; border-radius: 6px; width: 460px; max-width: 100%; color: rgba(255,255,255,.92); font-size: 13px; position: relative; }
+.bar.light { background: linear-gradient(#ECECEE, #E2E2E5); color: rgba(0,0,0,.85); }
+.bar .sys { display: flex; gap: 12px; margin-left: 10px; font-size: 12px; opacity: .9; font-variant-numeric: tabular-nums; }
+.item { display: flex; align-items: center; height: 22px; padding: 0 4px; border-radius: 5px; position: relative; }
+.item.open { background: rgba(255,255,255,.16); }
+.light .item.open { background: rgba(0,0,0,.12); }
+.region { display: flex; align-items: center; gap: 6px; padding: 0 2px; height: 18px; border-radius: 3px; position: relative; }
+.show-regions .region { outline: 1px dashed rgba(0,200,255,.75); outline-offset: 1px; }
+.region::after { content: attr(data-label); position: absolute; top: 22px; left: 50%; transform: translateX(-50%); font-size: 9px; color: #27B3E0; white-space: nowrap; display: none; }
+.show-regions .region::after { display: block; }
+.sep { width: 1px; height: 12px; background: currentColor; opacity: .3; margin: 0 6px; }
+.light .sep { opacity: .35; }
+.mark { width: 16px; height: 16px; display: block; }
+.ring { width: 13px; height: 13px; display: block; }
+.clock { font-size: 11px; font-weight: 500; opacity: .75; font-variant-numeric: tabular-nums; }
+.gh { display: flex; align-items: center; gap: 4px; }
+.gh svg { width: 11px; height: 11px; opacity: .72; }
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.cnt { font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.paw { font-size: 10px; opacity: .72; }
+.midd { font-size: 11px; font-weight: 600; opacity: .7; }
+.zoom { zoom: 2; }
+.cursor { position: absolute; width: 14px; height: 20px; pointer-events: none; z-index: 5; }
+
+/* ---------- 팝오버 공통 ---------- */
+.popwrap { position: relative; padding-top: 10px; }
+.pop { background: var(--p-popbg); border: 1px solid var(--p-border); border-radius: 12px; box-shadow: 0 22px 50px -14px rgba(0,0,0,.32), 0 1px 2px rgba(0,0,0,.08); color: var(--p-text1); font-family: var(--font); color-scheme: light; position: relative; }
+.pop .arrow { position: absolute; top: -7px; width: 13px; height: 13px; background: var(--p-popbg); border-left: 1px solid var(--p-border); border-top: 1px solid var(--p-border); transform: rotate(45deg); border-radius: 2px 0 0 0; }
+.hair { height: 1px; background: var(--p-hair); }
+.t1 { color: var(--p-text1); } .t2 { color: var(--p-text2); } .t3 { color: var(--p-text3); }
+.tab { font-variant-numeric: tabular-nums; }
+
+/* hover 요약 */
+.hover { padding: 9px 12px; display: grid; grid-template-columns: auto auto auto; column-gap: 6px; row-gap: 5px; align-items: baseline; width: max-content; }
+.hover .l { font-size: 12px; font-weight: 500; color: var(--p-text2); }
+.hover .n { font-size: 12px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.hover .r { font-size: 11px; color: var(--p-text3); }
+.hover .n.red { color: var(--p-red); } .hover .n.amber { color: var(--p-amber); }
+.hpos { position: relative; height: 82px; }
+.hpos .pop { position: absolute; top: 12px; }
+
+/* 클릭 팝오버 */
+.full { width: 308px; }
+.ph { display: flex; align-items: center; gap: 9px; padding: 15px 18px 13px; }
+.ph .title { font-size: 15px; font-weight: 600; flex: 1; }
+.ph .st { font-size: 12px; color: var(--p-text2); display: flex; align-items: center; gap: 6px; }
+.ph .more { width: 22px; text-align: center; color: var(--p-text2); font-size: 14px; }
+.banner { display: flex; align-items: center; gap: 8px; padding: 9px 18px; font-size: 11.5px; color: var(--p-text2); }
+.banner .d { width: 6px; height: 6px; border-radius: 50%; }
+.banner.ok { background: rgba(52,199,89,.06); } .banner.warn { background: rgba(209,150,47,.06); } .banner.err { background: rgba(207,59,44,.06); }
+.banner .btn { margin-left: auto; white-space: nowrap; font-size: 11px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--p-border); background: #fff; color: var(--p-text1); }
+.banner .btn.prom { background: #0A7AFF; color: #fff; border-color: transparent; }
+.sec { padding: 14px 18px 16px; display: grid; gap: 10px; }
+.sec .sh { display: flex; align-items: baseline; justify-content: space-between; }
+.sec .sh .a { font-size: 12px; font-weight: 600; color: var(--p-text2); }
+.sec .sh .b { font-size: 12px; color: var(--p-text3); font-variant-numeric: tabular-nums; }
+.pr { display: grid; gap: 4px; padding: 7px 8px; margin: 0 -8px; border-radius: 8px; }
+.pr.hov { background: rgba(0,0,0,.035); }
+.pr .top { display: flex; justify-content: space-between; font-size: 11px; color: var(--p-text2); font-variant-numeric: tabular-nums; }
+.pr .top .repo b { font-weight: 600; color: var(--p-text2); }
+.pr .ttl { font-size: 13.5px; font-weight: 500; color: var(--p-text1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pr .bot { display: flex; align-items: center; gap: 5px; }
+.checks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.chk { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; line-height: 1; padding: 3px 6px 3px 4px; border-radius: 4px; background: rgba(0,0,0,.04); color: var(--p-text2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chk svg { width: 9px; height: 9px; }
+.chk em { font-style: normal; color: var(--p-text3); font-variant-numeric: tabular-nums; }
+.chk.fail em { color: var(--p-red); opacity: .8; }
+.chk.ok svg { color: var(--p-green); }
+.chk.run svg { color: var(--p-amber); animation: blink 1.2s ease-in-out infinite; }
+.chk.fail { color: var(--p-red); background: rgba(207,59,44,.08); }
+.chk.skip { color: var(--p-text3); }
+@keyframes blink { 50% { opacity: .35; } }
+.badge { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border-radius: 5px; font-size: 11px; font-weight: 500; line-height: 1; white-space: nowrap; border: 1px solid transparent; }
+.badge svg { width: 10px; height: 10px; }
+.badge.fill.red { background: rgba(207,59,44,.12); color: var(--p-red); }
+.badge.fill.amber { background: rgba(209,150,47,.14); color: #9A6A12; }
+.badge.fill.green { background: rgba(63,158,105,.13); color: #2C7A4F; }
+.badge.fill.grey { background: rgba(0,0,0,.07); color: var(--p-text2); }
+.badge.line { border-color: var(--p-border); color: var(--p-text2); background: transparent; }
+.badge.line.green { color: #2C7A4F; } .badge.line.amber { color: #9A6A12; } .badge.line.red { color: var(--p-red); }
+.merged { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--p-text2); }
+.merged .m { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.merged .m b { font-weight: 500; color: var(--p-text3); }
+.merged .w { color: var(--p-text3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.foot { display: flex; justify-content: space-between; padding: 11px 18px; font-size: 12px; color: var(--p-text2); }
+.foot .r { color: var(--p-text3); }
+.empty { font-size: 12px; color: var(--p-text3); }
+
+/* 기존 Claude 팝오버 재현 */
+.gauge { display: grid; justify-items: center; padding: 22px 18px 18px; gap: 0; }
+.gauge .big { position: relative; width: 132px; height: 132px; margin-bottom: 12px; }
+.gauge .big .num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 1px; }
+.gauge .big .num b { font-size: 42px; font-weight: 600; letter-spacing: -1px; }
+.gauge .big .num span { font-size: 17px; font-weight: 500; color: var(--p-text2); align-self: center; margin-top: 14px; }
+.gauge .c1 { font-size: 12px; font-weight: 600; color: var(--p-text2); margin-bottom: 3px; }
+.gauge .c2 { font-size: 14px; }
+.wk { padding: 15px 18px 18px; display: grid; gap: 14px; }
+.wk .h { display: flex; justify-content: space-between; font-size: 12px; }
+.wk .h .a { font-weight: 600; color: var(--p-text2); } .wk .h .b { color: var(--p-text3); }
+.bar2 { display: grid; gap: 7px; }
+.bar2 .l { display: flex; justify-content: space-between; font-size: 14px; font-weight: 500; }
+.bar2 .tr { height: 5px; border-radius: 3px; background: var(--p-trackbar); overflow: hidden; }
+.bar2 .tr i { display: block; height: 100%; border-radius: 3px; }
+
+/* 배지 어휘 표 */
+table { border-collapse: collapse; font-size: 13px; width: 100%; max-width: 720px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; }
+td .badge { background-color: #FBFBFD; }
+td .badge.fill.red { background: #F8E3E0; } td .badge.fill.amber { background: #F6EBD3; } td .badge.fill.green { background: #E0F0E7; } td .badge.fill.grey { background: #ECECEE; }
+
+/* 결정 포인트 */
+ol.dec { margin: 0; padding-left: 22px; display: grid; gap: 10px; font-size: 14px; max-width: 72ch; }
+ol.dec li b { font-weight: 600; }
+ol.dec li span { color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<main>
+  <header class="hd">
+    <h1>GitHub PR 영역 목업</h1>
+    <p class="lead">mongshell-menubar 의 단일 status item 안에 두 번째 영역을 두고, Claude 사용량과 GitHub PR 을 각각 호버·클릭하는 구성입니다. 모든 수치는 샘플이며, 색·치수는 <code>Design/Palette.swift</code> 와 현재 뷰의 값을 그대로 썼습니다.</p>
+    <label class="toggle" style="margin-top:10px"><input type="checkbox" id="rg"> 영역 경계 보기 (hover·클릭 판정 사각형)</label>
+  </header>
+
+  <!-- ================= A. 메뉴바 ================= -->
+  <section>
+    <div class="hd"><h2>A. 메뉴바</h2><p>왼쪽은 지금 그대로의 Claude 영역, 세로 헤어라인 뒤가 GitHub 영역입니다. GitHub 영역은 PR 글리프 · 신호등 점 · 처리할 PR 수. 2배 확대는 점검용이고, 아래 1배가 실제 크기입니다.</p></div>
+    <div class="grid">
+      <div class="scene">
+        <h3>A1 · GitHub 끔 (현재와 동일)</h3>
+        <div class="zoom"><div class="bar" data-bar="off"></div></div>
+        <div class="bar" data-bar="off"></div>
+        <p class="cap">설정이 꺼져 있으면 메뉴바·팝오버·설정 어디에도 흔적이 없습니다 (원칙 2).</p>
+      </div>
+      <div class="scene">
+        <h3>A2 · 켬 · 처리할 것 없음</h3>
+        <div class="zoom"><div class="bar" data-bar="zero"></div></div>
+        <div class="bar" data-bar="zero"></div>
+        <p class="cap">숫자 없이 글리프 + 초록 점. "내가 할 일이 없다" 를 숫자 0 보다 조용하게 말합니다.</p>
+      </div>
+      <div class="scene">
+        <h3>A3 · 켬 · 3건, 그중 CI 실패 있음</h3>
+        <div class="zoom"><div class="bar" data-bar="three"></div></div>
+        <div class="bar" data-bar="three"></div>
+        <p class="cap"><b>숫자</b> = 리뷰 요청받은 PR + 내 PR 중 막힌 것. <b>점</b> = 내 PR 에 막힘(충돌·CI 실패·변경 요청)이 있으면 빨강, 리뷰 요청만 있으면 주황, 없으면 초록.</p>
+      </div>
+      <div class="scene">
+        <h3>A4 · openclaw·서버 신호와 함께</h3>
+        <div class="zoom"><div class="bar" data-bar="full"></div></div>
+        <div class="bar" data-bar="full"></div>
+        <p class="cap">기존 신호등 스택은 Claude 영역 안에 그대로 남고, GitHub 영역은 그 오른쪽입니다. 폭 증가분은 헤어라인 포함 약 46pt.</p>
+      </div>
+      <div class="scene">
+        <h3>A5 · 라이트 메뉴바</h3>
+        <div class="zoom"><div class="bar light" data-bar="three"></div></div>
+        <div class="bar light" data-bar="three"></div>
+        <p class="cap">글리프·숫자는 <code>.secondary</code>/<code>.primary</code> 로 상태바 배경을 따르고, 점은 색이 곧 정보라 고정입니다.</p>
+      </div>
+    </div>
+    <div class="note">
+      <b>구현 메모</b>
+      <ul>
+        <li>status item 은 하나입니다. <code>PassthroughHostingView</code> 에 트래킹 영역을 두 개 걸고, 클릭은 커서 위치를 두 영역의 사각형과 대조해 판정합니다.</li>
+        <li>PR 글리프는 SF Symbol <code>arrow.triangle.pull</code>, 점 크기 7pt 는 openclaw 점과 같습니다. 글리프·점·숫자 순서는 발자국+점 패턴의 연장입니다.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ================= B. 호버 ================= -->
+  <section>
+    <div class="hd"><h2>B. 호버 — 영역별 즉시 요약</h2><p>커서가 어느 영역에 들어왔는지에 따라 다른 요약이 뜹니다. 둘 다 기존 <code>HoverSummaryView</code> 와 같은 3열 Grid, 같은 글자 크기, 지연 없음.</p></div>
+    <div class="grid">
+      <div class="scene">
+        <h3>B1 · Claude 영역 위 (기존 그대로)</h3>
+        <div class="popwrap" style="width:460px;max-width:100%">
+          <div class="bar" data-bar="three" data-cursor="claude"></div>
+          <div class="hpos">
+            <div class="pop hover" data-anchor="claude"><i class="arrow"></i>
+              <span class="l">5시간 사용량</span><span class="n">34%</span><span class="r">· 3시간 8분 후 초기화</span>
+              <span class="l">7일 사용량</span><span class="n">61%</span><span class="r">· 일요일 21:59 초기화</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="scene">
+        <h3>B2 · GitHub 영역 위 (새로 추가)</h3>
+        <div class="popwrap" style="width:460px;max-width:100%">
+          <div class="bar" data-bar="three" data-cursor="gh"></div>
+          <div class="hpos">
+            <div class="pop hover" data-anchor="gh"><i class="arrow"></i>
+              <span class="l">리뷰 요청</span><span class="n amber">2</span><span class="r">· bookdam #58 외 1</span>
+              <span class="l">내 PR</span><span class="n">4</span><span class="r">· 막힘 1 · #45 build 실패</span>
+            </div>
+          </div>
+        </div>
+        <p class="cap">두 줄로 끝냅니다. 첫 줄은 "남이 나를 기다리는 것", 둘째 줄은 "내 것 중 막힌 것" 과 실패한 검사 이름.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= C. 클릭 ================= -->
+  <section>
+    <div class="hd"><h2>C. 클릭 — GitHub 팝오버</h2><p>GitHub 영역을 클릭하면 같은 308pt 폭의 라이트 팝오버가 그 영역 아래에 열립니다. 왼쪽은 비교용으로 재현한 기존 Claude 팝오버이고, 바뀌지 않습니다.</p></div>
+    <div class="grid">
+      <!-- 기존 Claude 팝오버 -->
+      <div class="scene">
+        <h3>C1 · Claude 영역 클릭 (기존)</h3>
+        <div class="popwrap">
+          <div class="pop full"><i class="arrow" style="left:60px"></i>
+            <div class="ph"><svg class="ring" style="width:18px;height:18px" data-ring="34" data-lw="3"></svg><span class="title">mongshell-menubar</span><span class="st"><i class="dot" style="background:var(--p-online)"></i>연결됨</span><span class="more">⋯</span></div>
+            <div class="hair"></div>
+            <div class="banner ok"><i class="d" style="background:var(--p-online)"></i>Claude Code 계정 사용 중</div>
+            <div class="gauge">
+              <div class="big"><svg data-ring="34" data-lw="8" style="width:132px;height:132px"></svg><div class="num"><b>34</b><span>%</span></div></div>
+              <div class="c1">5시간 한도 · 사용량</div><div class="c2">3시간 8분 후 초기화</div>
+            </div>
+            <div class="hair"></div>
+            <div class="wk">
+              <div class="h"><span class="a">7일 한도 · 사용량</span><span class="b">일요일 21:59 초기화</span></div>
+              <div class="bar2"><div class="l"><span>전체 모델</span><span class="tab">61%</span></div><div class="tr"><i style="width:61%;background:var(--p-amber)"></i></div></div>
+              <div class="bar2"><div class="l"><span>Fable 5.1</span><span class="tab">25%</span></div><div class="tr"><i style="width:25%;background:var(--p-purple)"></i></div></div>
+            </div>
+            <div class="hair"></div>
+            <div class="foot"><span></span><span class="r">오후 2:32 갱신</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- GitHub 팝오버 -->
+      <div class="scene">
+        <h3>C2 · GitHub 영역 클릭 (새로 추가)</h3>
+        <div class="popwrap">
+          <div class="pop full"><i class="arrow" style="left:222px"></i>
+            <div class="ph"><svg class="ico-pr" style="width:18px;height:18px;color:var(--p-text2)"></svg><span class="title">GitHub</span><span class="st"><i class="dot" style="background:var(--p-online)"></i>연결됨</span><span class="more">⋯</span></div>
+            <div class="hair"></div>
+            <div class="banner ok"><i class="d" style="background:var(--p-online)"></i>gh CLI 계정 사용 중 · mongshellio</div>
+
+            <div class="sec">
+              <div class="sh"><span class="a">리뷰 요청</span><span class="b">2건</span></div>
+              <div class="pr">
+                <div class="top"><span class="repo">mongshell/<b>bookdam</b> #58</span><span>어제</span></div>
+                <div class="ttl">feat: 대화 목록 무한 스크롤과 날짜 구분선</div>
+                <div class="bot"><span class="badge fill amber"><svg class="ico-eye"></svg>내 리뷰 대기</span></div>
+                <div class="checks"><span class="chk ok"><svg class="ico-check"></svg>검사 5개 통과 <em>7m 51s</em></span></div>
+              </div>
+              <div class="pr">
+                <div class="top"><span class="repo">mongshell/<b>growdle</b> #121</span><span>3시간 전</span></div>
+                <div class="ttl">fix: 주간 리포트 집계가 UTC 자정에 끊기던 문제</div>
+                <div class="bot"><span class="badge fill amber"><svg class="ico-eye"></svg>내 리뷰 대기</span><span class="badge line amber"><svg class="ico-dot"></svg>검사 진행중</span></div>
+                <div class="checks"><span class="chk ok"><svg class="ico-check"></svg>static <em>1m 12s</em></span><span class="chk run"><svg class="ico-dot"></svg>test <em data-elapsed="83"></em></span><span class="chk skip"><svg class="ico-skip"></svg>automerge</span><span class="chk run"><svg class="ico-dot"></svg>Vercel <em data-elapsed="125"></em></span><span class="chk ok"><svg class="ico-check"></svg>Preview Comments <em>4s</em></span></div>
+              </div>
+            </div>
+            <div class="hair"></div>
+
+            <div class="sec">
+              <div class="sh"><span class="a">내 PR</span><span class="b">4건 · 막힘 1</span></div>
+              <div class="pr hov">
+                <div class="top"><span class="repo">mongshell/<b>mongshell-menubar</b> #45</span><span>25분 전</span></div>
+                <div class="ttl">feat: GitHub PR 영역을 메뉴바 두 번째 영역으로</div>
+                <div class="bot"><span class="badge fill red"><svg class="ico-x"></svg>검사 실패</span><span class="badge line"><svg class="ico-eye"></svg>리뷰 대기</span></div>
+                <div class="checks"><span class="chk fail"><svg class="ico-x"></svg>build <em>48s</em></span><span class="chk run"><svg class="ico-dot"></svg>test <em data-elapsed="83"></em></span><span class="chk ok"><svg class="ico-check"></svg>snapshot <em>31s</em></span></div>
+              </div>
+              <div class="pr">
+                <div class="top"><span class="repo">mongshell/<b>mongshell-menubar</b> #46</span><span>1시간 전</span></div>
+                <div class="ttl">docs: PHILOSOPHY 에 옵트인 두 번째 영역 예외 추가</div>
+                <div class="bot"><span class="badge fill grey"><svg class="ico-draft"></svg>Draft</span></div>
+                <div class="checks"><span class="chk ok"><svg class="ico-check"></svg>검사 3개 통과 <em>2m 40s</em></span></div>
+              </div>
+              <div class="pr">
+                <div class="top"><span class="repo">mongshell/<b>bookdam</b> #57</span><span>2일 전</span></div>
+                <div class="ttl">refactor: auth 라우트의 세션 조회를 미들웨어로</div>
+                <div class="bot"><span class="badge fill green"><svg class="ico-merge"></svg>머지 가능</span><span class="badge line green"><svg class="ico-check"></svg>승인</span></div>
+                <div class="checks"><span class="chk ok"><svg class="ico-check"></svg>검사 5개 통과 <em>6m 12s</em></span></div>
+              </div>
+              <div class="pr">
+                <div class="top"><span class="repo">mongshell/<b>bookdam</b> #55</span><span>4일 전</span></div>
+                <div class="ttl">feat: 대화 내보내기 (markdown)</div>
+                <div class="bot"><span class="badge fill grey"><svg class="ico-eye"></svg>리뷰 대기</span></div>
+                <div class="checks"><span class="chk ok"><svg class="ico-check"></svg>검사 4개 통과 <em>5m 58s</em></span><span class="chk skip"><svg class="ico-skip"></svg>automerge</span></div>
+              </div>
+            </div>
+            <div class="hair"></div>
+
+            <div class="sec" style="gap:8px">
+              <div class="sh"><span class="a">최근 머지 · 7일</span><span class="b">3건</span></div>
+              <div class="merged"><span class="m"><b>#44</b> fix: 갱신 토큰이 서버에서 폐기되면 자체 토큰을 버리고…</span><span class="w">어제</span></div>
+              <div class="merged"><span class="m"><b>#42</b> fix: probe 타임아웃이 openclaw 손자 프로세스에 막혀…</span><span class="w">3일 전</span></div>
+              <div class="merged"><span class="m"><b>#41</b> fix: 에이전트가 probe 마다 파이프 fd 를 새어…</span><span class="w">4일 전</span></div>
+            </div>
+            <div class="hair"></div>
+            <div class="foot"><span>API 잔량 4,812 / 5,000</span><span class="r">오후 2:32 갱신</span></div>
+          </div>
+        </div>
+        <p class="cap">행 전체가 클릭 대상이고 (강조된 #45 행이 hover 상태) 클릭하면 브라우저에서 PR 을 엽니다. 마지막 줄이 GitHub 의 체크 목록입니다. 실패·진행중·건너뜀이 하나라도 있으면 검사를 전부 펼쳐 어느 것이 막혔는지 보이고, 전부 통과한 PR 은 "검사 N개 통과" 한 칩으로 접습니다. 진행중 점은 느리게 깜빡입니다. 칩 끝의 회색 시간은 소요시간입니다. 완료된 검사는 걸린 시간으로 고정되고, 진행중 검사는 시작부터 지금까지의 경과 시간이 열려 있는 동안 1초마다 올라갑니다 (위 목업에서도 흐릅니다). 접은 칩의 시간은 가장 늦게 끝난 검사까지의 총 소요시간입니다. 라인 diff 는 넣지 않습니다. ⋯ 메뉴: 새로고침 · GitHub 에서 열기 · 설정….</p>
+      </div>
+    </div>
+
+    <div class="note">
+      <b>갱신 정책과 한도</b>
+      <ul>
+        <li><b>백그라운드 3분</b> (설정에서 1~10분) — 사용량 폴링과 같은 간격. 메뉴바 숫자·점과 호버 요약은 이 값을 씁니다. 호버는 갱신을 일으키지 않습니다.</li>
+        <li><b>팝오버를 열 때 즉시 1회</b> — openclaw 섹션이 클릭 시 <code>refreshNow()</code> 를 부르는 것과 같은 방식.</li>
+        <li><b>열려 있고 진행중 검사가 있으면 30초</b> — 경과 시간이 흐르는 동안 상태가 따라오게. 닫거나 진행중이 없어지면 3분으로 복귀.</li>
+        <li><b>한 번의 갱신 = GraphQL 요청 1회</b> — 세 검색(리뷰 요청·내 PR·최근 머지)을 alias 로 묶고 각 PR 의 <code>statusCheckRollup.contexts</code> 까지 받습니다. 요청당 약 10 포인트, 3분이면 시간당 약 200 포인트. 한도는 토큰당 시간당 5,000 포인트이며 무료 계정도 같습니다.</li>
+        <li><b>잔량 표시</b> — 같은 요청에 <code>rateLimit { cost remaining resetAt }</code> 를 함께 받아 푸터에 "API 잔량 4,812 / 5,000" 로 보여주고, 잔량이 바닥에 가까우면 사용량 폴링과 같은 지수 백오프로 주기를 늘립니다.</li>
+        <li><b>소요시간의 출처</b> — Check Run(Actions·Vercel 등 GitHub App)은 <code>startedAt</code>/<code>completedAt</code> 이 있어 계산됩니다. 옛 방식 Commit Status 는 <code>createdAt</code> 뿐이라 시간을 비웁니다. 대기 중(<code>QUEUED</code>)도 비웁니다.</li>
+      </ul>
+    </div>
+
+    <div class="hd" style="margin-top:8px"><h3>C3 · 배너 변형 (상태가 깨끗하지 않을 때만)</h3></div>
+    <div class="grid">
+      <div class="pop" style="width:308px"><div class="banner warn"><i class="d" style="background:var(--p-amber)"></i>GitHub 토큰이 없어요 — 로그인하면 PR 이 보여요<span class="btn prom">설정…</span></div></div>
+      <div class="pop" style="width:308px"><div class="banner warn"><i class="d" style="background:var(--p-amber)"></i>API 한도 초과 — 14분 후 자동 재시도</div></div>
+      <div class="pop" style="width:308px"><div class="banner err"><i class="d" style="background:var(--p-red)"></i>토큰이 거부되었어요 (401) — 권한 확인 필요<span class="btn">재시도</span></div></div>
+    </div>
+    <p class="cap">조용히 빈 목록을 보여주지 않습니다. 네트워크·인증·한도는 각각 다른 문장으로, 기존 Claude 배너와 같은 틀입니다.</p>
+  </section>
+
+  <!-- ================= D. 배지 어휘 ================= -->
+  <section>
+    <div class="hd"><h2>D. 배지 어휘</h2><p>행마다 <b>판정 배지 하나</b>만 채움 스타일로 맨 앞에 두고, 정보가 있는 나머지 차원만 선 스타일로 뒤따릅니다. 색만으로 뜻을 전하지 않도록 글리프와 글자를 항상 함께 둡니다.</p></div>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>판정 (우선순위 순)</th><th>배지</th><th>근거 필드</th><th>메뉴바 점</th></tr></thead>
+      <tbody>
+        <tr><td>충돌</td><td><span class="badge fill red"><svg class="ico-alert"></svg>충돌</span></td><td><code>mergeable == CONFLICTING</code></td><td>빨강</td></tr>
+        <tr><td>검사 실패</td><td><span class="badge fill red"><svg class="ico-x"></svg>검사 실패</span></td><td><code>statusCheckRollup.state == FAILURE/ERROR</code></td><td>빨강</td></tr>
+        <tr><td>변경 요청</td><td><span class="badge fill red"><svg class="ico-x"></svg>변경 요청</span></td><td><code>reviewDecision == CHANGES_REQUESTED</code></td><td>빨강</td></tr>
+        <tr><td>내 리뷰 대기 (남의 PR)</td><td><span class="badge fill amber"><svg class="ico-eye"></svg>내 리뷰 대기</span></td><td><code>review-requested:@me</code></td><td>주황</td></tr>
+        <tr><td>Draft</td><td><span class="badge fill grey"><svg class="ico-draft"></svg>Draft</span></td><td><code>isDraft</code></td><td>없음</td></tr>
+        <tr><td>리뷰 대기 (내 PR)</td><td><span class="badge fill grey"><svg class="ico-eye"></svg>리뷰 대기</span></td><td><code>reviewDecision == REVIEW_REQUIRED / null</code></td><td>없음</td></tr>
+        <tr><td>머지 가능</td><td><span class="badge fill green"><svg class="ico-merge"></svg>머지 가능</span></td><td>승인 + CI 통과 + <code>MERGEABLE</code></td><td>없음</td></tr>
+        <tr><td colspan="4" style="color:var(--muted);font-size:12px">보조(선 스타일): <span class="badge line amber"><svg class="ico-dot"></svg>검사 진행중</span> <span class="badge line green"><svg class="ico-check"></svg>승인</span>. 검사 칩: <span class="chk ok"><svg class="ico-check"></svg>통과</span> <span class="chk fail"><svg class="ico-x"></svg>실패</span> <span class="chk run"><svg class="ico-dot"></svg>진행중</span> <span class="chk skip"><svg class="ico-skip"></svg>건너뜀</span> — <code>statusCheckRollup.contexts</code> 의 CheckRun(<code>conclusion</code>/<code>status</code>)과 StatusContext(<code>state</code>)를 한 어휘로 접습니다. 검사가 없는 레포는 줄을 내지 않습니다. 시간 형식은 <code>48s</code> · <code>1m 12s</code> · <code>1h 05m</code> 이며 <code>Services/TimeText.swift</code> 에 추가합니다.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- ================= E. 결정 포인트 ================= -->
+  <section>
+    <div class="hd"><h2>E. 합의가 필요한 지점</h2></div>
+    <ol class="dec">
+      <li><b>영역 경계 표시.</b> <span>세로 헤어라인(위 목업) vs 간격만 두기 vs 기존처럼 "·" 점. 헤어라인이 "두 앱" 느낌에 가장 가깝습니다.</span></li>
+      <li><b>숫자의 뜻.</b> <span>리뷰 요청 + 내 PR 중 막힌 것 (목업). 대안: 리뷰 요청만, 또는 열린 내 PR 전체.</span></li>
+      <li><b>점의 뜻.</b> <span>빨강 = 내 PR 막힘, 주황 = 내 리뷰 대기, 초록 = 없음. 제안서의 "리뷰 요청 + 할당 이슈" 배지 대신 PR 만 셉니다.</span></li>
+      <li><b>클릭 시 강조.</b> <span>status item 이 하나라 클릭 팝오버가 열린 동안 Claude·GitHub 영역이 함께 강조됩니다 (Decision #8 후속 #39 와 같은 수용). 이게 싫으면 두 번째 status item 으로 가야 하고, 그러면 Decision #5 개정이 필요합니다.</span></li>
+      <li><b>호버 요약 두 줄.</b> <span>리뷰 요청 / 내 PR + 막힌 첫 이유(실패한 검사 이름). 최근 머지는 호버에 넣지 않았습니다.</span></li>
+      <li><b>검사 줄.</b> <span>라인 diff 대신 체크별 진행 상황과 소요시간. 하나라도 통과가 아니면 전부 펼치고, 전부 통과면 한 칩으로 접습니다. 진행중 경과 시간은 팝오버가 열린 동안 1초마다 올라갑니다. 대안: 항상 펼치기.</span></li>
+      <li><b>갱신 주기.</b> <span>백그라운드 3분(1~10분 설정), 팝오버 열 때 즉시, 열림 + 진행중 검사면 30초. 제안서의 기본 5분을 3분으로 당겼습니다.</span></li>
+      <li><b>팝오버 섹션.</b> <span>리뷰 요청 → 내 PR → 최근 머지 7일 → 푸터(API 잔량·갱신 시각). 이슈 섹션은 1차 범위 밖.</span></li>
+      <li><b>설정.</b> <span>"GitHub 표시" 토글, 토큰 상태(gh 자동 / PAT 입력), 갱신 주기(기본 3분·1~10분), 레포 숨기기. 이 목업에는 없고 developer 단계에서 기존 설정창 섹션 패턴을 따릅니다.</span></li>
+    </ol>
+  </section>
+</main>
+
+<script>
+(function () {
+  // ---- 아이콘 (Octicons 16 기반 path) ----
+  var ICONS = {
+    pr: 'M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z',
+    check: 'M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z',
+    x: 'M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z',
+    dot: 'M8 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z',
+    alert: 'M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z',
+    merge: 'M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z',
+    eye: 'M8 2c1.981 0 3.671.992 4.933 2.078 1.27 1.091 2.187 2.345 2.637 3.023a1.62 1.62 0 0 1 0 1.798c-.45.678-1.367 1.932-2.637 3.023C11.67 13.008 9.981 14 8 14c-1.981 0-3.671-.992-4.933-2.078C1.797 10.83.88 9.576.43 8.898a1.62 1.62 0 0 1 0-1.798c.45-.677 1.367-1.931 2.637-3.022C4.33 2.992 6.019 2 8 2ZM1.679 7.932a.12.12 0 0 0 0 .136c.411.622 1.241 1.75 2.366 2.717C5.176 11.758 6.527 12.5 8 12.5c1.473 0 2.825-.742 3.955-1.715 1.124-.967 1.954-2.096 2.366-2.717a.12.12 0 0 0 0-.136c-.412-.621-1.242-1.75-2.366-2.717C10.824 4.242 9.473 3.5 8 3.5c-1.473 0-2.825.742-3.955 1.715-1.124.967-1.954 2.096-2.366 2.717ZM8 10a2 2 0 1 1-.001-3.999A2 2 0 0 1 8 10Z',
+    skip: 'M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 0 0 10.535 5.096L2.904 3.965A6.473 6.473 0 0 0 1.5 8Zm2.465-5.096 9.131 9.131A6.5 6.5 0 0 0 3.965 2.904Z',
+    draft: 'M14.064 0h.186C15.216 0 16 .784 16 1.75v.186a8.752 8.752 0 0 1-2.564 6.186l-.458.459c-.314.314-.641.616-.979.904v3.207c0 .608-.315 1.172-.833 1.49l-2.774 1.707a.749.749 0 0 1-1.11-.418l-.954-3.102a1.214 1.214 0 0 1-.145-.125L3.754 9.816a1.218 1.218 0 0 1-.124-.145L.528 8.717a.749.749 0 0 1-.418-1.11l1.71-2.774A1.748 1.748 0 0 1 3.31 4h3.204c.288-.338.59-.665.904-.979l.459-.458A8.749 8.749 0 0 1 14.064 0ZM10.5 5.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z'
+  };
+  function svgOf(name) {
+    var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    s.setAttribute('viewBox', '0 0 16 16');
+    var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', ICONS[name]); p.setAttribute('fill', 'currentColor');
+    s.appendChild(p); return s;
+  }
+  Object.keys(ICONS).forEach(function (k) {
+    document.querySelectorAll('svg.ico-' + k).forEach(function (el) {
+      el.setAttribute('viewBox', '0 0 16 16');
+      var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', ICONS[k]); p.setAttribute('fill', 'currentColor'); el.appendChild(p);
+    });
+  });
+
+  // ---- Claude 마크: ClaudeMarkView 와 같은 12-ray 계산 ----
+  var RAYS = [11.2, 8.6, 10.2, 8.9, 11.2, 8.4, 10.6, 8.9, 11.2, 8.6, 10.2, 8.9];
+  function claudeMark(size) {
+    var ns = 'http://www.w3.org/2000/svg';
+    var s = document.createElementNS(ns, 'svg');
+    s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('class', 'mark');
+    if (size) { s.style.width = size + 'px'; s.style.height = size + 'px'; }
+    var bw = 1.7, br = 1.2;
+    RAYS.forEach(function (tip, i) {
+      var p = document.createElementNS(ns, 'path');
+      var d = 'M' + (-bw) + ' ' + (-br) +
+        ' Q' + (-bw * 0.5) + ' ' + (-tip * 0.7) + ' 0 ' + (-tip) +
+        ' Q' + (bw * 0.5) + ' ' + (-tip * 0.7) + ' ' + bw + ' ' + (-br) + ' Z';
+      p.setAttribute('d', d); p.setAttribute('fill', '#D97757');
+      p.setAttribute('transform', 'translate(12 12) rotate(' + (i * 30) + ')');
+      s.appendChild(p);
+    });
+    return s;
+  }
+
+  // ---- 링 게이지 ----
+  function ring(pct, color, lw, size, trackColor) {
+    var ns = 'http://www.w3.org/2000/svg';
+    var s = document.createElementNS(ns, 'svg');
+    s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('class', 'ring');
+    if (size) { s.style.width = size + 'px'; s.style.height = size + 'px'; }
+    var r = 12 - lw / 2, C = 2 * Math.PI * r;
+    var t = document.createElementNS(ns, 'circle');
+    t.setAttribute('cx', 12); t.setAttribute('cy', 12); t.setAttribute('r', r);
+    t.setAttribute('fill', 'none'); t.setAttribute('stroke', trackColor); t.setAttribute('stroke-width', lw);
+    var f = document.createElementNS(ns, 'circle');
+    f.setAttribute('cx', 12); f.setAttribute('cy', 12); f.setAttribute('r', r);
+    f.setAttribute('fill', 'none'); f.setAttribute('stroke', color); f.setAttribute('stroke-width', lw);
+    f.setAttribute('stroke-linecap', 'round'); f.setAttribute('stroke-dasharray', (C * pct / 100) + ' ' + C);
+    f.setAttribute('transform', 'rotate(-90 12 12)');
+    s.appendChild(t); s.appendChild(f); return s;
+  }
+  function statusColor(p) { return p < 50 ? '#3F9E69' : p < 80 ? '#D1962F' : '#CF3B2C'; }
+  document.querySelectorAll('svg[data-ring]').forEach(function (el) {
+    var pct = +el.getAttribute('data-ring'), lw = +el.getAttribute('data-lw');
+    // 24 기준 viewBox 로 그리되 CSS 크기는 그대로
+    var lwScaled = lw * 24 / parseFloat(el.style.width || 18);
+    var r = ring(pct, statusColor(pct), lwScaled, null, 'rgba(0,0,0,.07)');
+    r.setAttribute('class', el.getAttribute('class') || ''); r.setAttribute('style', el.getAttribute('style') || '');
+    el.replaceWith(r);
+  });
+
+  // ---- 메뉴바 조립 ----
+  function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+  function buildBar(bar) {
+    var kind = bar.getAttribute('data-bar');
+    var light = bar.classList.contains('light');
+    var item = el('div', 'item' + (kind === 'open' ? ' open' : ''));
+    var claude = el('div', 'region'); claude.setAttribute('data-label', 'Claude 영역');
+    claude.appendChild(claudeMark(16));
+    var g5 = el('div', 'gh'); g5.style.gap = '4px';
+    g5.appendChild(ring(34, statusColor(34), 2.2 * 24 / 13, 13, light ? 'rgba(0,0,0,.25)' : 'rgba(255,255,255,.30)'));
+    g5.appendChild(el('span', 'clock', '19:00'));
+    claude.appendChild(g5);
+    claude.appendChild(ring(61, statusColor(61), 2.2 * 24 / 13, 13, light ? 'rgba(0,0,0,.25)' : 'rgba(255,255,255,.30)'));
+    if (kind === 'full') {
+      claude.appendChild(el('span', 'midd', '·'));
+      var st = el('div', ''); st.style.cssText = 'display:grid;gap:1px';
+      st.appendChild(el('div', 'gh', '<span class="paw" style="width:11px;text-align:center;font-size:8px">🐾</span><i class="dot" style="width:6px;height:6px;background:#3F9E69"></i>'));
+      st.appendChild(el('div', 'gh', '<span class="paw" style="width:11px;text-align:center;font-size:8px">▤</span><i class="dot" style="width:6px;height:6px;background:#D1962F"></i>'));
+      st.querySelectorAll('.gh').forEach(function (r) { r.style.gap = '3px'; r.style.height = '9px'; });
+      claude.appendChild(st);
+    }
+    item.appendChild(claude);
+    if (kind !== 'off') {
+      item.appendChild(el('span', 'sep'));
+      var gh = el('div', 'region'); gh.setAttribute('data-label', 'GitHub 영역');
+      var g = el('div', 'gh');
+      g.appendChild(svgOf('pr'));
+      var dotColor = kind === 'zero' ? '#3F9E69' : '#CF3B2C';
+      var d = el('i', 'dot'); d.style.background = dotColor; g.appendChild(d);
+      if (kind !== 'zero') g.appendChild(el('span', 'cnt', '3'));
+      gh.appendChild(g); item.appendChild(gh);
+    }
+    bar.appendChild(item);
+    bar.appendChild(el('div', 'sys', '<span>⌘</span><span>Wi-Fi</span><span>100%</span><span>화 10:42</span>'));
+    var cur = bar.getAttribute('data-cursor');
+    if (cur) {
+      var c = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      c.setAttribute('viewBox', '0 0 14 20'); c.setAttribute('class', 'cursor');
+      c.innerHTML = '<path d="M1 1 L1 15 L4.5 11.5 L7 17.5 L9.5 16.5 L7 10.5 L12 10.5 Z" fill="#fff" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/>';
+      var target = cur === 'gh' ? gh : claude;
+      requestAnimationFrame(function () {
+        var b = bar.getBoundingClientRect(), t = target.getBoundingClientRect();
+        c.style.left = (t.left - b.left + t.width / 2 - 2) + 'px'; c.style.top = '8px';
+      });
+      bar.appendChild(c);
+    }
+  }
+  document.querySelectorAll('.bar[data-bar]').forEach(buildBar);
+
+  // ---- hover 팝오버를 해당 영역 중심에 맞춘다 ----
+  function anchorHovers() {
+    document.querySelectorAll(".pop.hover[data-anchor]").forEach(function (pop) {
+      var scene = pop.closest(".scene"), bar = scene.querySelector(".bar");
+      var regions = bar.querySelectorAll(".region");
+      var target = pop.getAttribute("data-anchor") === "gh" ? regions[regions.length - 1] : regions[0];
+      var host = pop.parentElement, hb = host.getBoundingClientRect(), tb = target.getBoundingClientRect();
+      var center = tb.left + tb.width / 2 - hb.left, w = pop.offsetWidth;
+      var left = Math.max(0, Math.min(center - w / 2, hb.width - w));
+      pop.style.left = left + "px";
+      pop.querySelector(".arrow").style.left = (center - left - 6.5) + "px";
+    });
+  }
+  requestAnimationFrame(anchorHovers); window.addEventListener("resize", anchorHovers);
+
+  // ---- 진행중 검사의 경과 시간: startedAt 기준으로 1초마다 ----
+  function fmt(sec) {
+    if (sec < 60) return sec + 's';
+    if (sec < 3600) return Math.floor(sec / 60) + 'm ' + String(sec % 60).padStart(2, '0') + 's';
+    return Math.floor(sec / 3600) + 'h ' + String(Math.floor(sec % 3600 / 60)).padStart(2, '0') + 'm';
+  }
+  var t0 = Date.now();
+  function tick() {
+    document.querySelectorAll('em[data-elapsed]').forEach(function (e) {
+      var base = +e.getAttribute('data-elapsed');
+      e.textContent = fmt(base + Math.floor((Date.now() - t0) / 1000)) + '…';
+    });
+  }
+  tick(); setInterval(tick, 1000);
+
+  // ---- 영역 경계 토글 ----
+  var rg = document.getElementById('rg');
+  function applyRG() { document.body.classList.toggle('show-regions', rg.checked); }
+  rg.addEventListener('change', applyRG);
+})();
+</script>

@@ -47,6 +47,55 @@ enum Config {
 
     static let minPollInterval: Int = 180
 
+    // MARK: GitHub (Decision #45)
+
+    /// The one host the GitHub client talks to. GraphQL, because one request
+    /// carries all three searches plus `rateLimit`; cost is per node, not per
+    /// request, so bundling costs nothing extra.
+    static let githubGraphQLURL = URL(string: "https://api.github.com/graphql")!
+
+    /// GitHub rejects requests without a User-Agent (403). The version is the
+    /// bundle's `CFBundleShortVersionString`; a bare binary (snapshot render,
+    /// tests) has no bundle and sends "dev".
+    static let githubUserAgent: String = {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        return "mongshell-menubar/\(version ?? "dev")"
+    }()
+
+    /// Where the gh CLI keeps its token: a generic password under this service,
+    /// account = GitHub username (so lookups go by service alone). gh stores
+    /// it through zalando/go-keyring, which prefixes the value with
+    /// `go-keyring-base64:` + base64 (older: `go-keyring-encoded:` + hex, older
+    /// still: plain) — `GitHubCredentialStore.decodeGHKeyringValue` undoes that.
+    /// Read-only: the item is gh's, not ours.
+    static let ghKeychainService = "gh:github.com"
+
+    /// Our own PAT item lives under `ownKeychainService` next to the OAuth
+    /// token, under this account.
+    static let githubPATKeychainAccount = "github-pat"
+
+    /// Background poll interval, seconds. 1 minute is already 60 requests an
+    /// hour (each costing a few points of the 5,000/hour budget); 10 minutes
+    /// is where the list stops being "current".
+    static let githubPollRange = 60...600
+    static let githubDefaultPollSeconds = 180
+    /// While the popover is open and a check is still running — elapsed
+    /// times tick every second there, and the state should keep up.
+    static let githubOpenPollSeconds = 30
+    /// Points left at which polling backs off: enough for gh and the browser
+    /// to keep working on the same token.
+    static let githubRateLimitReserve = 200
+
+    /// Rows shown per popover section; past these a trailing "외 N건" row.
+    static let githubSectionCaps = (reviewRequested: 6, mine: 8, merged: 3)
+    /// How far back "recently merged" looks.
+    static let githubMergedWindowDays = 7
+
+    /// Largest GraphQL response read. Sixty PRs with thirty check contexts
+    /// each come to a few hundred KB; the cap keeps a surprising answer from
+    /// filling memory.
+    static let githubMaxResponseBytes: Int64 = 4 * 1024 * 1024
+
     /// Append-only OAuth diagnostics (`AuthDebugLog`). A debugging aid, not
     /// user data, so it lives in the per-user temporary directory ($TMPDIR —
     /// mode 0700, emptied on reboot) rather than the shared /tmp: that one is

@@ -35,15 +35,15 @@ private var pulsing: Bool {
 
 `@Binding`·`@ObservedObject`·`@StateObject`·`@Environment`·`@AppStorage` 는 여전히 프로퍼티 래퍼라 그대로 쓴다. `@Entry`·`@Animatable` 도 같은 플러그인을 요구하므로 쓰지 않는다.
 
-`App/AppDelegate.swift` 가 AppKit 호스트(`NSStatusItem`/`NSPopover`/설정 윈도우)를 소유한다. 팝오버의 생명주기·상호배타(hover ↔ 클릭)는 뷰가 아니라 AppDelegate 의 책임이다.
+`App/AppDelegate.swift` 가 AppKit 호스트(`NSStatusItem`/`NSPopover`/설정 윈도우)를 소유한다. 팝오버의 생명주기·상호배타(hover ↔ 클릭)는 뷰가 아니라 AppDelegate 의 책임이다. 옵트인 두 번째 영역(GitHub, Decision #45)도 같다 — 두 영역은 AppDelegate 가 자식 호스팅 뷰 2개로 나누고, 영역별 hover·클릭 판정과 팝오버 앵커는 거기서 정한다. 뷰는 자기 영역만 그린다.
 
 ## 표면은 셋뿐이다
 
 | 표면 | 뷰 | 제약 |
 |---|---|---|
-| 메뉴바 | `MenuBarIconView`, `ClaudeMarkView` | 폭이 유한하다. 상시 표시 항목 추가는 무엇을 뺄지 함께 제시해야 한다. 신호등은 세로로 **두 줄까지** 쌓는다 (Decision #31) |
-| hover 요약 | `HoverSummaryView` | 즉시 표시가 존재 이유다 — 지연을 만드는 애니메이션·비동기 로드 금지 |
-| 클릭 팝오버 / 설정창 | `PopoverView`, `SettingsView`, `ClaudeSettingsSection`, `OpenClawSettingsSection` | 정확한 숫자와 상세는 여기로 미룬다 |
+| 메뉴바 | `MenuBarIconView`, `ClaudeMarkView`, `GitHubMenuBarView` | 폭이 유한하다. 상시 표시 항목 추가는 무엇을 뺄지 함께 제시해야 한다. 신호등은 세로로 **두 줄까지** 쌓는다 (Decision #31). 옵트인 두 번째 영역(Decision #45)은 글리프 · 점 · 숫자 하나까지 |
+| hover 요약 | `HoverSummaryView`, `GitHubHoverSummaryView` | 즉시 표시가 존재 이유다 — 지연을 만드는 애니메이션·비동기 로드 금지. hover 는 갱신을 일으키지 않는다 |
+| 클릭 팝오버 / 설정창 | `PopoverView`, `SettingsView`, `ClaudeSettingsSection`, `OpenClawSettingsSection`, `GitHubPopoverView`, `GitHubSettingsSection` | 정확한 숫자와 상세는 여기로 미룬다 |
 
 메뉴바에 무언가를 더하려는 변경은 [docs/PHILOSOPHY.md](../../../docs/PHILOSOPHY.md) § Design Principles 1 을 먼저 통과해야 한다. Claude 사용량 외의 신호라면 같은 문서의 § Admission Criteria 도 통과해야 한다.
 
@@ -79,10 +79,14 @@ UI 를 추가·변경하면 `App/SnapshotRenderer.swift` 의 렌더 목록에 �
 
 `Form` 기반 화면은 `ImageRenderer` 로 **빈 이미지가 나온다.** 설정창 계열은 오프스크린 윈도우 캡처 경로에 등록해야 한다.
 
+시간이 흐르는 요소는 스냅샷에서 시계를 고정한다 — GitHub 팝오버의 검사 칩 경과 시간은 `TimelineView` 로 1초마다 흐르고, 스냅샷은 `frozenNow` 를 넘겨 렌더마다 같은 값을 그린다.
+
 ## 선택 기능의 비가시성
 
 openclaw·Claude Code 설정처럼 전제가 없을 수 있는 요소는 **비활성 회색 표시(기능 꺼짐의 의미)가 아니라 아예 렌더하지 않는다** (PHILOSOPHY 원칙 2 / Decision #25). `if` 로 분기하되 자리(spacer·구분선)를 남기지 않는다.
 
 서버 호스트 요소도 같다 (Decision #31). `ServerHostHealth.absent` 면 메뉴바의 서버 줄과 팝오버의 서버 섹션(구분선 포함)을 그리지 않고, 서버가 보내지 않은 신호의 줄(배터리 없는 서버의 전원 줄)은 빈 줄 없이 빠진다. 연락 두절은 "없음" 이 아니다 — 마지막 값을 흐리게 남기고, 어느 줄도 원인으로 강조하지 않는다.
 
-설정 진입점 예외는 PHILOSOPHY 원칙 2 를 따른다 — 현재 해당하는 것은 `OpenClawSettingsSection` 의 상태 URL 입력칸뿐이다.
+GitHub 영역도 같다 (Decision #45). `Preferences` 의 "GitHub 표시" 가 꺼져 있으면 메뉴바의 두 번째 영역(헤어라인 포함)·GitHub 팝오버·hover 요약을 그리지 않는다. 켜져 있는데 토큰이 없거나 거부된 것은 "없음" 이 아니다 — 회색 점과 팝오버 배너로 보인다. 빈 목록으로 가장하지 않는다.
+
+설정 진입점 예외는 PHILOSOPHY 원칙 2 를 따른다 — 현재 해당하는 것은 `OpenClawSettingsSection` 의 상태 URL 입력칸과 `GitHubSettingsSection` 의 "GitHub 표시" 토글이다. 토글이 꺼져 있을 때 그 섹션에 남는 것은 토글과 그 아래 한 줄 설명뿐이고, 토큰 상태·PAT 입력·갱신 주기·레포 숨기기는 켠 뒤에만 나타난다. 토글은 `Preferences` 에 직접 바인딩하지 않고 `GitHubModel.setEnabled(_:)` 를 거친다 — 켜는 동작이 첫 Keychain 읽기이기 때문이다.

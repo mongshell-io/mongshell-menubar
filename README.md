@@ -65,6 +65,24 @@ Claude Code 는 설정 파일을 감시하므로 **대부분 실행 중인 세�
 > 개발 중에는 `MONGSHELL_CLAUDE_SETTINGS=<경로>` 로 실제 설정 파일 대신 사본을 쓰게 할 수
 > 있습니다.
 
+## GitHub PR 진행 상황 (선택 기능 — 설정에서 켠 경우에만)
+설정의 **GitHub 표시** 를 켜면 Claude 영역 오른쪽에 세로 헤어라인으로 나뉜 **두 번째 영역**이
+생깁니다 — PR 글리프 + 신호등 점 + 처리할 PR 수(리뷰 요청받은 PR + 내 PR 중 막힌 것). 점은
+막힌 PR 이 있으면 🔴, 리뷰 요청만 있으면 🟡, 할 일이 없으면 🟢(숫자 없이 점만), 토큰이
+없거나 거부되면 ⚪️ 입니다. hover 하면 두 줄 요약, 클릭하면 리뷰 요청·내 PR·최근 7일 머지
+세 섹션과 PR 별 배지(충돌 / 검사 실패 / 변경 요청 / 내 리뷰 대기 / Draft / 리뷰 대기 / 승인 /
+머지 가능), 검사별 칩과 소요시간이 보입니다. 읽기만 하며 승인·머지 같은 쓰기 동작은
+없습니다.
+
+토큰은 **gh CLI 로 로그인되어 있으면 그 Keychain 항목을 재사용**하고(첫 켤 때 "키체인
+접근 허용" 프롬프트), 없으면 설정에 classic PAT(`repo` 권한)를 붙여넣습니다. 둘 다 각자
+Keychain 에만 있고 `api.github.com` 외 어디에도 보내지 않습니다. 갱신은 GitHub 공식
+GraphQL API 요청 1회(3분 주기, 설정 1~10분; 팝오버를 열면 즉시, 진행중 검사가 있으면
+30초)이며 시간당 5,000 포인트 한도에서 요청당 1 포인트 안팎입니다. **기본값은 꺼짐이고,
+꺼져 있으면 메뉴바·팝오버 어디에도 흔적이 없습니다** — 폭을 늘리는 유일한 예외라서,
+켠 사람만 그 폭(약 46pt)을 치릅니다
+([PHILOSOPHY § Admission Criteria 4 의 예외](docs/PHILOSOPHY.md#admission-criteria)).
+
 ## 설치 — 각자 빌드해서 쓰기 (Apple 계정 불필요)
 직접 빌드한 앱은 Gatekeeper에 막히지 않습니다. 필요한 건 **macOS 26+ 와 Xcode
 (또는 Command Line Tools)** 뿐.
@@ -76,11 +94,14 @@ open mongshell-menubar.app                 # 메뉴바에 아이콘 등장
 처음 실행하면:
 - **Claude Code 사용자**: "키체인 접근 허용" 프롬프트 → *항상 허용* → 바로 실제 사용량 표시.
 - 그 외: 팝오버의 **로그인** → 브라우저에서 Claude 로그인·승인 → 자동 복귀.
+- **GitHub 표시** 를 켜면 gh CLI 의 Keychain 항목(`gh:github.com`)에도 같은 프롬프트가 한 번
+  더 뜹니다 → *항상 허용*. 거부하면 그 세션 동안은 다시 묻지 않고 설정에서만 재시도합니다.
 
 > `swift run`으로 맨 바이너리를 직접 실행하면 UserNotifications가 앱 번들을 요구해
 > 크래시합니다. 항상 `.app` 번들(`make_app.sh`)로 실행하세요.
 
-> 재빌드할 때마다 키체인 프롬프트가 다시 뜬다면 ad-hoc 서명 때문입니다 —
+> 재빌드할 때마다 키체인 프롬프트(Claude Code 항목, GitHub 표시를 켰다면 gh 항목까지)가
+> 다시 뜬다면 ad-hoc 서명 때문입니다 —
 > [로컬 코드 서명 인증서](#키체인-프롬프트가-재빌드마다-다시-뜰-때--로컬-코드-서명-인증서) 참고.
 
 ### 개발용
@@ -94,7 +115,8 @@ swift build && MONGSHELL_SNAPSHOT=/tmp/mongshell_snaps ./.build/debug/mongshell-
 `make_app.sh` 는 서명할 인증서가 없으면 ad-hoc 서명(`--sign -`)으로 떨어집니다. 이때
 designated requirement 가 `cdhash H"…"` 로 바이너리 해시에 고정되는데, 키체인의 *항상 허용*
 은 이 requirement 를 기준으로 앱을 식별합니다. 재빌드하면 해시가 바뀌어 macOS 가 다른 앱으로
-보므로 `Claude Code-credentials` 접근 프롬프트가 매번 다시 뜹니다.
+보므로 `Claude Code-credentials` 접근 프롬프트가 매번 다시 뜹니다 (GitHub 표시를 켰다면
+gh 의 `gh:github.com` 항목도 같습니다).
 
 자기 서명 인증서로 서명하면 requirement 가
 `identifier "com.mongshell.menubar" and certificate leaf = H"…"` 가 되어 재빌드에도 신원이
@@ -154,17 +176,26 @@ Sources/mongshell-menubar/
   Views/SettingsView.swift  일반(자동 실행)·색상·폴링·알림·Claude Code·서버·계정
   Views/ClaudeSettingsSection.swift  settings.json 편집 섹션(한글 설명 캡션)
   Views/OpenClawSettingsSection.swift openclaw 상태 URL 입력·상태·확인 간격 섹션
+  Views/GitHubMenuBarView.swift      두 번째 영역(헤어라인 · PR 글리프 · 점 · 숫자)
+  Views/GitHubHoverSummaryView.swift GitHub 영역 hover 두 줄 요약
+  Views/GitHubPopoverView.swift      GitHub 팝오버(배너 + 리뷰 요청/내 PR/최근 머지 섹션, 검사 칩)
+  Views/GitHubSettingsSection.swift  GitHub 표시 토글·토큰·PAT·갱신 주기·레포 숨기기
   Design/Palette.swift      색 토큰 SSOT(사용량 3단계·팝오버 표면/텍스트)
   Models/…                  Preferences, UsageState, UsageModel(폴링/알림),
                             OpenClawHealth, OpenClawStatus(두절 판정·복구 알림 판정),
                             ServerHost(서버 호스트 신호 값 타입·표시 문구),
                             ServerHostAlertWatch(전원·디스크 알림 판정),
                             OpenClawModel(상태 URL 폴링/복구·서버 호스트 알림),
+                            GitHubPullRequest(PR 배지·메뉴바 숫자·점·칩 접기 판정),
+                            GitHubState(연결 상태·스냅샷·폴링 주기 규칙),
+                            GitHubModel(토큰 결정·GraphQL 폴링·팝오버 열림 주기),
                             ClaudeSettingsModel(settings.json ↔ 구조체),
                             LoginItemModel(로그인 항목 상태 캐시/안내)
   Services/…                Config, Credentials(Keychain), UsageAPIClient, AuthService(PKCE),
                             LoopbackServer(OAuth 루프백 리다이렉트 수신),
-                            TimeText, OpenClawStatusClient(상태 URL HTTPS 읽기/관대한 디코딩),
+                            TimeText, BoundedHTTP(리다이렉트 거부·바이트 캡 전송 공용),
+                            OpenClawStatusClient(상태 URL HTTPS 읽기/관대한 디코딩),
+                            GitHubAPIClient(GraphQL 1요청·응답 해석), GitHubCredentials(자체 PAT → gh Keychain),
                             ClaudeSettingsStore(settings.json 입출력/파일 감시),
                             LoginItemService(SMAppService 로그인 항목 등록)
 
@@ -191,6 +222,11 @@ Sources/mongshell-openclaw-agent/     서버 맥용 에이전트 (server/README.
     (각각 0–100 %) + `resets_at`(ISO8601).
 - **폴링**: 기본 300초, 최소 180초. 429 시 지수 백오프.
 - **토큰은 각자 Keychain에만 저장**, 외부 서버로 절대 전송하지 않습니다.
+- **GitHub PR 영역(켠 경우)**: 토큰은 자체 PAT(Keychain) → gh CLI 의 Keychain 항목
+  `gh:github.com` 순. 엔드포인트는 GitHub **공식** GraphQL API
+  `POST https://api.github.com/graphql` 하나이며, 리다이렉트를 따르지 않아 토큰이 다른
+  호스트로 가는 경로가 없습니다. 자세한 흐름은 [docs/architecture.md](docs/architecture.md)
+  § Data Flow 4.
 
 ## ⚠️ 배포 전 반드시 알아둘 것 (비공식 도구)
 - Claude **구독(Pro/Max) 한도에는 공식 API가 없습니다.** 위 엔드포인트는 **비공개**이며

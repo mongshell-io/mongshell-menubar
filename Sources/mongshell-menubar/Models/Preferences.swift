@@ -48,6 +48,30 @@ final class Preferences: ObservableObject {
         menuBarTarget == .claudeAndOpenClaw && openClawStatusURLValue != nil
     }
 
+    // MARK: GitHub (Decision #45)
+
+    /// 옵트인 두 번째 영역. 기본값 꺼짐 — 켜면 메뉴바 폭이 약 46pt 는다.
+    @AppStorage("githubEnabled") var githubEnabled: Bool = false
+
+    /// 백그라운드 갱신 간격(초). 범위는 `Config.githubPollRange`, 적용은
+    /// `GitHubPollPolicy` 가 clamp 한다.
+    @AppStorage("githubPollSeconds") var githubPollSeconds: Int = Config.githubDefaultPollSeconds
+
+    /// 숨길 레포 "owner/name" 의 줄바꿈 구분 목록 — `@AppStorage` 는 `[String]` 을
+    /// 못 담는다. 쓰기는 `GitHubModel.setRepoHidden` 만.
+    @AppStorage("githubHiddenRepos") var githubHiddenReposRaw: String = ""
+
+    /// 트림·소문자·빈 줄 제거를 거친 숨김 레포 집합.
+    var githubHiddenRepos: Set<String> {
+        Set(githubHiddenReposRaw.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            .filter { !$0.isEmpty })
+    }
+
+    /// GitHub 요소(메뉴바 영역·hover·팝오버)를 보일지의 단일 판정. 토큰 유무는
+    /// 포함하지 않는다 — 토큰 없음은 숨기는 게 아니라 배너로 보인다.
+    var showsGitHub: Bool { githubEnabled }
+
     private init() {}
 }
 

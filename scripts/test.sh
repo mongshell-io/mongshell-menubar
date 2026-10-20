@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the regression tests: Claude Code settings, the openclaw server agent,
-# the app's openclaw status client, the OAuth token path, then
-# server/install.sh's option rules.
+# the app's openclaw status client, the OAuth token path, the GitHub PR
+# region, then server/install.sh's option rules.
 #
 # Not `swift test`: that needs XCTest or swift-testing, and neither ships with
 # the Command Line Tools this project builds against (no Xcode required is a
@@ -51,6 +51,7 @@ swiftc -o "$OUT/client-tests" \
   "$APP/Models/OpenClawStatus.swift" \
   "$APP/Models/ServerHost.swift" \
   "$APP/Models/ServerHostAlertWatch.swift" \
+  "$APP/Services/BoundedHTTP.swift" \
   "$APP/Services/OpenClawStatusClient.swift" \
   "$APP/Services/TimeText.swift" \
   "$AGENT/Probe.swift" \
@@ -74,6 +75,25 @@ swiftc -o "$OUT/auth-tests" \
 
 echo "▶ running auth tests"
 "$OUT/auth-tests"
+
+# The GitHub region (Decision #45): the pure judgements and the GraphQL
+# client's decoding, with the constants and formatter they read. The
+# @MainActor model is left out, as above. `GitHubCredentials` is compiled for
+# its pure gh-value decoding; nothing here touches the Keychain.
+echo "▶ compiling github tests"
+swiftc -o "$OUT/github-tests" \
+  "$APP/Design/Palette.swift" \
+  "$APP/Models/GitHubState.swift" \
+  "$APP/Models/GitHubPullRequest.swift" \
+  "$APP/Services/BoundedHTTP.swift" \
+  "$APP/Services/Config.swift" \
+  "$APP/Services/GitHubAPIClient.swift" \
+  "$APP/Services/GitHubCredentials.swift" \
+  "$APP/Services/TimeText.swift" \
+  "$ROOT/Tests/GitHubTests/main.swift"
+
+echo "▶ running github tests"
+"$OUT/github-tests"
 
 # Plain bash: sources the real server/lib.sh, exits non-zero on any failure.
 echo "▶ running server install option tests"

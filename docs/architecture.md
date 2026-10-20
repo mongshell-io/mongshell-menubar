@@ -17,7 +17,8 @@ non_goals:
 | 최소 플랫폼 | macOS 26 (Decision #40) |
 | UI | SwiftUI 뷰 + AppKit 호스팅 (`NSStatusItem`, `NSPopover`, `NSWindow`) |
 | 동시성 | Swift Concurrency (`@MainActor` 격리, `Task`, `async/await`) |
-| 네트워크 | `URLSession` (Foundation) |
+| 네트워크 | `URLSession` (Foundation). 읽기 전용 HTTPS 클라이언트(openclaw 상태·GitHub)는 `BoundedHTTP` 를 공유한다 — ephemeral 세션, 리다이렉트 거부, 바이트 캡 |
+| GitHub PR (선택 기능) | GitHub GraphQL API (`POST https://api.github.com/graphql`, 공식 API) — `URLSession` 위 `BoundedHTTP` (Decision #45) |
 | 로컬 리스너 | `Network.framework` (`NWListener`) — OAuth 루프백 |
 | 자격증명 | Security.framework Keychain (generic password) |
 | 설정 영속화 | `UserDefaults` (`@AppStorage`) |
@@ -151,6 +152,42 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
 
 상태 URL 이 없거나 사용자가 `Claude만` 을 고르면 메뉴바·팝오버·알림에 아무 흔적도 남지 않는다 (`Preferences.showsOpenClaw`). 서버 호스트 표시와 알림도 같은 조건을 따르며 별도 토글이 없다 — `showsOpenClaw` 가 참이고 서버가 `host` 를 보낼 때만 나타난다. 설정의 URL 입력칸은 PHILOSOPHY 원칙 2 의 설정 진입점 예외로 항상 보인다.
 
+### 4. GitHub PR 폴링 (선택 경로)
+
+설정의 "GitHub 표시" 를 켠 경우에만 돈다 (Decision #45). 같은 status item 의 두 번째 영역이며, 기본값은 꺼짐이다.
+
+```
+GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주입, 싱글턴 아님)
+   └─ GitHubCredentialStore            ← Keychain (자체 PAT → gh CLI 항목 순)
+        ├─ 자체 PAT: service Config.ownKeychainService, account "github-pat"
+        └─ gh CLI:  service "gh:github.com" (account = GitHub 사용자명, service 만으로 조회, 읽기 전용)
+             └─ go-keyring 접두 디코딩: `go-keyring-base64:`+base64 / `go-keyring-encoded:`+hex / 평문
+   └─ GitHubAPIClient.fetch(token:now:)
+        └─ POST https://api.github.com/graphql   (BoundedHTTP: 타임아웃 20초, 리다이렉트 거부, 본문 4MB 캡, 2xx 만 본문 읽음)
+             Authorization: bearer …
+             User-Agent: mongshell-menubar/<CFBundleShortVersionString, 번들 밖에서는 dev>
+             본문: search alias 3개 (reviewRequested / mine / merged:>=7일 전, 각 first: 20, sort:updated-desc)
+                   + PR 당 mergeable · mergeStateStatus · reviewDecision
+                   + PR 당 마지막 커밋의 statusCheckRollup { state, contexts(first: 30) { totalCount, nodes } }
+                   + rateLimit { cost remaining limit resetAt }
+        └─ interpret(statusCode:headers:data:)  →  .snapshot / .unauthorized(401) / .rateLimited(403·429 + retry-after, x-ratelimit-remaining: 0, errors[].type == RATE_LIMITED)
+             그 밖의 코드(3xx·5xx)·`data` 없는 본문 → throws GitHubAPIError (배너)
+        └─ parse() → GitHubSnapshot  (alias 누락은 빈 목록, PullRequest 아닌 노드·rateLimit 누락은 건너뜀, 검사는 (워크플로 이름 ?? 앱 slug, job 이름)별·StatusContext 는 context 별 최신 실행 하나, x-oauth-scopes 에 repo 없음 → tokenScopesLackRepo)
+   └─ @Published snapshot / loadState / glance 갱신
+        ├─ GitHubMenuBarView       (헤어라인 · 글리프 · 점 · 처리할 PR 수 — 0 이면 숫자 없음)
+        ├─ GitHubHoverSummaryView  (리뷰 요청 N · 내 PR N · 막힘 N 두 줄)
+        ├─ GitHubPopoverView       (배너 + 섹션 3개: 리뷰 요청 6 · 내 PR 8 · 최근 머지 3, 넘치면 "외 N건")
+        └─ GitHubSettingsSection   (토큰 출처 · PAT 입력 · 갱신 주기 · 레포 숨기기)
+```
+
+- 주기 (`GitHubPollPolicy.nextWait`): 백그라운드 3분(설정 1~10분, `Config.githubPollRange`) · 팝오버를 열면 즉시 1회 · 열려 있고 진행중 검사(running/queued)가 있으면 30초 · 잔량 200 미만 또는 `.rateLimited` 이면 지수 백오프(`base * 2^n`, 상한 3600초). 백오프 중엔 30초 주기를 쓰지 않고, 팝오버를 열어도 즉시 요청을 보내지 않는다. 팝오버 닫힘은 요청·재시작 없이 다음 깨어남부터 base 로 복귀한다.
+- 401 이나 PAT 저장 실패면 자동 폴링을 멈추고, 팝오버를 열어도 요청하지 않는다. 재개는 수동뿐이다 — 팝오버의 재시도·새로고침, PAT 적용·지우기, gh 토큰 다시 시도, "GitHub 표시" 다시 켜기. 재개한 요청이 다시 401 이면 다시 멈춘다.
+- 판정 (`GitHubPullRequest.swift`, 순수 값): 배지 우선순위 충돌 > 검사 실패 > 변경 요청 > 내 리뷰 대기 > Draft > 리뷰 대기 > 승인 > 머지 가능. 머지 가능 = GitHub 의 `mergeStateStatus == CLEAN`(브랜치 보호·필수 검사·필수 리뷰의 종합) + Draft 아님 + 검사 실패·진행중 아님이고, 그 필드가 없거나 모르는 값(unknown)이면 승인 + 검사 통과(또는 검사 없음) + `statusCheckRollup.state` 가 대기(PENDING/EXPECTED) 아님 + `mergeable == MERGEABLE` 이다 — 아직 보고되지 않은 필수 검사는 칩(contexts 노드)으로 오지 않아, 칩이 전부 통과여도 rollup 만이 그것을 안다. 그 밖에는 승인이면 승인, 아니면 리뷰 대기. 검사는 같은 검사의 재실행끼리 묶어 가장 최근 실행 하나만 남긴다. 묶는 키는 CheckRun 이면 (워크플로 이름 — 없으면 앱 slug, job 이름)이고 — job 이름은 커밋 안에서 고유하지 않다 — 둘 다 읽지 못한 CheckRun 은 어느 것과도 묶지 않는다. StatusContext 는 `context` 이름이 키다. 가장 최근은 `startedAt`(없으면 `completedAt`)이 늦은 것이고, 시각이 없는 실행은 아직 시작하지 않은 최신 실행으로 보아 시각이 있는 실행보다 늦다고 친다 — 둘 다 없으면 응답에서 뒤에 온 것. 남은 칩은 원래 순서를 지킨다. PR 의 검사 상태(검사 실패·진행중·통과)는 목록을 끝까지 받았으면(`totalCount` == 읽은 검사 수 — 30개를 넘거나, 모르는 종류의 노드를 건너뛰었거나, `totalCount` 가 없으면 끝까지가 아니다) 정리된 칩에서 — 실패가 하나라도 있으면 실패, 아니면 running/queued 가 있으면 진행중, 그 밖은 통과 — 읽고, 아니면(또는 칩이 비었으면) `statusCheckRollup.state` 를 쓴다 (`effectiveChecks` — 배지·메뉴바 숫자·hover·"검사 진행중" 배지가 모두 이 하나를 읽는다). 메뉴바 숫자 = 리뷰 요청 + 내 PR 중 막힌 것(충돌·검사 실패·변경 요청). 점은 막힘 있으면 빨강, 리뷰 요청만 있으면 주황, 없으면 초록, 토큰 없음·거부·401·오류는 회색. 모르는 값은 통과로 읽지 않는다 — CheckRun 모르는 `status` → queued, `COMPLETED` + 모르는 `conclusion` → failed, rollup 모르는 `state` → pending, `mergeable` 모르는 값 → unknown(충돌 아님), `mergeStateStatus` 모르는 값·누락 → unknown(CLEAN 아님). 검사 칩은 전부 통과·건너뜀이면 "검사 N개 통과 · 소요" 하나로 접는다.
+- 링크: 응답의 URL 은 https 만 받는다 (검사 링크 `detailsUrl`·`targetUrl` 은 CI 가 채우는 제3자 값). PR 링크는 그에 더해 `github.com` 호스트일 때만 연다.
+- 한도: 토큰당 시간당 5,000 포인트. 요청당 1 포인트 안팎 (노드 수에 비례). 팝오버 바닥에 쓴 비율을 작은 링으로 보이고, 정확한 `remaining / limit` 는 툴팁에만 둔다.
+- 숨긴 레포(`Preferences.githubHiddenRepos`, "owner/name" 소문자)는 스냅샷을 읽는 모든 소비자가 `hiding(_:)` 을 거치므로 메뉴바 숫자·hover·팝오버 어디에도 세지 않는다.
+- 꺼져 있으면 폴링도 없고 메뉴바·팝오버·hover 어디에도 흔적이 없다. 설정의 "GitHub 표시" 토글은 PHILOSOPHY 원칙 2 의 설정 진입점 예외로 항상 보인다. 켜는 동작이 첫 Keychain 읽기이며, gh 항목 접근 거부는 세션 동안 기억해 설정에서만 재시도한다.
+
 ## Auth
 
 **단일 사용자·단일 계정 전제.** 서버 세션이나 멀티유저 개념이 없다.
@@ -171,6 +208,13 @@ Claude Code 사용자는 로그인 없이 기존 토큰을 재사용한다. 다�
 
 **openclaw 상태 URL** (서버 에이전트): 경로의 토큰(32자리 hex)이 유일한 접근 통제인 읽기 전용 capability URL 이다. Claude 자격증명과 무관하며, `server/install.sh --rotate-token` 으로 폐기·재발급한다. 앱은 이것을 Keychain 이 아니라 `Preferences`(UserDefaults)에 두고, userinfo 없는 https 주소만 받는다.
 
+**GitHub 토큰** (GitHub PR 영역, Decision #45): Claude 자격증명과 별개의 읽기 우선순위다.
+
+1. **자체 PAT** — Keychain `Config.ownKeychainService`, account `github-pat` (설정에서 붙여넣은 classic PAT, `repo` 권한)
+2. **gh CLI 토큰** — Keychain service `gh:github.com` (account 는 GitHub 사용자명이라 service 만으로 조회, 여러 항목이면 임의의 하나). gh 가 go-keyring 으로 감싼 값(`go-keyring-base64:` 접두 등)은 읽을 때 푼다. 다른 앱의 항목이라 **첫 읽기 — 설정 토글을 켜는 동작 — 에 "키체인 접근 허용" 프롬프트**가 뜨고, 거부는 세션 동안 기억한다.
+
+토큰은 Keychain 에만 있고 `api.github.com` 한 호스트에만 전송된다 — 리다이렉트를 따르지 않으므로 3xx 로 다른 호스트에 보내지는 경로가 없다. 요청은 query 뿐이라 읽기 전용이다.
+
 ## Infrastructure
 
 호스팅 인프라가 없다. 배포는 로컬 빌드 산출물이다. openclaw 원격 감시를 쓰면 사용자가 운영하는 서버 맥에 에이전트를 로컬 빌드로 설치한다.
@@ -181,9 +225,9 @@ Claude Code 사용자는 로그인 없이 기존 토큰을 재사용한다. 다�
 | 지인 공유 | `scripts/release.sh` | Developer ID + 공증 | `.dmg` 배포 (Gatekeeper 통과, 업데이트 후 토큰 유지) |
 | 서버 에이전트 | `server/install.sh` | 없음 (서버 맥에서 release 빌드) | openclaw·서버 호스트 감시 에이전트 LaunchAgent 등록 + Tailscale Funnel 공개 (8443) |
 
-- **App Sandbox 미사용** — Keychain 의 타 앱 항목(Claude Code 자격증명) 접근이 샌드박스와 양립하지 않는다.
+- **App Sandbox 미사용** — Keychain 의 타 앱 항목(Claude Code 자격증명, gh CLI 토큰) 접근이 샌드박스와 양립하지 않는다.
 - 버전 SSOT 는 git tag (`v1.0.0`, `v1.0.1` …) 이며 GitHub Releases 가 배포 채널이다.
-- 외부 SaaS 의존은 Anthropic 호스트다. openclaw 원격 감시를 쓰면 Tailscale(Funnel)이 추가된다.
+- 외부 SaaS 의존은 Anthropic 호스트다. openclaw 원격 감시를 쓰면 Tailscale(Funnel)이, GitHub PR 영역을 켜면 `api.github.com` 이 추가된다.
 
 ## 알려진 제약
 
