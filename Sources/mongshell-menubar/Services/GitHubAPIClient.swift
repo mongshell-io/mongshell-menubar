@@ -250,7 +250,7 @@ struct GitHubAPIClient: Sendable {
             repository: repository,
             number: number,
             title: node["title"] as? String ?? "",
-            url: (node["url"] as? String).flatMap(URL.init(string:)),
+            url: pullRequestURL(node["url"]),
             isDraft: node["isDraft"] as? Bool ?? false,
             reviewDecision: reviewDecision(node["reviewDecision"]),
             mergeable: mergeable(node["mergeable"]),
@@ -307,13 +307,13 @@ struct GitHubAPIClient: Sendable {
                                                     conclusion: node["conclusion"] as? String),
                            startedAt: isoDate(node["startedAt"]),
                            completedAt: isoDate(node["completedAt"]),
-                           url: (node["detailsUrl"] as? String).flatMap(URL.init(string:)))
+                           url: httpsURL(node["detailsUrl"]))
         case "StatusContext":
             // Commit statuses carry a creation time only — no duration.
             return PRCheck(name: node["context"] as? String ?? "",
                            outcome: statusContextOutcome(state: node["state"] as? String),
                            startedAt: nil, completedAt: nil,
-                           url: (node["targetUrl"] as? String).flatMap(URL.init(string:)))
+                           url: httpsURL(node["targetUrl"]))
         default:
             return nil
         }
@@ -353,6 +353,24 @@ struct GitHubAPIClient: Sendable {
     }
 
     // MARK: helpers
+
+    /// The one gate for links that get opened: https only, so a response
+    /// can't hand `NSWorkspace` a `javascript:`, a custom app scheme or a
+    /// plain-http page. Check links are whatever the CI wrote, so this is
+    /// all they get.
+    private static func httpsURL(_ any: Any?) -> URL? {
+        guard let s = any as? String, let url = URL(string: s),
+              url.scheme?.lowercased() == "https" else { return nil }
+        return url
+    }
+
+    /// A PR's own link is GitHub's — anything off `github.com` isn't one.
+    private static func pullRequestURL(_ any: Any?) -> URL? {
+        guard let url = httpsURL(any), url.host?.lowercased() == Self.pullRequestHost else { return nil }
+        return url
+    }
+
+    private static let pullRequestHost = "github.com"
 
     /// JSONSerialization hands `true` back as an NSNumber worth 1 — a bool is
     /// not a count.

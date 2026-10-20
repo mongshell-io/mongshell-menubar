@@ -292,11 +292,13 @@ do {
 
 func node(_ repo: String = "mongshell/bookdam", _ number: Int = 45, typename: String = "PullRequest",
           mergeable: String = "MERGEABLE", review: Any = "APPROVED",
-          rollup: String? = #"{"state":"SUCCESS","contexts":{"nodes":[]}}"#) -> String {
+          rollup: String? = #"{"state":"SUCCESS","contexts":{"nodes":[]}}"#,
+          url: String? = nil) -> String {
     let reviewJSON = review is NSNull ? "null" : "\"\(review)\""
     let rollupJSON = rollup ?? "null"
+    let urlText = url ?? "https://github.com/\(repo)/pull/\(number)"
     return """
-    {"__typename":"\(typename)","number":\(number),"title":"t","url":"https://github.com/\(repo)/pull/\(number)",
+    {"__typename":"\(typename)","number":\(number),"title":"t","url":"\(urlText)",
      "isDraft":false,"reviewDecision":\(reviewJSON),"mergeable":"\(mergeable)",
      "updatedAt":"2026-09-29T03:12:45Z","mergedAt":null,
      "repository":{"nameWithOwner":"\(repo)"},
@@ -373,6 +375,37 @@ do {
           chips.first?.startedAt != nil && chips.first?.completedAt != nil
               && chips.last?.startedAt == nil && chips.last?.completedAt == nil)
     check("CheckRun 소요 90s", chips.first.flatMap { c in c.completedAt.flatMap { e in c.startedAt.map { e.timeIntervalSince($0) } } } == 90)
+
+    // Links reach NSWorkspace.open from a click, so the parse boundary is
+    // the only place a hostile or careless value can be stopped.
+    func prURL(_ url: String) -> URL? { parsed(body(mine: [node(url: url)]))?.mine.first?.url }
+    check("PR url https://github.com → 그대로",
+          prURL("https://github.com/mongshell/bookdam/pull/45")?.absoluteString
+              == "https://github.com/mongshell/bookdam/pull/45")
+    check("PR url 호스트 대소문자 무시", prURL("https://GitHub.com/a/b/pull/1") != nil)
+    check("PR url javascript: → nil", prURL("javascript:alert(1)") == nil)
+    check("PR url vscode:// → nil", prURL("vscode://file/etc/passwd") == nil)
+    check("PR url http://github.com → nil", prURL("http://github.com/a/b/pull/1") == nil)
+    check("PR url 다른 호스트 → nil", prURL("https://evil.example/a/b/pull/1") == nil)
+    check("PR url userinfo 로 github.com 흉내 → nil", prURL("https://github.com@evil.example/a") == nil)
+    check("PR url 하위 도메인 → nil", prURL("https://gist.github.com/a") == nil)
+    check("PR 은 url 이 걸러져도 행은 남음", parsed(body(mine: [node(url: "javascript:x")]))?.mine.count == 1)
+
+    func checkURLs(_ detailsUrl: String, _ targetUrl: String) -> [URL?] {
+        let rollup = """
+        {"state":"SUCCESS","contexts":{"nodes":[
+          {"__typename":"CheckRun","name":"a","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"\(detailsUrl)"},
+          {"__typename":"StatusContext","context":"b","state":"SUCCESS","targetUrl":"\(targetUrl)"}]}}
+        """
+        return parsed(body(mine: [node(rollup: rollup)]))?.mine.first?.checks.map(\.url) ?? []
+    }
+    let thirdParty = checkURLs("https://ci.example/run/1", "https://status.example/2")
+    check("검사 url 은 https 면 제3자 호스트도 받음",
+          thirdParty.map { $0?.host } == ["ci.example", "status.example"], "\(thirdParty)")
+    check("검사 url javascript:·vscode:// → nil",
+          checkURLs("javascript:alert(1)", "vscode://x") == [nil, nil])
+    check("검사 url http:// → nil",
+          checkURLs("http://ci.example/1", "http://status.example/2") == [nil, nil])
 
     check("data 없음 → badResponse (빈 목록으로 가장하지 않음)",
           parsed(Data(#"{"errors":[{"message":"bad query"}]}"#.utf8)) == nil)
