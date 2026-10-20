@@ -23,6 +23,9 @@ final class GitHubModel: ObservableObject {
     /// Set by `presentForSnapshot` so reference images don't tick: the
     /// popover's elapsed-time clock reads this instead of `Date()` when set.
     @Published private(set) var frozenNow: Date?
+    /// Merges asked for from the popover, by `GitHubPullRequest.id`
+    /// (Decision #49). What a refresh keeps is `GitHubMergePolicy.carryOver`.
+    @Published private(set) var mergeActivity: [String: PRMergeActivity] = [:]
 
     private let prefs: Preferences
     private let credentials: GitHubCredentialStore
@@ -84,6 +87,7 @@ final class GitHubModel: ObservableObject {
             pollTask?.cancel()
             snapshot = nil
             tokenSource = nil
+            mergeActivity = [:]
             backoff = 0
             ghKeychainDenied = false
             loadState = .off
@@ -167,6 +171,58 @@ final class GitHubModel: ObservableObject {
         if hidden { repos.insert(key) } else { repos.remove(key) }
         prefs.githubHiddenReposRaw = repos.sorted().joined(separator: "\n")
         updateGlance()
+    }
+
+    // MARK: Merge (Decision #49)
+
+    /// Squash-merges one of my PRs, as the row showed it: its node id and
+    /// the head SHA on screen, so GitHub refuses it if a commit landed since.
+    /// The view only calls this after the second click. A click while that
+    /// PR's merge is out, or after it went through, is ignored; so is a PR
+    /// the current list doesn't hold as mine and mergeable.
+    func merge(_ pr: GitHubPullRequest) {
+        guard prefs.githubEnabled,
+              mergeActivity[pr.id] != .merging, mergeActivity[pr.id] != .merged,
+              snapshot?.mine.contains(where: { $0.id == pr.id }) == true,
+              GitHubMergePolicy.canOffer(pr, section: .mine),
+              let nodeID = pr.nodeID, let head = pr.headSHA else { return }
+        let token: String
+        switch resolveToken() {
+        case .token(let t, _):
+            token = t
+        case .unavailable(let state):
+            tokenSource = nil
+            loadState = state
+            updateGlance()
+            return
+        }
+        mergeActivity[pr.id] = .merging
+        let requestedIn = generation
+        let client = client
+        Task { [weak self] in
+            let result = await client.merge(pullRequestId: nodeID, expectedHeadOid: head, token: token)
+            self?.finishMerge(pr.id, result: result, requestedIn: requestedIn)
+        }
+    }
+
+    private func finishMerge(_ id: String, result: GitHubMergeResult, requestedIn: Int) {
+        // Switched off meanwhile: that dropped every entry, this one too.
+        guard prefs.githubEnabled, mergeActivity[id] == .merging else { return }
+        switch result {
+        case .merged:
+            mergeActivity[id] = .merged
+            refreshNow()
+        case .unauthorized:
+            mergeActivity[id] = nil
+            // The same stop as a polled 401 — unless the token was swapped
+            // meanwhile, and the new one speaks for itself.
+            guard requestedIn == generation else { return }
+            refreshRequested = false
+            loadState = .unauthorized
+            updateGlance()
+        default:
+            mergeActivity[id] = .failed(result.failureReason ?? "")
+        }
     }
 
     /// Snapshot hook: shows a given snapshot and state without any network,
@@ -301,6 +357,7 @@ final class GitHubModel: ObservableObject {
         switch outcome {
         case .success(.snapshot(let snap)):
             snapshot = snap
+            mergeActivity = GitHubMergePolicy.carryOver(mergeActivity, into: snap.mine)
             loadState = .loaded(source)
             // Nearing the budget backs off like a 429 would, before one arrives.
             if let remaining = snap.rateLimit?.remaining, remaining < Config.githubRateLimitReserve {

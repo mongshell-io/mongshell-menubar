@@ -156,6 +156,51 @@ enum PRVerdict: Int, Comparable, Sendable {
     }
 }
 
+// MARK: - Merge (Decision #49)
+
+/// Which popover list a row sits in.
+enum PRSection: Sendable {
+    case reviewRequested, mine, merged
+}
+
+/// Where one PR's merge stands, as its row shows it. No entry means none
+/// was asked for.
+enum PRMergeActivity: Equatable, Sendable {
+    case merging
+    /// GitHub said `MERGED`. The list can still show the PR open for a
+    /// moment — search is indexed after the fact — so the row says so
+    /// instead of offering the merge again.
+    case merged
+    /// The line under the row, until the next successful refresh.
+    case failed(String)
+}
+
+enum GitHubMergePolicy {
+    /// The merge button is drawn — never greyed out — only on my own PR,
+    /// when GitHub's own verdict is `CLEAN` (the one signal a solo repo has:
+    /// no review rules, no `reviewDecision`), it isn't a draft, and the
+    /// response carried what the mutation needs.
+    static func canOffer(_ pr: GitHubPullRequest, section: PRSection) -> Bool {
+        section == .mine && pr.mergeState == .clean && !pr.isDraft
+            && pr.nodeID != nil && pr.headSHA != nil
+    }
+
+    /// What a successful refresh keeps: a merge still out, and a finished
+    /// one whose PR the list still shows open. Failure lines end here — the
+    /// list they were about has been replaced.
+    static func carryOver(_ activity: [String: PRMergeActivity],
+                          into mine: [GitHubPullRequest]) -> [String: PRMergeActivity] {
+        let listed = Set(mine.map(\.id))
+        return activity.filter { id, state in
+            switch state {
+            case .merging: return true
+            case .merged:  return listed.contains(id)
+            case .failed:  return false
+            }
+        }
+    }
+}
+
 // MARK: - Check chips
 
 /// The checks line of a row: folded to one chip when everything passed,

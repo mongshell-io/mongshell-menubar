@@ -361,7 +361,8 @@ private extension GitHubSnapshot {
                 draft: Bool = false, review: PRReviewDecision = PRReviewDecision.none,
                 mergeable: PRMergeable = .mergeable, mergeState: PRMergeState = .blocked,
                 rollup: PRChecksRollup,
-                checks: [PRCheck], mergedAgo: TimeInterval? = nil) -> GitHubPullRequest {
+                checks: [PRCheck], mergedAgo: TimeInterval? = nil,
+                nodeID: String? = nil, headSHA: String? = nil) -> GitHubPullRequest {
             GitHubPullRequest(repository: repo, number: number, title: title,
                               url: URL(string: "https://github.com/\(repo)/pull/\(number)"),
                               isDraft: draft, reviewDecision: review, mergeable: mergeable,
@@ -369,7 +370,7 @@ private extension GitHubSnapshot {
                               checksListComplete: true,
                               updatedAt: now.addingTimeInterval(-updatedAgo),
                               mergedAt: mergedAgo.map { now.addingTimeInterval(-$0) },
-                              nodeID: nil, headSHA: nil)
+                              nodeID: nodeID, headSHA: headSHA)
         }
         return GitHubSnapshot(
             reviewRequested: [
@@ -395,10 +396,12 @@ private extension GitHubSnapshot {
                    updatedAgo: hour, draft: true, rollup: .success,
                    checks: passed(3, total: 2 * minute + 40)),
                 // No review rules (reviewDecision null) but GitHub says CLEAN —
-                // "머지 가능" without an approval (a solo repo).
+                // "머지 가능" without an approval (a solo repo), so it offers
+                // the squash merge. Fixture ids, not a real PR's.
                 pr("mongshell/bookdam", 57, "refactor: auth 라우트의 세션 조회를 미들웨어로",
                    updatedAgo: 2 * day, mergeState: .clean, rollup: .success,
-                   checks: passed(5, total: 6 * minute + 12)),
+                   checks: passed(5, total: 6 * minute + 12),
+                   nodeID: "PR_snapshot57", headSHA: "57575757575757575757575757575757575757aa"),
                 pr("mongshell/bookdam", 55, "feat: 대화 내보내기 (markdown)",
                    updatedAgo: 4 * day, review: .reviewRequired, rollup: .success,
                    checks: passed(4, total: 5 * minute + 58)

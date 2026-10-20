@@ -33,12 +33,12 @@ struct GitHubPopoverView: View {
                 prSection(title: "리뷰 요청", prs: snapshot.reviewRequested,
                           cap: Config.githubSectionCaps.reviewRequested,
                           countText: "\(snapshot.reviewRequested.count)건",
-                          reviewRequested: true)
+                          section: .reviewRequested)
                 hairline
                 prSection(title: "내 PR", prs: snapshot.mine,
                           cap: Config.githubSectionCaps.mine,
                           countText: mineCountText(snapshot.mine),
-                          reviewRequested: false)
+                          section: .mine)
                 hairline
                 mergedSection(snapshot.recentlyMerged)
                 hairline
@@ -163,15 +163,18 @@ struct GitHubPopoverView: View {
     /// "외 N건". An empty list still shows the section, with "없음" — the
     /// section being there says it was checked.
     private func prSection(title: String, prs: [GitHubPullRequest], cap: Int,
-                           countText: String, reviewRequested: Bool) -> some View {
+                           countText: String, section: PRSection) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader(title, trailing: countText)
             if prs.isEmpty {
                 emptyRow
             }
             ForEach(prs.prefix(cap)) { pr in
-                PRRow(pr: pr, verdict: PRVerdict.of(pr, reviewRequested: reviewRequested),
-                      frozenNow: model.frozenNow)
+                PRRow(pr: pr, verdict: PRVerdict.of(pr, reviewRequested: section == .reviewRequested),
+                      frozenNow: model.frozenNow,
+                      offersMerge: GitHubMergePolicy.canOffer(pr, section: section),
+                      mergeActivity: model.mergeActivity[pr.id],
+                      onMerge: { model.merge(pr) })
             }
             if prs.count > cap {
                 Text("외 \(prs.count - cap)건")
@@ -295,12 +298,22 @@ struct GitHubPopoverView: View {
 
 /// One pull request: repo and number, title, the verdict badge with any
 /// secondary badge, and the checks line. The whole row is the link, and it
-/// lights up under the cursor to say so.
+/// lights up under the cursor to say so. A mergeable PR of mine also gets the
+/// squash merge control at the end of the badge line (Decision #49), and a
+/// failed merge a red line at the bottom.
 private struct PRRow: View {
     let pr: GitHubPullRequest
     let verdict: PRVerdict
     /// Snapshot clock; nil means the live one.
     let frozenNow: Date?
+    /// `GitHubMergePolicy.canOffer` for this row's section.
+    let offersMerge: Bool
+    let mergeActivity: PRMergeActivity?
+    /// The second click — the model sends the merge.
+    let onMerge: () -> Void
+
+    /// How long the armed "확인 — #N 머지" waits for the second click.
+    static let confirmWindowSeconds = 3
 
     // `@State` 를 손으로 펼친 것 (Decision #11-2, `MenuBarIconView.pulsing` 참조).
     private var _hovering = State(initialValue: false)
@@ -308,54 +321,76 @@ private struct PRRow: View {
         get { _hovering.wrappedValue }
         nonmutating set { _hovering.wrappedValue = newValue }
     }
+    /// The first click armed the merge; the second, within the window, sends it.
+    private var _armed = State(initialValue: false)
+    private var armed: Bool {
+        get { _armed.wrappedValue }
+        nonmutating set { _armed.wrappedValue = newValue }
+    }
 
-    init(pr: GitHubPullRequest, verdict: PRVerdict, frozenNow: Date?) {
+    init(pr: GitHubPullRequest, verdict: PRVerdict, frozenNow: Date?,
+         offersMerge: Bool, mergeActivity: PRMergeActivity?, onMerge: @escaping () -> Void) {
         self.pr = pr
         self.verdict = verdict
         self.frozenNow = frozenNow
+        self.offersMerge = offersMerge
+        self.mergeActivity = mergeActivity
+        self.onMerge = onMerge
     }
 
     private var checksLine: ChecksLine { ChecksLine.fold(pr.checks) }
     private var hasRunningCheck: Bool { pr.checks.contains { $0.outcome == .running } }
 
     var body: some View {
-        Button {
-            if let url = pr.url { NSWorkspace.shared.open(url) }
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                topLine
-                Text(pr.title)
-                    .font(.system(size: 13.5, weight: .medium))
-                    .foregroundStyle(Palette.textPrimary)
+        VStack(alignment: .leading, spacing: 4) {
+            topLine
+            Text(pr.title)
+                .font(.system(size: 13.5, weight: .medium))
+                .foregroundStyle(Palette.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            badges
+            if hasRunningCheck {
+                // A running check's elapsed time moves; only such rows
+                // pay for the timeline. The snapshot clock, when set,
+                // wins over the timeline's so reference images don't tick.
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    checks(now: frozenNow ?? context.date)
+                }
+            } else {
+                checks(now: frozenNow ?? Date())
+            }
+            if case .failed(let reason) = mergeActivity {
+                Text(reason)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.mergeFailedText)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                badges
-                if hasRunningCheck {
-                    // A running check's elapsed time moves; only such rows
-                    // pay for the timeline. The snapshot clock, when set,
-                    // wins over the timeline's so reference images don't tick.
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        checks(now: frozenNow ?? context.date)
-                    }
-                } else {
-                    checks(now: frozenNow ?? Date())
-                }
+                    .help(reason)
             }
-            .padding(.vertical, 7)
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(hovering ? Palette.rowHoverFill : Color.clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .buttonStyle(.plain)
-        .disabled(pr.url == nil)
+        .padding(.vertical, 7)
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(hovering ? Palette.rowHoverFill : Color.clear)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        // A tap gesture rather than a Button: the merge control sits inside
+        // the row, and a child button's click wins over its parent's gesture,
+        // where a button inside another button's label is not reliably its own.
+        // A merge click must never also open the browser.
+        .onTapGesture(perform: openPR)
+        .accessibilityAction(named: "브라우저에서 열기", openPR)
         // The highlight bleeds past the section's text edge, as the mockup's
         // negative margin does; the text itself stays aligned with the header.
         .padding(.horizontal, -8)
         .onHover { hovering = $0 }
+    }
+
+    private func openPR() {
+        if let url = pr.url { NSWorkspace.shared.open(url) }
     }
 
     private var topLine: some View {
@@ -393,6 +428,77 @@ private struct PRRow: View {
             if pr.reviewDecision == .approved, verdict != .approved, verdict != .mergeable {
                 Badge(glyph: "checkmark", text: "승인", style: .line(.green))
             }
+            // Only rows that have one make room: every other row lays out as
+            // before.
+            if offersMerge || mergeActivity == .merging || mergeActivity == .merged {
+                Spacer(minLength: 6)
+                mergeControl
+            }
+        }
+    }
+
+    // MARK: Squash merge (Decision #49)
+
+    /// Same height as the badges, so the line — and the row — keeps its height.
+    @ViewBuilder private var mergeControl: some View {
+        switch mergeActivity {
+        case .merging:
+            HStack(spacing: 4) {
+                ProgressView().controlSize(.mini)
+                Text("머지 중…").font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(Palette.textSecondary)
+            .frame(height: Self.controlHeight)
+        case .merged:
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold))
+                Text("머지됨").font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(Palette.badgeGreenText)
+            .frame(height: Self.controlHeight)
+        case .failed, nil:
+            mergeButton
+        }
+    }
+
+    private static let controlHeight: CGFloat = 18
+
+    private var mergeButton: some View {
+        Button {
+            if armed {
+                armed = false
+                onMerge()
+            } else {
+                armed = true
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.merge")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(armed ? "확인 — #\(String(pr.number)) 머지" : "Squash 머지")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(armed ? Palette.mergeConfirmText : Palette.badgeGreenText)
+            .padding(.horizontal, 6)
+            .frame(height: Self.controlHeight)
+            .background(
+                RoundedRectangle(cornerRadius: 5).fill(armed ? Palette.mergeConfirmFill : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(armed ? Color.clear : Palette.badgeOutline, lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 5))
+        }
+        .buttonStyle(.plain)
+        .help(armed ? "\(Self.confirmWindowSeconds)초 안에 다시 누르면 squash 머지 (브랜치는 남김)"
+                    : "squash 머지 — 한 번 더 눌러 확정")
+        // Disarms after the window. Re-keyed on `armed`, so the second click
+        // (or the row going away) cancels the wait instead of letting it fire.
+        .task(id: armed) {
+            guard armed else { return }
+            guard (try? await Task.sleep(for: .seconds(Self.confirmWindowSeconds))) != nil else { return }
+            armed = false
         }
     }
 

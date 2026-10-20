@@ -29,11 +29,12 @@ func pr(_ repo: String = "mongshell/bookdam", _ number: Int = 45,
         merge: PRMergeState = .unknown,
         rollup: PRChecksRollup = .success,
         checks: [PRCheck] = [],
-        complete: Bool = false) -> GitHubPullRequest {
+        complete: Bool = false,
+        nodeID: String? = nil, headSHA: String? = nil) -> GitHubPullRequest {
     GitHubPullRequest(repository: repo, number: number, title: "t", url: nil, isDraft: draft,
                       reviewDecision: review, mergeable: mergeable, mergeState: merge, checksRollup: rollup,
                       checks: checks, checksListComplete: complete, updatedAt: now, mergedAt: nil,
-                      nodeID: nil, headSHA: nil)
+                      nodeID: nodeID, headSHA: headSHA)
 }
 
 func chk(_ name: String, _ outcome: PRCheckOutcome, start: TimeInterval? = 0, end: TimeInterval? = 60) -> PRCheck {
@@ -771,6 +772,41 @@ do {
     let cut = GitHubAPIClient.mergeMessage(long)
     check("긴 메시지는 잘림", cut.count == GitHubAPIClient.mergeMessageMaxLength + 1 && cut.hasSuffix("…"))
     check("짧은 메시지는 그대로", GitHubAPIClient.mergeMessage("Pull Request is not mergeable") == "Pull Request is not mergeable")
+}
+
+print("▸ 머지 버튼 노출 (GitHubMergePolicy.canOffer)")
+do {
+    func offer(_ p: GitHubPullRequest, _ section: PRSection = .mine) -> Bool {
+        GitHubMergePolicy.canOffer(p, section: section)
+    }
+    let ready = pr(merge: .clean, nodeID: "PR_1", headSHA: "abc")
+    check("CLEAN + 내 PR + id·SHA → 있음", offer(ready))
+    for state in [PRMergeState.blocked, .dirty, .unknown, .behind, .unstable, .hasHooks, .draft] {
+        check("\(state) → 없음", !offer(pr(merge: state, nodeID: "PR_1", headSHA: "abc")))
+    }
+    check("Draft (CLEAN 이어도) → 없음", !offer(pr(draft: true, merge: .clean, nodeID: "PR_1", headSHA: "abc")))
+    check("리뷰 요청 섹션 → 없음", !offer(ready, .reviewRequested))
+    check("최근 머지 섹션 → 없음", !offer(ready, .merged))
+    check("nodeID 없음 → 없음", !offer(pr(merge: .clean, headSHA: "abc")))
+    check("headSHA 없음 → 없음", !offer(pr(merge: .clean, nodeID: "PR_1")))
+    check("reviewDecision 없어도 CLEAN 이면 있음 (혼자 쓰는 저장소)",
+          offer(pr(review: .none, merge: .clean, rollup: .none, nodeID: "PR_1", headSHA: "abc")))
+}
+
+print("▸ 머지 상태 이월 (GitHubMergePolicy.carryOver)")
+do {
+    let open = pr("mongshell/bookdam", 57)
+    let gone = pr("mongshell/bookdam", 58)
+    let before: [String: PRMergeActivity] = [
+        open.id: .merged, gone.id: .merged,
+        pr("mongshell/bookdam", 59).id: .merging,
+        pr("mongshell/bookdam", 60).id: .failed("머지 불가 — x"),
+    ]
+    let after = GitHubMergePolicy.carryOver(before, into: [open, pr("mongshell/bookdam", 60)])
+    check("목록에 남은 머지됨 PR → 유지 (search 색인 지연)", after[open.id] == .merged)
+    check("목록에서 빠진 머지됨 PR → 지움", after[gone.id] == nil)
+    check("진행 중 → 유지", after[pr("mongshell/bookdam", 59).id] == .merging)
+    check("실패 사유 → 다음 성공 갱신에서 지움", after[pr("mongshell/bookdam", 60).id] == nil)
 }
 
 // MARK: - 12. gh Keychain 값 디코딩
