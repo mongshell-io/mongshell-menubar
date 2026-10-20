@@ -64,8 +64,8 @@ struct GitHubPullRequest: Equatable, Identifiable, Sendable {
     let mergeable: PRMergeable
     let mergeState: PRMergeState
     let checksRollup: PRChecksRollup
-    /// One chip per check name — the latest run (`GitHubAPIClient` drops the
-    /// re-run ones).
+    /// One chip per check — the latest run of each workflow job or status
+    /// context (`GitHubAPIClient` drops the re-run ones).
     let checks: [PRCheck]
     /// Every context GitHub has was read (none past the thirty requested,
     /// none of a kind we skip), so `checks` speaks for the whole PR.

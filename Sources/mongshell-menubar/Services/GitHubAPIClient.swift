@@ -93,7 +93,8 @@ struct GitHubAPIClient: Sendable {
           repository { nameWithOwner }
           commits(last: 1) { nodes { commit { statusCheckRollup { state
             contexts(first: \(contextsPageSize)) { totalCount nodes { __typename
-              ... on CheckRun { name status conclusion startedAt completedAt detailsUrl }
+              ... on CheckRun { name status conclusion startedAt completedAt detailsUrl
+                checkSuite { workflowRun { workflow { name } } app { slug } } }
               ... on StatusContext { context state createdAt targetUrl } } } } } } }
         }
         """
@@ -257,7 +258,7 @@ struct GitHubAPIClient: Sendable {
             mergeable: mergeable(node["mergeable"]),
             mergeState: mergeState(node["mergeStateStatus"]),
             checksRollup: checksRollup(rollup),
-            checks: latestRunPerName(contexts.checks),
+            checks: latestRuns(contexts.runs),
             checksListComplete: contexts.complete,
             updatedAt: isoDate(node["updatedAt"]),
             mergedAt: isoDate(node["mergedAt"])
@@ -314,54 +315,87 @@ struct GitHubAPIClient: Sendable {
     /// GitHub's `totalCount` matches what we could read. A missing count, a
     /// page cut at thirty, or a node of a kind we skip each leave it
     /// incomplete — what we couldn't read might be the failing one.
-    private static func checks(_ rollup: Any?) -> (checks: [PRCheck], complete: Bool) {
+    private static func checks(_ rollup: Any?) -> (runs: [CheckRunEntry], complete: Bool) {
         guard let contexts = (rollup as? [String: Any])?["contexts"] as? [String: Any],
               let nodes = contexts["nodes"] as? [Any]
         else { return ([], false) }
-        let checks = nodes.compactMap { check($0 as? [String: Any]) }
-        return (checks, int(contexts["totalCount"]) == checks.count)
+        let runs = nodes.compactMap { check($0 as? [String: Any]) }
+        return (runs, int(contexts["totalCount"]) == runs.count)
     }
 
-    /// A re-run adds a run under the same name instead of replacing the old
-    /// one, so the list holds both. Keeps one per name — the latest by
-    /// `startedAt` (else `completedAt`); when either side has no time, the
-    /// one later in the response. Survivors keep their original order.
-    static func latestRunPerName(_ checks: [PRCheck]) -> [PRCheck] {
-        var winner: [String: Int] = [:]
-        for (index, check) in checks.enumerated() {
-            guard let held = winner[check.name] else { winner[check.name] = index; continue }
-            if !isEarlier(check, than: checks[held]) { winner[check.name] = index }
+    /// What makes two runs the same check run again. A CheckRun's `name` is
+    /// only the job's, and two workflows on one commit can each have a
+    /// `build`, so the workflow (else the app) is part of it. A StatusContext's
+    /// `context` is already its whole identity.
+    enum RerunKey: Hashable, Sendable {
+        case checkRun(suite: String, name: String)
+        case status(context: String)
+    }
+
+    /// One parsed context and its re-run key — nil when a CheckRun names
+    /// neither workflow nor app: it can't be told apart from another job of
+    /// the same name, so it is never merged with one.
+    typealias CheckRunEntry = (key: RerunKey?, check: PRCheck)
+
+    /// A re-run adds a run under the same key instead of replacing the old
+    /// one, so the list holds both. Keeps one per key — the latest
+    /// (`isEarlier`), the one later in the response on a tie. Survivors keep
+    /// their original order.
+    static func latestRuns(_ runs: [CheckRunEntry]) -> [PRCheck] {
+        var winner: [RerunKey: Int] = [:]
+        for (index, run) in runs.enumerated() {
+            guard let key = run.key else { continue }
+            guard let held = winner[key] else { winner[key] = index; continue }
+            if !isEarlier(run.check, than: runs[held].check) { winner[key] = index }
         }
         let kept = Set(winner.values)
-        return checks.indices.filter(kept.contains).map { checks[$0] }
+        return runs.indices.filter { runs[$0].key == nil || kept.contains($0) }.map { runs[$0].check }
     }
 
-    /// Strictly earlier by run time. Without a time on both sides there is
-    /// no order to read, so it is not earlier — the later entry wins.
+    /// Strictly earlier by run time — `startedAt`, else `completedAt`. A run
+    /// with neither hasn't started yet, so it is the newest: later than any
+    /// run with a time. That keeps the order total, so which run survives
+    /// doesn't depend on the order GitHub lists them in.
     private static func isEarlier(_ a: PRCheck, than b: PRCheck) -> Bool {
-        guard let ta = a.startedAt ?? a.completedAt, let tb = b.startedAt ?? b.completedAt else { return false }
-        return ta < tb
+        switch (a.startedAt ?? a.completedAt, b.startedAt ?? b.completedAt) {
+        case let (ta?, tb?): return ta < tb
+        case (.some, nil):   return true
+        case (nil, _):       return false
+        }
     }
 
-    private static func check(_ node: [String: Any]?) -> PRCheck? {
+    private static func check(_ node: [String: Any]?) -> CheckRunEntry? {
         guard let node else { return nil }
         switch node["__typename"] as? String {
         case "CheckRun":
-            return PRCheck(name: node["name"] as? String ?? "",
-                           outcome: checkRunOutcome(status: node["status"] as? String,
-                                                    conclusion: node["conclusion"] as? String),
-                           startedAt: isoDate(node["startedAt"]),
-                           completedAt: isoDate(node["completedAt"]),
-                           url: httpsURL(node["detailsUrl"]))
+            let name = node["name"] as? String ?? ""
+            let run = PRCheck(name: name,
+                              outcome: checkRunOutcome(status: node["status"] as? String,
+                                                       conclusion: node["conclusion"] as? String),
+                              startedAt: isoDate(node["startedAt"]),
+                              completedAt: isoDate(node["completedAt"]),
+                              url: httpsURL(node["detailsUrl"]))
+            return (checkSuiteName(node["checkSuite"]).map { .checkRun(suite: $0, name: name) }, run)
         case "StatusContext":
             // Commit statuses carry a creation time only — no duration.
-            return PRCheck(name: node["context"] as? String ?? "",
-                           outcome: statusContextOutcome(state: node["state"] as? String),
-                           startedAt: nil, completedAt: nil,
-                           url: httpsURL(node["targetUrl"]))
+            let context = node["context"] as? String ?? ""
+            let status = PRCheck(name: context,
+                                 outcome: statusContextOutcome(state: node["state"] as? String),
+                                 startedAt: nil, completedAt: nil,
+                                 url: httpsURL(node["targetUrl"]))
+            return (.status(context: context), status)
         default:
             return nil
         }
+    }
+
+    /// The workflow's name for an Actions run, else the app's slug for any
+    /// other app's run; nil (or empty) when neither came back.
+    private static func checkSuiteName(_ any: Any?) -> String? {
+        let suite = any as? [String: Any]
+        let workflow = ((suite?["workflowRun"] as? [String: Any])?["workflow"] as? [String: Any])?["name"] as? String
+        let app = (suite?["app"] as? [String: Any])?["slug"] as? String
+        return [workflow, app].lazy.compactMap { $0 }.first { !$0.isEmpty }
     }
 
     // MARK: Check vocabulary

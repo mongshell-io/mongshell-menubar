@@ -163,9 +163,11 @@ do {
 
 // MARK: - 3c. 재실행 검사 정리
 
-print("▸ latestRunPerName")
+print("▸ latestRuns")
 do {
-    let dedupe = GitHubAPIClient.latestRunPerName
+    func dedupe(_ checks: [PRCheck]) -> [PRCheck] {
+        GitHubAPIClient.latestRuns(checks.map { (.checkRun(suite: "verify", name: $0.name), $0) })
+    }
     let early = chk("test", .failed, start: 0, end: 60)
     let late = chk("test", .passed, start: 120, end: 180)
     check("test CANCELLED(이른) + test SUCCESS(늦은) → test 하나, passed",
@@ -178,6 +180,24 @@ do {
     check("서로 다른 이름은 유지·순서 유지", dedupe([x, y, z]) == [x, y, z])
     check("남은 것은 원래 자리 순서", dedupe([early, x, late, y]) == [x, late, y],
           "\(dedupe([early, x, late, y]).map(\.name))")
+
+    // A run with no time yet is a re-run that hasn't started: it is the
+    // newest whichever side of the timed run GitHub lists it on.
+    let queued = chk("test", .queued, start: nil, end: nil)
+    let cancelled3 = chk("test", .failed, start: 3, end: 4)
+    let passed5 = chk("test", .passed, start: 5, end: 6)
+    check("[시각 없음, t=3] → 시각 없는 쪽", dedupe([queued, cancelled3]) == [queued])
+    check("[t=3, 시각 없음] → 시각 없는 쪽", dedupe([cancelled3, queued]) == [queued])
+    check("[t=5, 시각 없음, t=3] → 시각 없는 쪽", dedupe([passed5, queued, cancelled3]) == [queued],
+          "\(dedupe([passed5, queued, cancelled3]).map(\.outcome))")
+    check("시각 없는 재실행이 남으면 검사 실패가 아니라 진행중",
+          pr(rollup: .failure, checks: dedupe([queued, cancelled3]), complete: true).effectiveChecks == .pending)
+
+    check("키 없는 CheckRun 은 같은 이름끼리도 합치지 않음",
+          GitHubAPIClient.latestRuns([(nil, early), (nil, late)]) == [early, late])
+    check("CheckRun 과 같은 이름의 StatusContext 는 다른 검사",
+          GitHubAPIClient.latestRuns([(.checkRun(suite: "ci", name: "test"), early),
+                                      (.status(context: "test"), late)]) == [early, late])
 }
 
 // MARK: - 4. Glance (메뉴바 숫자·점)
@@ -512,8 +532,13 @@ do {
 
 print("▸ 재실행 검사 끝에서 끝까지")
 do {
-    func run(_ name: String, _ conclusion: String, _ start: String, _ end: String) -> String {
-        #"{"__typename":"CheckRun","name":"\#(name)","status":"COMPLETED","conclusion":"\#(conclusion)","startedAt":"2026-10-20T\#(start)Z","completedAt":"2026-10-20T\#(end)Z","detailsUrl":"https://x/\#(name)"}"#
+    // The re-runs all came from the one `verify` workflow; the Vercel app's
+    // run has no workflow, only the app.
+    func run(_ name: String, _ conclusion: String, _ start: String, _ end: String,
+             workflow: String? = "verify", app: String? = "github-actions") -> String {
+        let workflowRun = workflow.map { #"{"workflow":{"name":"\#($0)"}}"# } ?? "null"
+        let appJSON = app.map { #"{"slug":"\#($0)"}"# } ?? "null"
+        return #"{"__typename":"CheckRun","name":"\#(name)","status":"COMPLETED","conclusion":"\#(conclusion)","startedAt":"2026-10-20T\#(start)Z","completedAt":"2026-10-20T\#(end)Z","detailsUrl":"https://x/\#(name)","checkSuite":{"workflowRun":\#(workflowRun),"app":\#(appJSON)}}"#
     }
     let contexts = [
         run("static", "SUCCESS", "05:23:35", "05:25:07"),
@@ -523,7 +548,7 @@ do {
         run("automerge", "CANCELLED", "05:25:52", "05:25:51"),
         run("automerge", "SUCCESS", "05:28:12", "05:28:21"),
         #"{"__typename":"StatusContext","context":"Vercel","state":"SUCCESS","createdAt":"2026-10-20T05:26:53Z","targetUrl":"https://x/v"}"#,
-        run("Vercel Preview Comments", "SUCCESS", "05:23:18", "05:23:18"),
+        run("Vercel Preview Comments", "SUCCESS", "05:23:18", "05:23:18", workflow: nil, app: "vercel"),
     ]
     func rollup(totalCount: Int?) -> String {
         let count = totalCount.map { "\"totalCount\":\($0)," } ?? ""
@@ -532,7 +557,7 @@ do {
     let full = parsed(body(mine: [node("mongshellio/gambau", 1982, mergeState: "UNKNOWN", review: NSNull(),
                                        rollup: rollup(totalCount: 8))]))
     let pr1982 = full?.mine.first
-    check("이름별 최신 실행 하나씩, 원래 순서",
+    check("워크플로·job 별 최신 실행 하나씩, 원래 순서",
           pr1982?.checks.map(\.name) == ["static", "test", "automerge", "Vercel", "Vercel Preview Comments"],
           "\(String(describing: pr1982?.checks.map(\.name)))")
     check("남은 칩은 전부 passed", pr1982?.checks.allSatisfy { $0.outcome == .passed } == true)
@@ -554,6 +579,29 @@ do {
           parsed(body(mine: [node(rollup: mystery)]))?.mine.first.map { verdict($0) } == .checksFailed)
     let empty = parsed(body(mine: [node(rollup: #"{"state":"FAILURE","contexts":{"totalCount":0,"nodes":[]}}"#)]))?.mine.first
     check("contexts 비고 rollup FAILURE → 검사 실패", empty.map { verdict($0) } == .checksFailed)
+
+    // `name` is the job's only: CI's `build` and Release's `build` are two
+    // checks, and one passing must not hide the other failing.
+    func suites(_ nodes: [String]) -> GitHubPullRequest? {
+        let rollup = #"{"state":"FAILURE","contexts":{"totalCount":\#(nodes.count),"nodes":["# + nodes.joined(separator: ",") + "]}}"
+        return parsed(body(mine: [node(rollup: rollup)]))?.mine.first
+    }
+    let twoWorkflows = suites([run("build", "FAILURE", "05:00:00", "05:01:00", workflow: "CI"),
+                               run("build", "SUCCESS", "05:10:00", "05:11:00", workflow: "Release")])
+    check("같은 이름·다른 워크플로 둘(실패·성공) → 둘 다 남고 검사 실패",
+          twoWorkflows?.checks.map(\.outcome) == [.failed, .passed] && twoWorkflows.map { verdict($0) } == .checksFailed,
+          "\(String(describing: twoWorkflows?.checks.map(\.outcome)))")
+    let rerun = suites([run("build", "FAILURE", "05:00:00", "05:01:00", workflow: "CI"),
+                        run("build", "SUCCESS", "05:10:00", "05:11:00", workflow: "CI")])
+    check("같은 워크플로의 재실행 → 하나만 남음",
+          rerun?.checks.map(\.outcome) == [.passed] && rerun.map { verdict($0) } != .checksFailed)
+    let byApp = suites([run("deploy", "FAILURE", "05:00:00", "05:01:00", workflow: nil, app: "vercel"),
+                        run("deploy", "SUCCESS", "05:10:00", "05:11:00", workflow: nil, app: "vercel")])
+    check("워크플로 없으면 앱 slug 로 묶음", byApp?.checks.map(\.outcome) == [.passed])
+    let anonymous = suites([run("build", "FAILURE", "05:00:00", "05:01:00", workflow: nil, app: nil),
+                            run("build", "SUCCESS", "05:10:00", "05:11:00", workflow: nil, app: nil)])
+    check("suite 식별자 없는 같은 이름 둘 → 둘 다 남음",
+          anonymous?.checks.count == 2 && anonymous.map { verdict($0) } == .checksFailed)
 
     // A failure that survives the dedupe still names the check in the hover.
     let stillFailing = [run("test", "SUCCESS", "05:00:00", "05:01:00"), run("test", "FAILURE", "05:10:00", "05:11:00")]
@@ -624,6 +672,8 @@ do {
     check("mergeStateStatus 요청", q.contains(" mergeStateStatus "))
     check("first: 20 / contexts first: 30", q.contains("first: 20)") && q.contains("contexts(first: 30)"))
     check("contexts 의 totalCount 요청", q.contains("contexts(first: 30) { totalCount nodes"))
+    check("CheckRun 의 워크플로 이름·앱 slug 요청",
+          q.contains("checkSuite { workflowRun { workflow { name } } app { slug } }"))
     check("mutation 아님", !q.contains("mutation"))
     // The day boundary follows the calendar handed in, not UTC.
     var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
