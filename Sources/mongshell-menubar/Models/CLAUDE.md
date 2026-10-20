@@ -60,10 +60,11 @@ non_goals:
 
 ## GitHub PR 판정과 폴링 주기
 
-Decision #45 의 모델 쪽 규약은 셋이다.
+Decision #45 의 모델 쪽 규약은 넷이다. 주기 규칙(즉시 1회·30초·백오프·401 정지)은 [docs/architecture.md § 4. GitHub PR 폴링](../../../docs/architecture.md#4-github-pr-폴링-선택-경로) 이 권위다.
 
 - 판정은 `GitHubPullRequest.swift` 의 순수 값 타입에 둔다 — 배지 우선순위, 메뉴바 숫자(리뷰 요청 + 내 PR 중 막힌 것), 점 색, 검사 칩 접기. `GitHubModel` 은 API 결과를 그 타입에 넘겨 호출만 하고, 판정 규칙을 모델 안에 다시 적지 않는다. 규칙은 `scripts/test.sh` 가 고정한다.
-- 팝오버의 열림·닫힘은 `setPopoverOpen(_:)` 으로 받는다 (AppDelegate 가 `NSPopover.didCloseNotification` 으로 부른다). 열리면 즉시 1회 갱신하고, 열려 있는 동안 진행중 검사가 있으면 30초 주기로, 닫히거나 진행중이 없어지면 설정 주기(기본 3분)로 돌아간다. hover 는 갱신을 일으키지 않는다.
+- 팝오버의 열림·닫힘은 `setPopoverOpen(_:)` 으로 받는다 (AppDelegate 가 `NSPopover.didCloseNotification` 으로 부른다). hover 는 갱신을 일으키지 않는다.
+- gh 항목의 Keychain 접근 거부(`.denied`)는 모델이 세션 동안 기억하고 설정에서만 재시도한다 — 폴링마다 대화상자가 뜨지 않도록.
 - 1초 경과 시간은 모델의 일이 아니다 — 팝오버 뷰의 `TimelineView` 가 그린다. 모델은 검사의 `startedAt`/`completedAt` 을 저장만 한다.
 
 ## 알림·백오프
@@ -74,4 +75,4 @@ Decision #45 의 모델 쪽 규약은 셋이다.
   - 감시에는 **신선한 문서의 `host` 만** 넘긴다 — `hostHealth.reportedHost` (두절·부재는 `nil`; 배경: Decision #31).
   - 알림 발송 여부는 복구 알림과 같은 문(`canNotifyAboutServer`)을 지나고, **문이 닫혀 있으면 그 사실을 감시에 넘긴다** (`observe(_:now:canNotify: false)`) — 감시가 그 관측으로 초기화된다.
   - `observe` 는 성공 응답이 도착할 때만 부른다. 실패 응답에서 부르면 게이트 초기화 시점이 사양과 달라진다.
-- 429 백오프는 지수이며 상한이 있다. 백오프 상태를 폴링 주기 설정과 섞지 않는다 — 사용자 설정은 하한(`Config.minPollInterval`)과 함께 base 를 정할 뿐이다. GitHub 폴링(Decision #45)도 같은 규칙이다 — 잔량 근접·429/403/`RATE_LIMITED` 에 같은 지수 백오프를 쓰고, 팝오버 열림의 30초 주기도 백오프 아래로 내려가지 않는다.
+- 429 백오프는 지수이며 상한이 있다. 백오프 상태를 폴링 주기 설정과 섞지 않는다 — 사용자 설정은 하한(`Config.minPollInterval`)과 함께 base 를 정할 뿐이다. GitHub 폴링(Decision #45)도 같은 규칙이다.

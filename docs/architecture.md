@@ -179,9 +179,11 @@ GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주�
         └─ GitHubSettingsSection   (토큰 출처 · PAT 입력 · 갱신 주기 · 레포 숨기기)
 ```
 
-- 주기 (`GitHubPollPolicy.nextWait`): 백그라운드 3분(설정 1~10분, `Config.githubPollRange`) · 팝오버를 열면 즉시 1회 · 열려 있고 진행중 검사(running/queued)가 있으면 30초 · 잔량 200 미만 또는 `.rateLimited` 이면 지수 백오프(`base * 2^n`, 상한 3600초, 백오프 중엔 30초 주기를 쓰지 않는다). 팝오버 닫힘은 요청·재시작 없이 다음 깨어남부터 base 로 복귀한다.
+- 주기 (`GitHubPollPolicy.nextWait`): 백그라운드 3분(설정 1~10분, `Config.githubPollRange`) · 팝오버를 열면 즉시 1회 · 열려 있고 진행중 검사(running/queued)가 있으면 30초 · 잔량 200 미만 또는 `.rateLimited` 이면 지수 백오프(`base * 2^n`, 상한 3600초). 백오프 중엔 30초 주기를 쓰지 않고, 팝오버를 열어도 즉시 요청을 보내지 않는다. 팝오버 닫힘은 요청·재시작 없이 다음 깨어남부터 base 로 복귀한다.
+- 401 이면 자동 폴링을 멈춘다. 재개는 수동뿐이다 — 팝오버의 재시도·새로고침, 팝오버를 열 때의 즉시 1회, PAT 적용·지우기, gh 토큰 다시 시도, "GitHub 표시" 다시 켜기. 재개한 요청이 다시 401 이면 다시 멈춘다.
 - 판정 (`GitHubPullRequest.swift`, 순수 값): 배지 우선순위 충돌 > 검사 실패 > 변경 요청 > 내 리뷰 대기 > Draft > 리뷰 대기 > 승인 > 머지 가능. 메뉴바 숫자 = 리뷰 요청 + 내 PR 중 막힌 것(충돌·검사 실패·변경 요청). 점은 막힘 있으면 빨강, 리뷰 요청만 있으면 주황, 없으면 초록, 토큰 없음·거부·401·오류는 회색. 모르는 값은 통과로 읽지 않는다 — CheckRun 모르는 `status` → queued, `COMPLETED` + 모르는 `conclusion` → failed, rollup 모르는 `state` → pending, `mergeable` 모르는 값 → unknown(충돌 아님). 검사 칩은 전부 통과·건너뜀이면 "검사 N개 통과 · 소요" 하나로 접는다.
-- 한도: 토큰당 시간당 5,000 포인트, 노드 수 과금. 실측 요청당 cost 1 (2026-10-20). 팝오버 바닥에 `remaining / limit` 를 보인다.
+- 링크: 응답의 URL 은 https 만 받는다 (검사 링크 `detailsUrl`·`targetUrl` 은 CI 가 채우는 제3자 값). PR 링크는 그에 더해 `github.com` 호스트일 때만 연다.
+- 한도: 토큰당 시간당 5,000 포인트. 요청당 1 포인트 안팎 (노드 수에 비례). 팝오버 바닥에 `remaining / limit` 를 보인다.
 - 숨긴 레포(`Preferences.githubHiddenRepos`, "owner/name" 소문자)는 스냅샷을 읽는 모든 소비자가 `hiding(_:)` 을 거치므로 메뉴바 숫자·hover·팝오버 어디에도 세지 않는다.
 - 꺼져 있으면 폴링도 없고 메뉴바·팝오버·hover 어디에도 흔적이 없다. 설정의 "GitHub 표시" 토글은 PHILOSOPHY 원칙 2 의 설정 진입점 예외로 항상 보인다. 켜는 동작이 첫 Keychain 읽기이며, gh 항목 접근 거부는 세션 동안 기억해 설정에서만 재시도한다.
 
@@ -210,7 +212,7 @@ Claude Code 사용자는 로그인 없이 기존 토큰을 재사용한다. 다�
 1. **자체 PAT** — Keychain `Config.ownKeychainService`, account `github-pat` (설정에서 붙여넣은 classic PAT, `repo` 권한)
 2. **gh CLI 토큰** — Keychain service `gh:github.com` (account 는 GitHub 사용자명이라 service 만으로 조회, 여러 항목이면 임의의 하나). gh 가 go-keyring 으로 감싼 값(`go-keyring-base64:` 접두 등)은 읽을 때 푼다. 다른 앱의 항목이라 **첫 읽기 — 설정 토글을 켜는 동작 — 에 "키체인 접근 허용" 프롬프트**가 뜨고, 거부는 세션 동안 기억한다.
 
-토큰은 Keychain 에만 있고 `api.github.com` 한 호스트에만 전송된다 — 리다이렉트를 따르지 않으므로 3xx 로 다른 호스트에 보내지는 경로가 없다. 로그·배너·에러 문구에 토큰 값을 넣지 않는다 (배너에 쓰는 것은 계정명까지다). 요청은 query 뿐이라 읽기 전용이다.
+토큰은 Keychain 에만 있고 `api.github.com` 한 호스트에만 전송된다 — 리다이렉트를 따르지 않으므로 3xx 로 다른 호스트에 보내지는 경로가 없다. 요청은 query 뿐이라 읽기 전용이다.
 
 ## Infrastructure
 

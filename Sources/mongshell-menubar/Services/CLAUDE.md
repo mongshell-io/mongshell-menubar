@@ -24,7 +24,7 @@ non_goals:
 | 사용자 설정 파일 | `ClaudeSettingsStore` |
 | openclaw 서버 상태 URL (HTTPS 읽기 전용) — openclaw 판정과 서버 호스트 신호(`host`)를 한 문서에서 읽는다 | `OpenClawStatusClient` |
 | 로그인 항목 (ServiceManagement) | `LoginItemService` |
-| GitHub 토큰 (gh CLI 의 Keychain 항목 읽기 → 자체 PAT 항목) | `GitHubCredentials` |
+| GitHub 토큰 (자체 PAT 항목 · gh CLI 항목 읽기) | `GitHubCredentials` |
 | GitHub GraphQL (`api.github.com` 단일 호스트, 읽기 전용) | `GitHubAPIClient` |
 
 `TimeText` 는 외부 경계가 아니라 포맷터다 — 위 타입들과 성격이 다르지만, 표시 문자열의 SSOT 을 한 곳에 두려고 여기 있다. 이 예외를 늘리지 않는다.
@@ -49,10 +49,12 @@ non_goals:
 
 ## GitHub (Decision #45)
 
-- `GitHubCredentials` 는 읽기 순서가 자체 PAT(`Config.ownKeychainService`, account `github-pat`) → gh CLI 항목(service `gh:github.com`, account 는 사용자명이라 service 만으로 조회)이다. gh 의 값은 `go-keyring-base64:` 접두 + base64 가 붙어 있으며(구버전 `go-keyring-encoded:` + hex, 더 구버전 평문), 접두를 보고 디코딩한다 — 세 형태 외의 값은 토큰으로 쓰지 않는다. gh 의 항목은 Claude Code 의 것과 마찬가지로 **읽기 전용**이다.
-- Keychain 접근 거부는 호출자(모델)가 세션 동안 기억하고 설정에서만 재시도한다 — 서비스는 거부를 타입으로 올릴 뿐, 다시 묻지 않는다. 그렇지 않으면 폴링마다 대화상자가 뜬다.
+- 토큰의 읽기 순서·Keychain 식별자·gh 값의 저장 형태는 [docs/architecture.md § Auth](../../../docs/architecture.md#auth) 가 권위이고, 여기서 지킬 운영 규칙은 둘이다.
+  - gh 값의 저장 형태는 `GitHubCredentials` 가 풀어 보낼 토큰으로 돌려준다. **디코딩할 수 없는 값은 원문 그대로 보내 401 배너로 드러낸다** — 조용히 버려 "토큰 없음" 으로 가장하지 않는다.
+  - Keychain 접근 거부는 타입(`.denied`)으로 올릴 뿐, 서비스가 다시 묻지 않는다.
 - `GitHubAPIClient` 는 `api.github.com` 한 호스트에만 요청하고 **리다이렉트를 따르지 않는다** — 토큰이 다른 호스트로 새는 경로를 열지 않는다. 한 번의 갱신은 GraphQL 요청 1회(search alias 3개 + `rateLimit`)다.
 - 디코딩은 관대하게 — alias 하나가 빠지면 그 목록만 비우고 나머지는 채운다. 모르는 enum 값(`mergeable`·검사 상태·리뷰 판정)은 초록(통과·머지 가능)으로 접지 않는다. `errors` 와 `data` 가 함께 오면 `RATE_LIMITED` 를 먼저 보고 백오프 에러로 올린다.
+- 응답의 URL 은 https 만 받는다 — 검사 링크는 CI 가 채우는 제3자 값이다. PR 링크는 그에 더해 `github.com` 호스트일 때만 연다.
 - 에러는 타입으로 올린다 — 토큰 없음·401·403/429/`RATE_LIMITED`·네트워크를 호출자가 구분해 배너와 백오프를 가른다. 응답 헤더 `x-oauth-scopes` 는 `repo` 포함 여부를 호출자에게 돌려준다.
 
 ## 파일 쓰기
