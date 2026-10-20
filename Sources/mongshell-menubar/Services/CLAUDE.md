@@ -52,7 +52,7 @@ non_goals:
 - 토큰의 읽기 순서·Keychain 식별자·gh 값의 저장 형태는 [docs/architecture.md § Auth](../../../docs/architecture.md#auth) 가 권위이고, 여기서 지킬 운영 규칙은 둘이다.
   - gh 값의 저장 형태는 `GitHubCredentials` 가 풀어 보낼 토큰으로 돌려준다. **디코딩할 수 없는 값은 원문 그대로 보내 401 배너로 드러낸다** — 조용히 버려 "토큰 없음" 으로 가장하지 않는다.
   - Keychain 접근 거부는 타입(`.denied`)으로 올릴 뿐, 서비스가 다시 묻지 않는다.
-- `GitHubAPIClient` 는 `api.github.com` 한 호스트에만 요청하고 **리다이렉트를 따르지 않는다** — 토큰이 다른 호스트로 새는 경로를 열지 않는다. 한 번의 갱신은 GraphQL 요청 1회(search alias 2개 + `rateLimit`)다.
+- `GitHubAPIClient` 는 `api.github.com` 한 호스트에만 요청하고 **리다이렉트를 따르지 않는다** — 토큰이 다른 호스트로 새는 경로를 열지 않는다. 한 번의 갱신은 GraphQL 요청 1회다 (쿼리 구성은 [docs/architecture.md § 4](../../../docs/architecture.md#4-github-pr-폴링-선택-경로)).
 - 디코딩은 관대하게 — alias 하나가 빠지면 그 목록만 비우고 나머지는 채운다. 모르는 enum 값(`mergeable`·검사 상태·리뷰 판정)은 초록(통과·머지 가능)으로 접지 않는다. `errors` 와 `data` 가 함께 오면 `RATE_LIMITED` 를 먼저 보고 백오프 에러로 올린다.
 - 링크 규칙(허용 스킴·호스트)은 [docs/architecture.md § 4. GitHub PR 폴링](../../../docs/architecture.md#4-github-pr-폴링-선택-경로) 이 권위다. 링크 검증은 `GitHubAPIClient` 의 파싱 경계 한 곳에서만 한다 — 뷰는 걸러진 URL 만 받는다.
 - 에러는 타입으로 올린다 — 토큰 없음·401·403/429/`RATE_LIMITED`·네트워크를 호출자가 구분해 배너와 백오프를 가른다. 응답 헤더 `x-oauth-scopes` 는 `repo` 포함 여부를 호출자에게 돌려준다.

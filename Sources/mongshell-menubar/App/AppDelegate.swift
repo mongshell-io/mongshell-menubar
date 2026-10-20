@@ -349,7 +349,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if region == .claude, prefs.showsOpenClaw {
             openClaw.refreshNow()
         }
-        // Same idea for GitHub, through the model's open/closed cadence.
+        // GitHub refreshes once on open — skipped while backing off or
+        // stopped for the user (`GitHubPollPolicy.refreshesOnOpen`).
         if region == .github {
             github.setPopoverOpen(true)
         }

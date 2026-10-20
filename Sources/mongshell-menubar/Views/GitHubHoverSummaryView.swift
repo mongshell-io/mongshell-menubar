@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The instant hover summary of the GitHub region (mockup § B2): two rows in
+/// The instant hover summary of the GitHub region (layout only: mockup
+/// § B2 — the rows' content is architecture.md § 4): two rows in
 /// the same three-column grid, type sizes and padding as `HoverSummaryView`,
 /// so crossing from one region to the other reads as one app. Reads the
 /// glance the model already computed — hover never triggers a refresh. The
