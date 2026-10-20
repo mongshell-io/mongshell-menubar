@@ -298,7 +298,7 @@ final class GitHubModel: ObservableObject {
     private func autoWait() -> Int? {
         GitHubPollPolicy.nextAutoWait(
             after: loadState, base: prefs.githubPollSeconds, backoff: backoff,
-            hasPendingChecks: hasPendingChecks)
+            hasFreshRunningChecks: hasFreshRunningChecks)
     }
 
     /// Sleeps in a task of its own so `refreshNow()` can cut it short while
@@ -418,14 +418,13 @@ final class GitHubModel: ObservableObject {
     }
 
     private func nextWait() -> Int {
-        GitHubPollPolicy.nextWait(base: prefs.githubPollSeconds, backoff: backoff,
-                                  hasPendingChecks: hasPendingChecks)
+        GitHubPollPolicy.nextWait(base: prefs.githubPollSeconds, backoff: backoff)
     }
 
     /// Read through the hidden repositories, as the hover is: a check the
-    /// user can't see anywhere is no reason to ask four times as often.
-    private var hasPendingChecks: Bool {
-        snapshot?.hiding(prefs.githubHiddenRepos).hasPendingChecks ?? false
+    /// user can't see anywhere is no reason to poll faster.
+    private var hasFreshRunningChecks: Bool {
+        snapshot?.hiding(prefs.githubHiddenRepos).hasFreshRunningChecks(now: Date()) ?? false
     }
 
     private func updateGlance() {

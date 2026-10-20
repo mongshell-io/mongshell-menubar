@@ -68,11 +68,21 @@ struct GitHubSnapshot: Equatable, Sendable {
     /// missing (banner). nil when the header wasn't sent (fine-grained PAT).
     var tokenScopesLackRepo: Bool?
 
-    /// One of my open PRs has checks still going, read as its badge and the
-    /// hover's CI row read it (`effectiveChecks`) — what switches polling to
-    /// the fast cadence, popover open or not (#51).
-    var hasPendingChecks: Bool {
-        mine.contains { $0.effectiveChecks == .pending }
+    /// One of my open PRs reads as checks-going (`effectiveChecks`, as its
+    /// badge and the hover's CI row read it — so a PR whose checks already
+    /// failed doesn't count) and has a running check that started within
+    /// `Config.githubFastPollMaxRunningAge` of `now`. The only grounds for
+    /// the fast cadence (Decision #45 후속 (#51)). A wait that may never end —
+    /// queued checks, a status still expected, the rollup alone pending, a
+    /// running check with no start time or one that has run past the cap —
+    /// is still shown as going, but polls at base.
+    func hasFreshRunningChecks(now: Date) -> Bool {
+        mine.contains { pr in
+            pr.effectiveChecks == .pending && pr.checks.contains { check in
+                guard check.outcome == .running, let started = check.startedAt else { return false }
+                return now.timeIntervalSince(started) <= Config.githubFastPollMaxRunningAge
+            }
+        }
     }
 
     /// The same snapshot without the repositories the user hid ("owner/name",
@@ -93,27 +103,31 @@ struct GitHubSnapshot: Equatable, Sendable {
 enum GitHubPollPolicy {
     static let maxBackoffWait = 3600
 
-    /// - base: the user's setting, clamped to `Config.githubPollRange`.
-    /// - backoff: exponent after rate-limit trouble; while it is above zero
-    ///   the fast cadence is ignored — a running check must not undo
-    ///   backing off.
-    /// - hasPendingChecks: the only case for the fast cadence. The popover
-    ///   need not be open: the hover's CI row should not lag a whole base
-    ///   interval behind the checks it shows.
-    static func nextWait(base: Int, backoff: Int, hasPendingChecks: Bool) -> Int {
+    /// The wait without the fast cadence. `base` is the user's setting,
+    /// clamped to `Config.githubPollRange`; `backoff` the exponent after
+    /// rate-limit trouble.
+    static func nextWait(base: Int, backoff: Int) -> Int {
         let range = Config.githubPollRange
         let base = min(max(base, range.lowerBound), range.upperBound)
         if backoff > 0 { return min(base * (1 << backoff), maxBackoffWait) }
-        if hasPendingChecks { return Config.githubPendingPollSeconds }
         return base
     }
 
     /// The wait before the next automatic poll, or nil for none (see
-    /// `waitsForUser`).
+    /// `waitsForUser`). The fast cadence needs all three: no backoff — a
+    /// running check must not undo backing off; a loaded state — a snapshot
+    /// left over from before a missing token, a refused Keychain or an error
+    /// speaks for no current answer, and polling fast would only repeat the
+    /// failure; and `hasFreshRunningChecks` (`GitHubSnapshot`, read through
+    /// the hidden repos). The popover need not be open: the hover's CI row
+    /// should not lag a whole base interval behind the checks it shows.
     static func nextAutoWait(after state: GitHubLoadState, base: Int, backoff: Int,
-                             hasPendingChecks: Bool) -> Int? {
+                             hasFreshRunningChecks: Bool) -> Int? {
         if waitsForUser(state) { return nil }
-        return nextWait(base: base, backoff: backoff, hasPendingChecks: hasPendingChecks)
+        if backoff == 0, case .loaded = state, hasFreshRunningChecks {
+            return Config.githubFastPollSeconds
+        }
+        return nextWait(base: base, backoff: backoff)
     }
 
     /// Whether opening the popover asks GitHub at once. Not while backing

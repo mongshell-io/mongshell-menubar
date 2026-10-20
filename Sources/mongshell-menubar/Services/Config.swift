@@ -79,10 +79,14 @@ enum Config {
     /// is where the list stops being "current".
     static let githubPollRange = 60...600
     static let githubDefaultPollSeconds = 180
-    /// While a check on one of my PRs is still going, popover open or not —
-    /// the hover and popover tick elapsed times every second, and the state
+    /// While a check on one of my PRs is running, popover open or not — the
+    /// hover and popover tick elapsed times every second, and the state
     /// should keep up. About 120 points an hour at one point a request.
-    static let githubPendingPollSeconds = 30
+    static let githubFastPollSeconds = 30
+    /// A running check older than this no longer holds the fast cadence: a
+    /// runner that never reports back would otherwise keep it forever.
+    /// Most CI runs end well inside an hour; past it, base is soon enough.
+    static let githubFastPollMaxRunningAge: TimeInterval = 3600
     /// Points left at which polling backs off: enough for gh and the browser
     /// to keep working on the same token.
     static let githubRateLimitReserve = 200
