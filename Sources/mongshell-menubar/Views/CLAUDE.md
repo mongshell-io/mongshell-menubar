@@ -89,4 +89,4 @@ openclaw·Claude Code 설정처럼 전제가 없을 수 있는 요소는 **비�
 
 GitHub 영역도 같다 (Decision #45). `Preferences` 의 "GitHub 표시" 가 꺼져 있으면 메뉴바의 두 번째 영역(헤어라인 포함)·GitHub 팝오버·hover 요약을 그리지 않는다. 켜져 있는데 토큰이 없거나 거부된 것은 "없음" 이 아니다 — 회색 점과 팝오버 배너로 보인다. 빈 목록으로 가장하지 않는다.
 
-설정 진입점 예외는 PHILOSOPHY 원칙 2 를 따른다 — 현재 해당하는 것은 `OpenClawSettingsSection` 의 상태 URL 입력칸과 `GitHubSettingsSection` 의 "GitHub 표시" 토글이다. 토글이 꺼져 있을 때 그 섹션에 남는 것은 토글뿐이고, 토큰 상태·갱신 주기·레포 숨기기는 켠 뒤에만 나타난다.
+설정 진입점 예외는 PHILOSOPHY 원칙 2 를 따른다 — 현재 해당하는 것은 `OpenClawSettingsSection` 의 상태 URL 입력칸과 `GitHubSettingsSection` 의 "GitHub 표시" 토글이다. 토글이 꺼져 있을 때 그 섹션에 남는 것은 토글과 그 아래 한 줄 설명뿐이고, 토큰 상태·PAT 입력·갱신 주기·레포 숨기기는 켠 뒤에만 나타난다. 토글은 `Preferences` 에 직접 바인딩하지 않고 `GitHubModel.setEnabled(_:)` 를 거친다 — 켜는 동작이 첫 Keychain 읽기이기 때문이다.
