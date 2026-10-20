@@ -547,7 +547,7 @@ struct GitHubAPIClient: Sendable {
     /// become `.passed`: an unknown `status` is still going (`.queued`), and a
     /// completed run with an unknown `conclusion` is shown as `.failed` — a
     /// red chip the user can look at, rather than a spinner that would keep
-    /// the popover on the fast cadence forever.
+    /// polling on the fast cadence forever.
     static func checkRunOutcome(status: String?, conclusion: String?) -> PRCheckOutcome {
         switch status {
         case "COMPLETED":

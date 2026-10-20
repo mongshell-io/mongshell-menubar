@@ -68,10 +68,11 @@ struct GitHubSnapshot: Equatable, Sendable {
     /// missing (banner). nil when the header wasn't sent (fine-grained PAT).
     var tokenScopesLackRepo: Bool?
 
-    /// A check still running or queued on one of my open PRs — what
-    /// switches the open popover to the fast cadence.
+    /// One of my open PRs has checks still going, read as its badge and the
+    /// hover's CI row read it (`effectiveChecks`) — what switches polling to
+    /// the fast cadence, popover open or not (#51).
     var hasPendingChecks: Bool {
-        mine.contains { $0.checks.contains { $0.outcome.isPending } }
+        mine.contains { $0.effectiveChecks == .pending }
     }
 
     /// The same snapshot without the repositories the user hid ("owner/name",
@@ -94,24 +95,25 @@ enum GitHubPollPolicy {
 
     /// - base: the user's setting, clamped to `Config.githubPollRange`.
     /// - backoff: exponent after rate-limit trouble; while it is above zero
-    ///   the open-popover cadence is ignored — backing off must not be undone
-    ///   by looking at the popover.
-    /// - popoverOpen + hasPendingChecks: the only case for the 30s cadence.
-    static func nextWait(base: Int, backoff: Int, popoverOpen: Bool, hasPendingChecks: Bool) -> Int {
+    ///   the fast cadence is ignored — a running check must not undo
+    ///   backing off.
+    /// - hasPendingChecks: the only case for the fast cadence. The popover
+    ///   need not be open: the hover's CI row should not lag a whole base
+    ///   interval behind the checks it shows.
+    static func nextWait(base: Int, backoff: Int, hasPendingChecks: Bool) -> Int {
         let range = Config.githubPollRange
         let base = min(max(base, range.lowerBound), range.upperBound)
         if backoff > 0 { return min(base * (1 << backoff), maxBackoffWait) }
-        if popoverOpen && hasPendingChecks { return Config.githubOpenPollSeconds }
+        if hasPendingChecks { return Config.githubPendingPollSeconds }
         return base
     }
 
     /// The wait before the next automatic poll, or nil for none (see
     /// `waitsForUser`).
     static func nextAutoWait(after state: GitHubLoadState, base: Int, backoff: Int,
-                             popoverOpen: Bool, hasPendingChecks: Bool) -> Int? {
+                             hasPendingChecks: Bool) -> Int? {
         if waitsForUser(state) { return nil }
-        return nextWait(base: base, backoff: backoff, popoverOpen: popoverOpen,
-                        hasPendingChecks: hasPendingChecks)
+        return nextWait(base: base, backoff: backoff, hasPendingChecks: hasPendingChecks)
     }
 
     /// Whether opening the popover asks GitHub at once. Not while backing

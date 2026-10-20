@@ -121,9 +121,8 @@ final class GitHubModel: ObservableObject {
     }
 
     /// From AppDelegate on open and on `NSPopover.didCloseNotification`.
-    /// Opening refreshes at once and, with a check still running, keeps the
-    /// fast cadence; closing only lets the loop fall back to the base
-    /// interval at its next wake — no extra request for a close. While
+    /// Opening refreshes at once; closing sends nothing and leaves the
+    /// cadence as it was — that follows the checks, not the popover. While
     /// backing off, or after a 401 or a failed PAT save, opening only
     /// records the flag.
     func setPopoverOpen(_ open: Bool) {
@@ -299,7 +298,7 @@ final class GitHubModel: ObservableObject {
     private func autoWait() -> Int? {
         GitHubPollPolicy.nextAutoWait(
             after: loadState, base: prefs.githubPollSeconds, backoff: backoff,
-            popoverOpen: popoverOpen, hasPendingChecks: snapshot?.hasPendingChecks ?? false)
+            hasPendingChecks: hasPendingChecks)
     }
 
     /// Sleeps in a task of its own so `refreshNow()` can cut it short while
@@ -420,8 +419,13 @@ final class GitHubModel: ObservableObject {
 
     private func nextWait() -> Int {
         GitHubPollPolicy.nextWait(base: prefs.githubPollSeconds, backoff: backoff,
-                                  popoverOpen: popoverOpen,
-                                  hasPendingChecks: snapshot?.hasPendingChecks ?? false)
+                                  hasPendingChecks: hasPendingChecks)
+    }
+
+    /// Read through the hidden repositories, as the hover is: a check the
+    /// user can't see anywhere is no reason to ask four times as often.
+    private var hasPendingChecks: Bool {
+        snapshot?.hiding(prefs.githubHiddenRepos).hasPendingChecks ?? false
     }
 
     private func updateGlance() {

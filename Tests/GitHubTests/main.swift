@@ -411,9 +411,20 @@ do {
               && !PRCheckOutcome.passed.isPending && !PRCheckOutcome.failed.isPending
               && !PRCheckOutcome.skipped.isPending)
     check("hasPendingChecks: 내 PR 의 running/queued 만 (머지 목록은 아님)",
-          snap(mine: [pr(checks: [chk("a", .queued)])]).hasPendingChecks
-              && snap(mine: [pr(checks: [chk("a", .running)])]).hasPendingChecks
-              && !snap(mine: [pr(checks: [chk("a", .passed)])], merged: [pr(checks: [chk("a", .running)])]).hasPendingChecks)
+          snap(mine: [pr(checks: [chk("a", .queued)], complete: true)]).hasPendingChecks
+              && snap(mine: [pr(checks: [chk("a", .running)], complete: true)]).hasPendingChecks
+              && !snap(mine: [pr(checks: [chk("a", .passed)], complete: true)],
+                       merged: [pr(checks: [chk("a", .running)], complete: true)]).hasPendingChecks)
+    // #51: the PR's own reading, as the badge and the hover's CI row have it.
+    check("hasPendingChecks: 칩이 이미 실패한 PR 의 남은 running 은 아님",
+          !snap(mine: [pr(rollup: .pending, checks: [chk("a", .failed), chk("b", .running, end: nil)],
+                          complete: true)]).hasPendingChecks)
+    check("hasPendingChecks: 칩이 잘렸으면 rollup PENDING 으로 판정",
+          snap(mine: [pr(rollup: .pending, checks: [chk("a", .passed)], complete: false)]).hasPendingChecks
+              && !snap(mine: [pr(rollup: .success, checks: [chk("a", .running, end: nil)], complete: false)]).hasPendingChecks)
+    check("hasPendingChecks: 숨긴 레포를 거른 뒤엔 없음",
+          !snap(mine: [pr("mongshell/bookdam", 1, checks: [chk("a", .running, end: nil)], complete: true)])
+              .hiding(["mongshell/bookdam"]).hasPendingChecks)
 }
 
 // MARK: - 7. 소요시간 표기
@@ -434,13 +445,13 @@ do {
 
 print("▸ GitHubPollPolicy.nextWait")
 do {
-    func wait(base: Int = 180, backoff: Int = 0, open: Bool = false, pending: Bool = false) -> Int {
-        GitHubPollPolicy.nextWait(base: base, backoff: backoff, popoverOpen: open, hasPendingChecks: pending)
+    func wait(base: Int = 180, backoff: Int = 0, pending: Bool = false) -> Int {
+        GitHubPollPolicy.nextWait(base: base, backoff: backoff, hasPendingChecks: pending)
     }
-    check("열림 + 진행중 → 30", wait(open: true, pending: true) == 30)
-    check("열림 + 진행중 없음 → base", wait(open: true, pending: false) == 180)
-    check("닫힘 + 진행중 → base", wait(open: false, pending: true) == 180)
-    check("백오프 중엔 30 무시 → base·2^backoff", wait(backoff: 1, open: true, pending: true) == 360)
+    check("진행중 → 30 (팝오버가 닫혀 있어도)", wait(pending: true) == 30)
+    check("진행중 없음 → base", wait(pending: false) == 180)
+    check("진행중이면 긴 base 설정도 30", wait(base: 600, pending: true) == 30)
+    check("백오프 중엔 30 무시 → base·2^backoff", wait(backoff: 1, pending: true) == 360)
     check("백오프 상한 3600", wait(base: 600, backoff: 4) == 3600)
     check("base 하한 60", wait(base: 5) == 60)
     check("base 상한 600", wait(base: 10_000) == 600)
@@ -448,20 +459,20 @@ do {
 
 print("▸ GitHubPollPolicy.nextAutoWait")
 do {
-    func auto(_ state: GitHubLoadState, backoff: Int = 0, open: Bool = false, pending: Bool = false) -> Int? {
-        GitHubPollPolicy.nextAutoWait(after: state, base: 180, backoff: backoff,
-                                      popoverOpen: open, hasPendingChecks: pending)
+    func auto(_ state: GitHubLoadState, backoff: Int = 0, pending: Bool = false) -> Int? {
+        GitHubPollPolicy.nextAutoWait(after: state, base: 180, backoff: backoff, hasPendingChecks: pending)
     }
     check("401 이후 자동 대기 없음 (무효 토큰 재전송 정지)", auto(.unauthorized) == nil)
-    check("401 이후엔 열림 + 진행중이어도 자동 대기 없음", auto(.unauthorized, open: true, pending: true) == nil)
+    check("401 이후엔 진행중이어도 자동 대기 없음", auto(.unauthorized, pending: true) == nil)
     check("401 이후엔 백오프 중이어도 자동 대기 없음", auto(.unauthorized, backoff: 2) == nil)
     check("성공 후 → base", auto(.loaded(.pat)) == 180)
     check("PAT 저장 실패 후 자동 대기 없음 (다른 토큰으로 나가지 않음)", auto(.patSaveFailed(-25299)) == nil)
-    check("PAT 저장 실패 후엔 열림 + 진행중이어도 자동 대기 없음",
-          auto(.patSaveFailed(-25299), open: true, pending: true) == nil)
+    check("PAT 저장 실패 후엔 진행중이어도 자동 대기 없음",
+          auto(.patSaveFailed(-25299), pending: true) == nil)
     check("다른 오류 후 → base (정지는 401·PAT 저장 실패만)", auto(.error("x")) == 180)
     check("한도 초과 후 → 백오프 대기", auto(.rateLimited(retryAt: now), backoff: 1) == 360)
-    check("성공 후 열림 + 진행중 → 30", auto(.loaded(.pat), open: true, pending: true) == 30)
+    check("성공 후 진행중 → 30", auto(.loaded(.pat), pending: true) == 30)
+    check("한도 초과 백오프 중엔 진행중이어도 30 아님", auto(.rateLimited(retryAt: now), backoff: 1, pending: true) == 360)
 }
 
 print("▸ GitHubPollPolicy.refreshesOnOpen")

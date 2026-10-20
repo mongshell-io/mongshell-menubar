@@ -10,7 +10,7 @@ import SwiftUI
 enum PRCheckOutcome: Equatable, Sendable {
     case passed, failed, running, queued, skipped
 
-    /// Still going — what keeps the open popover on the fast cadence.
+    /// Still going — a running chip ticks, a PR with one is "검사 진행중".
     var isPending: Bool { self == .running || self == .queued }
 }
 
