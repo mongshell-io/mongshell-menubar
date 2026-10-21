@@ -346,7 +346,7 @@
 
 - **도입**: 미정 (#68)
 - **컨텍스트**: 재빌드한 앱을 처음 띄울 때마다 키체인 접근 프롬프트가 다시 떴고, 거부하면 토큰을 못 읽어 로그인을 다시 요구했다. Decision 3 은 이것을 ad-hoc 서명의 대가로 받아들였고, `make_app.sh` 는 자기 서명 인증서(`mongshell-menubar Dev`)로 서명하면 designated requirement 가 `certificate leaf` 로 고정되어 해결된다고 보았다. 그러나 키체인은 ACL 과 별도로 항목의 **파티션 목록**을 검사하고, 파티션 ID 는 서명에 팀 ID 가 있으면 `teamid:`, 없으면 `cdhash:` 다. 자기 서명 인증서에는 팀 ID 가 없어 빌드마다 새 `cdhash:` 가 되고, ACL 이 맞아도 프롬프트가 다시 떴다. 2026-10-21 에 비밀값 없이 ACL 을 덤프해 보니 `gh:github.com` 항목의 파티션 목록에 `cdhash:` 가 15개 쌓여 있었고, `com.mongshell.menubar.tokens` 는 ACL 앱이 인증서 요구사항 하나뿐인데 파티션에 `cdhash:` 가 3개였다.
-- **결정**: `make_app.sh` 는 서명 신원을 이 순서로 고른다 — 명시한 `SIGN_ID` → 키체인의 유효한 `Apple Development:` 신원(이름이 아니라 SHA-1 로 지정) → 자기 서명 `mongshell-menubar Dev` → ad-hoc. 명시한 `SIGN_ID` 로 서명이 실패하면 빌드를 멈춘다. 인증서 서명에는 `release.sh` 처럼 hardened runtime(`--options runtime`)을 켠다. README 는 자기 서명 인증서 대신 Apple Development 인증서 발급을 안내하고, 개인 키 접근의 *항상 허용* 이 무엇을 여는지 적는다.
+- **결정**: `make_app.sh` 는 서명 신원을 이 순서로 고른다 — 명시한 `SIGN_ID` → 키체인의 유효한 `Apple Development:` 신원(이름이 아니라 SHA-1 로 지정) → 자기 서명 `mongshell-menubar Dev` → ad-hoc. 인증서 서명에는 `release.sh` 처럼 hardened runtime(`--options runtime`)을 켠다. README 는 자기 서명 인증서 대신 Apple Development 인증서 발급을 안내하고, 그 개인 키가 `codesign` 에 이미 열려 있어 무엇이 넓어지는지 적는다.
 - **이유**: 대안은 셋이었다. (a) 자기 서명 인증서 유지 — 위 증거대로 파티션 검사에서 걸려 문제를 풀지 못한다. (b) Data Protection 키체인 + access group — 엔타이틀먼트와 프로비저닝이 필요하고, 다른 앱의 항목(Claude Code·gh CLI)은 여전히 기존 키체인에 있어 그 프롬프트는 남는다. (c) Apple Development 인증서 — 무료 Apple ID 로 Xcode 에서 발급되고 팀 ID 가 찍혀 파티션 ID 가 `teamid:` 로 빌드와 무관해진다. 발급에만 Xcode 가 필요하고 빌드는 계속 Command Line Tools 로 되므로 Decision 3·#11-1 의 "Xcode 없이 빌드" 전제를 깨지 않는다.
 - **결과**:
   - Apple Development 인증서가 있는 맥에서는 서명이 바뀐 직후 항목마다 한 번 *항상 허용* 하면 그 뒤 재빌드에 묻지 않는다.
@@ -355,6 +355,6 @@
   - Decision 3 의 "Developer ID 로 서명하면 토큰이 유지된다 — 유료 경로의 실질 이득" 은 남에게 배포하는 경우(Gatekeeper·공증, 받는 사람의 토큰 유지)로 좁혀진다. 직접 빌드하는 사람은 무료 Apple ID 로 같은 효과를 얻는다.
 - **트레이드오프**:
   - 허용 범위가 넓어진다. 전에는 승인이 그 빌드 하나(`cdhash:`)에 묶였지만, 이제는 identifier 가 `com.mongshell.menubar` 이고 이 Apple ID 의 Apple Development 인증서로 서명된 모든 바이너리가 앱이 만든 항목(`com.mongshell.menubar.tokens` 의 OAuth 토큰, 자체 GitHub PAT 항목)을 프롬프트 없이 읽는다. ACL 이 인증서 이름까지 보므로 팀 ID 만 같은 다른 인증서로는 안 된다.
-  - 그 경계는 두 가지에 기댄다. 하나는 서명 개인 키다 — 개인 키 ACL 에서 `codesign` 을 *항상 허용* 했다면 같은 사용자의 아무 프로세스나 이 신원으로 서명할 수 있다 (README 가 이 결과를 적고 선택을 사용자에게 둔다). 다른 하나는 프로세스 무결성이다 — hardened runtime 으로 라이브러리 주입을 막는다.
-  - 수용 근거: 1인용 도구다. 그리고 `Claude Code-credentials` 와 `gh:github.com` 은 ACL 에 `/usr/bin/security` 가 들어 있어 같은 사용자 프로세스가 원래부터 프롬프트 없이 읽을 수 있다 (2026-10-21 ACL 덤프). 같은 사용자로 도는 악성 코드에 대해 새로 열리는 것은 앱이 만든 항목뿐이다.
+  - 그 경계는 두 가지에 기댄다. 하나는 서명 개인 키다 — Xcode 가 만든 개인 키는 ACL 에 `/usr/bin/codesign` 이 들어 있어 (2026-10-21 이 맥에서 비밀값 없이 확인) 같은 사용자의 아무 프로세스나 묻지 않고 이 신원으로 서명할 수 있다. 넓어진 범위는 기본으로 열려 있고, README 가 이 사실을 적는다. 다른 하나는 프로세스 무결성이다 — hardened runtime 으로 이미 서명된 앱에 라이브러리를 주입하는 경로를 막는다.
+  - 수용 근거: 1인용 도구다. 그리고 `Claude Code-credentials` 와 `gh:github.com` 은 ACL 에 `/usr/bin/security` 가, 파티션 목록에 `apple-tool:` 이 들어 있어 같은 사용자 프로세스가 `security` 명령으로 원래부터 프롬프트 없이 읽을 수 있다 (2026-10-21 비밀값 없는 ACL 덤프). 같은 사용자로 도는 악성 코드에 대해 새로 열리는 것은 앱이 만든 항목뿐이다.
   - 개인 팀의 Apple Development 인증서는 유효기간이 있어 재발급이 필요하다. 이 서명의 designated requirement 는 인증서 지문이 아니라 Apple 앵커와 인증서 이름(`certificate leaf[subject.CN]`)으로 정해지므로, 재발급한 인증서의 이름이 같으면 ACL 이 그대로 맞고 팀 ID 가 같아 파티션 목록도 유지된다. 이름이 바뀌거나 다른 Apple ID 로 바꾸면 항목마다 한 번 다시 허용해야 한다.

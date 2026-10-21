@@ -32,21 +32,13 @@ fi
 # Code signature so Keychain / UserNotifications / ASWebAuth work locally.
 #
 # A signature without a Team ID (ad-hoc, self-signed) makes the Keychain ask
-# again after every rebuild: an item's partition list identifies such an app
-# by its cdhash, which changes per build. An Apple Development certificate
-# carries a Team ID, so the partition becomes `teamid:` and one "Always Allow"
-# survives rebuilds. Why, and what that widens: Decision #68. Setup: README
-# § 개발용.
+# again after every rebuild; an Apple Development certificate doesn't. Why,
+# and what that widens: Decision #68. Setup: README § 개발용.
 #
-# Selection — the first one present wins: an explicit SIGN_ID → the first
-# valid Apple Development identity → the self-signed "mongshell-menubar Dev"
-# → ad-hoc. An explicit SIGN_ID that fails to sign stops the build. An
-# identity picked here that fails falls back straight to ad-hoc, with a
-# warning on stderr.
-#
-# Certificate signatures get the hardened runtime, as release.sh does: the
-# Keychain grant now outlives the build, so a library injected into an
-# approved process (DYLD_INSERT_LIBRARIES) must not inherit it.
+# The first identity present wins (order below). An explicit SIGN_ID that
+# fails to sign stops the build. An identity picked here that fails falls back
+# straight to ad-hoc, with a warning on stderr. Certificate signatures get the
+# hardened runtime, as release.sh does.
 #
 # Apple Development is picked by its SHA-1 rather than its name: after a
 # renewal two identities can share the name, and codesign refuses an
