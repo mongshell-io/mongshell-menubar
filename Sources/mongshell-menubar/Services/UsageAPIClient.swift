@@ -86,7 +86,9 @@ struct UsageAPIClient {
                 weeklyPct = pct; weeklyReset = reset
             case "weekly_scoped":
                 models.append(ModelUsage(name: scopeModel ?? "모델", percent: pct))
-            case let kind?:
+            case let rawKind?:
+                let kind = displayText(rawKind)
+                guard !kind.isEmpty, extraLimits.count < Config.usageExtraLimitsCap else { break }
                 let seen = seenExtraKinds[kind, default: 0]
                 seenExtraKinds[kind] = seen + 1
                 extraLimits.append(ExtraLimit(
@@ -136,15 +138,19 @@ struct UsageAPIClient {
     ]
 
     /// The code-named top-level objects, sorted by key so the summary line is
-    /// stable across polls. Null-valued keys (most of them) are skipped.
+    /// stable across polls. Null-valued keys (most of them) are skipped, as is
+    /// a key that flattens to nothing, and past the cap the rest are dropped.
     private static func unknownTopLevel(in root: [String: Any]) -> [UnknownBucket] {
-        root.keys.sorted().compactMap { key in
+        let buckets: [UnknownBucket] = root.keys.sorted().compactMap { key in
             guard !knownTopLevelKeys.contains(key),
                   let object = root[key] as? [String: Any] else { return nil }
-            return UnknownBucket(key: key,
+            let name = displayText(key)
+            guard !name.isEmpty else { return nil }
+            return UnknownBucket(key: name,
                                  utilization: percentValue(object["utilization"]),
                                  resetAt: isoDate(object["resets_at"]))
         }
+        return Array(buckets.prefix(Config.usageUnknownTopLevelCap))
     }
 
     /// Usage-credits balance — shown ONLY when the user has the pay-as-you-go
@@ -166,7 +172,14 @@ struct UsageAPIClient {
     // MARK: helpers
 
     private static func scopeModelName(_ limit: [String: Any]) -> String? {
-        ((limit["scope"] as? [String: Any])?["model"] as? [String: Any])?["display_name"] as? String
+        let name = ((limit["scope"] as? [String: Any])?["model"] as? [String: Any])?["display_name"] as? String
+        return name.map(displayText)
+    }
+
+    /// Every response string that reaches a label or the log goes through
+    /// here: one line, at most `Config.usageDisplayTextLimit` characters.
+    private static func displayText(_ raw: String) -> String {
+        DisplayText.flatten(raw, limit: Config.usageDisplayTextLimit)
     }
 
     /// `utilization` is a 0…100 percentage already — round + clamp, no scaling.
@@ -174,13 +187,16 @@ struct UsageAPIClient {
         percentValue(any) ?? 0
     }
 
-    /// nil when the field is absent or not a number.
+    /// nil when the field is absent, not a number, or not finite. Clamped
+    /// while still a Double: `Int(_:)` traps on a value outside Int's range,
+    /// and a hostile `1e300` must fold to 100, not crash the poll.
     private static func percentValue(_ any: Any?) -> Int? {
         let v: Double
         if let d = any as? Double { v = d }
         else if let i = any as? Int { v = Double(i) }
         else { return nil }
-        return max(0, min(100, Int(v.rounded())))
+        guard v.isFinite else { return nil }
+        return Int(max(0, min(100, v.rounded())))
     }
 
     private static func isoDate(_ any: Any?) -> Date? {

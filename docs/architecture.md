@@ -54,7 +54,7 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
 - 폴링 주기는 사용자 설정값과 `Config.minPollInterval` 중 큰 값. 기본이자 하한이 180초다.
 - `429` 응답 시 지수 백오프 (`base * 2^n`, 상한 3600초).
 - 응답 스키마가 비공개라 `parse()` 는 후보 키 경로를 여러 개 탐색하고 채울 수 있는 것만 채운다.
-- `limits` 의 모르는 `kind` 는 버리지 않고 `extraLimits` 로 실어 팝오버의 7일 한도 아래에 그리고(설정 화면의 제한 초기화/보너스가 이 경로로 보인다), 최상위의 모르는 객체 키는 `unknownTopLevel` 로 실어 디버그 로그에만 남긴다 — 모르는 것의 집합이 바뀔 때 한 줄.
+- `limits` 의 모르는 `kind` 는 버리지 않고 `extraLimits` 로 실어 팝오버의 7일 한도 아래에 그리고(설정 화면의 제한 초기화/보너스가 이 경로로 보인다), 최상위의 모르는 객체 키는 `unknownTopLevel` 로 실어 디버그 로그에만 남긴다 — 모르는 것의 집합이 바뀔 때 한 줄. 필터 규칙 셋: (1) 최상위 키 중 값이 null 인 것과 모양을 아는 것(`seven_day_breakdown`·`weekly_scoped_shares`·`member_dashboard_available`)은 세지 않고, 모르는 **객체** 키만 `unknownTopLevel` 에 든다. (2) 로그 줄은 kind·percent·resets_at(과 is_active·scope 모델명·utilization)만 담고 토큰·금액은 넣지 않는다. (3) 응답에서 온 문자열(`kind`·모델명·키 이름)은 `parse()` 에서 한 줄로 평탄화하고 글자 수 상한을 두며, `extraLimits`·`unknownTopLevel` 은 각각 개수 상한까지만 싣고 초과분은 버린다 — 상한값은 `Config`(`usageDisplayTextLimit`·`usageExtraLimitsCap`·`usageUnknownTopLevelCap`)가 권위다.
 - 토큰이 없으면 네트워크를 타지 않고 `UsageSnapshot.sample` 로 렌더한다.
 
 ### 2. Claude Code 설정 편집 (양방향)

@@ -24,9 +24,15 @@ struct ExtraLimit: Identifiable, Equatable {
     /// `weekly_all` inactive too, so it does not mean "currently in effect".
     let isActive: Bool?
 
-    /// Shown as the row label. Nothing is invented: the scope's model name
-    /// when there is one, else the kind with its underscores spaced.
-    var name: String { scopeModel ?? kind.replacingOccurrences(of: "_", with: " ") }
+    /// Shown as the row label. Nothing is invented: the kind with its
+    /// underscores spaced, prefixed by the scope's model name when there is
+    /// one ("Fable 5 · bonus") — so a scoped row still differs from the
+    /// `weekly_scoped` row of the same model.
+    var name: String {
+        let spacedKind = kind.replacingOccurrences(of: "_", with: " ")
+        guard let scopeModel else { return spacedKind }
+        return "\(scopeModel) · \(spacedKind)"
+    }
 }
 
 /// A top-level response object the app does not read (`iguana_necktie`-style

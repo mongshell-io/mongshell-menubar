@@ -532,7 +532,12 @@ private extension UsageSnapshot {
     /// `.sample` itself: the signed-out popover must not show a fake bonus.
     static func snapshotExtraLimit(now: Date) -> UsageSnapshot {
         var snapshot = UsageSnapshot.sample
-        let resetAt = now.addingTimeInterval(15 * 24 * 3600)
+        // Pinned to a weekday + clock like `.sample.weeklyResetAt`, so the
+        // caption reads "수요일 21:59 초기화" whenever the render runs.
+        let resetAt = Calendar.current.nextDate(
+            after: now,
+            matching: DateComponents(hour: 21, minute: 59, weekday: 4),
+            matchingPolicy: .nextTime)
         snapshot.extraLimits = [ExtraLimit(
             id: "bonus", kind: "bonus", scopeModel: nil, percent: 12,
             resetAt: resetAt, resetText: TimeText.resetsAt(resetAt), isActive: true)]

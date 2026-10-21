@@ -9,7 +9,8 @@ enum AuthDebugLog {
     static func write(_ message: String) {
         let line = "\(iso(Date())) \(message)\n"
         let url = Config.authDebugLogURL
-        if let handle = try? FileHandle(forWritingTo: url) {
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        if size <= Config.authDebugLogMaxBytes, let handle = try? FileHandle(forWritingTo: url) {
             handle.seekToEndOfFile()
             handle.write(Data(line.utf8))
             try? handle.close()

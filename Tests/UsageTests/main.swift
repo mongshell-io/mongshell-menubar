@@ -9,7 +9,11 @@ import Foundation
 // fallback yields no extra limits; code-named top-level objects are noted
 // while null keys and known-shape keys are not; the debug-log line is nil
 // when there is nothing unknown and carries only kind/percent/reset times
-// otherwise; and its dedupe key ignores the moving numbers.
+// otherwise; its dedupe key ignores the moving numbers; hostile numbers
+// (1e300, Int.max, non-numbers) fold to 100/0/nil without a trap; response
+// strings reach labels and the log as one bounded line, and unknown rows
+// stop at the cap; and the `Meter` shows the mode's number with the risk
+// color (or monochrome when color coding is off).
 //
 // Run with `./scripts/test.sh`, which compiles this against the real sources
 // (the @MainActor model is left out, as for the other bundles).
@@ -114,15 +118,17 @@ do {
 
 do {
     // A scoped unknown kind shows the scope's model name in the same spelling
-    // as the weekly_scoped row, and no reset time leaves the caption empty
-    // rather than invented.
+    // as the weekly_scoped row, next to its kind so the two rows differ; no
+    // reset time leaves the caption empty rather than invented.
     let snap = try UsageAPIClient.parse(response(extraLimits: """
         ,{"kind":"bonus","percent":50,
           "scope":{"model":{"id":null,"display_name":"Fable"},"surface":null}}
         """))
     let extra = snap.extraLimits.first
-    check("scoped unknown kind → name matches the weekly_scoped spelling",
-          extra?.name == snap.models.first?.name && extra?.name == "Fable 5", extra?.name ?? "nil")
+    check("scoped unknown kind → name is model (weekly_scoped spelling) · kind",
+          extra?.name == "Fable 5 · bonus" && snap.models.first?.name == "Fable 5", extra?.name ?? "nil")
+    check("scoped unknown kind → scopeModel alone matches the weekly_scoped row",
+          extra?.scopeModel == snap.models.first?.name, extra?.scopeModel ?? "nil")
     check("no resets_at → resetAt nil", extra?.resetAt == nil, "\(String(describing: extra?.resetAt))")
     check("no resets_at → resetText empty", extra?.resetText == "", extra?.resetText ?? "nil")
     check("no is_active → nil", extra?.isActive == nil, "\(String(describing: extra?.isActive))")
@@ -231,6 +237,84 @@ do {
     var bucketGone = unknownSnapshot()
     bucketGone.unknownTopLevel = []
     check("bucket set changed → different key", AuthDebugLog.usageUnknownKey(bucketGone) != base)
+}
+
+// MARK: (f) hostile numbers fold instead of trapping
+
+do {
+    let snap = try UsageAPIClient.parse(response(extraLimits: """
+        ,{"kind":"huge","percent":1e300},
+         {"kind":"negative","percent":-1e300},
+         {"kind":"intmax","percent":9223372036854775807},
+         {"kind":"text","percent":"NaN"}
+        """, topLevel: """
+        ,"iguana_necktie": {"utilization": 1e300, "resets_at": null},
+         "zephyr_loom": {"utilization": "NaN"}
+        """))
+    let byKind = Dictionary(uniqueKeysWithValues: snap.extraLimits.map { ($0.kind, $0.percent) })
+    check("percent 1e300 → 100", byKind["huge"] == 100, "\(String(describing: byKind["huge"]))")
+    check("percent -1e300 → 0", byKind["negative"] == 0, "\(String(describing: byKind["negative"]))")
+    check("percent Int.max → 100", byKind["intmax"] == 100, "\(String(describing: byKind["intmax"]))")
+    check("percent non-number → 0", byKind["text"] == 0, "\(String(describing: byKind["text"]))")
+    let utilizations = snap.unknownTopLevel.map(\.utilization)
+    check("utilization 1e300 → 100, non-number → nil", utilizations == [100, nil], "\(utilizations)")
+} catch {
+    check("response with hostile numbers parses", false, "\(error)")
+}
+
+// MARK: (g) response strings are bounded single lines; rows stop at the cap
+
+do {
+    let longKind = String(repeating: "k", count: 10_000)
+    let longName = String(repeating: "n", count: 10_000)
+    let longKey = String(repeating: "z", count: 10_000)
+    let snap = try UsageAPIClient.parse(response(extraLimits: """
+        ,{"kind":"\(longKind)","percent":1},
+         {"kind":"a\\nb\\tc","percent":2,"scope":{"model":{"display_name":"\(longName)"}}}
+        """, topLevel: """
+        ,"\(longKey)": {"utilization": 5},
+         "line\\nbreak": {"utilization": 6}
+        """))
+    let long = snap.extraLimits.first
+    check("10k-char kind → label within the limit",
+          long?.name.count == Config.usageDisplayTextLimit, "\(String(describing: long?.name.count))")
+    let scoped = snap.extraLimits.last
+    check("kind with line breaks → single-line label",
+          scoped?.kind == "a b c" && scoped?.name.contains("\n") == false, scoped?.name ?? "nil")
+    check("10k-char display_name → bounded (prettified afterwards)",
+          (scoped?.scopeModel?.count ?? .max) <= Config.usageDisplayTextLimit,
+          "\(String(describing: scoped?.scopeModel?.count))")
+    let keys = snap.unknownTopLevel.map(\.key)
+    check("top-level keys → single line, within the limit",
+          keys.allSatisfy { !$0.contains("\n") && $0.count <= Config.usageDisplayTextLimit }, "\(keys)")
+    let line = AuthDebugLog.usageUnknownLine(snap) ?? ""
+    check("log line stays one line", !line.contains("\n"), line)
+    check("log line bounded", line.count < 4 * Config.usageDisplayTextLimit + 200, "\(line.count)")
+} catch {
+    check("response with long strings parses", false, "\(error)")
+}
+
+do {
+    let over = Config.usageExtraLimitsCap + 1
+    let limits = (0..<over).map { #",{"kind":"k\#($0)","percent":\#($0)}"# }.joined()
+    let buckets = (0..<over).map { #","b\#($0)": {"utilization": \#($0)}"# }.joined()
+    let snap = try UsageAPIClient.parse(response(extraLimits: limits, topLevel: buckets))
+    check("\(over) unknown kinds → \(Config.usageExtraLimitsCap) kept, in order",
+          snap.extraLimits.count == Config.usageExtraLimitsCap && snap.extraLimits.first?.kind == "k0",
+          "\(snap.extraLimits.count)")
+    check("\(over) unknown objects → \(Config.usageUnknownTopLevelCap) kept",
+          snap.unknownTopLevel.count == Config.usageUnknownTopLevelCap, "\(snap.unknownTopLevel.count)")
+    check("known rows survive the overflow", snap.fiveHourPercent == 4 && snap.models.count == 1)
+} catch {
+    check("response over the caps parses", false, "\(error)")
+}
+
+// MARK: a top-level key that flattens to nothing is not a bucket
+
+do {
+    let snap = try! UsageAPIClient.parse(Data(#"{"limits":[],"\n\t ":{"utilization":5},"nimbus_quill":{"utilization":5}}"#.utf8))
+    check("blank top-level key → skipped, named key kept",
+          snap.unknownTopLevel.map(\.key) == ["nimbus_quill"], "\(snap.unknownTopLevel.map(\.key))")
 }
 
 // MARK: usage meter — number follows the mode, color follows risk and the toggle

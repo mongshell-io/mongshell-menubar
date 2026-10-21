@@ -47,6 +47,18 @@ enum Config {
 
     static let minPollInterval: Int = 180
 
+    /// Bounds on what the usage response may put on screen or in the log,
+    /// applied once in `UsageAPIClient.parse`. A limit `kind` or model name
+    /// is a short word; a top-level key is a two-word code name — 64 is room
+    /// to spare, and the row label would wrap past it anyway.
+    static let usageDisplayTextLimit = 64
+    /// Rows of unknown limits / unknown top-level objects kept per response.
+    /// The real response carries three limits and one object; sixteen is
+    /// already more than the popover can show, and past it a surprising
+    /// answer is dropped rather than drawn.
+    static let usageExtraLimitsCap = 16
+    static let usageUnknownTopLevelCap = 16
+
     // MARK: GitHub (Decision #45)
 
     /// The one host the GitHub client talks to. GraphQL, because one request
@@ -113,4 +125,8 @@ enum Config {
     /// by any local user to redirect our appends.
     static let authDebugLogURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("mongshell-menubar_auth.log")
+    /// Past this the log starts over rather than growing: a line per token
+    /// event or per change in unknown limits is a few KB a month, so 1 MiB
+    /// only trips on a runaway.
+    static let authDebugLogMaxBytes = 1024 * 1024
 }
