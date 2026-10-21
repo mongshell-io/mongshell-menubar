@@ -3,11 +3,11 @@ import Foundation
 /// Central place for the (unofficial) endpoint + OAuth parameters.
 ///
 /// ⚠️ These target Claude's *subscription* usage, for which there is no public
-/// API. Values below mirror what the Claude Code CLI uses. They are unverified
-/// placeholders where noted — see Phase 0 in the plan: capture a real
-/// oauth/usage response and confirm the exact client_id / headers / schema
-/// before shipping. Nothing here is transmitted anywhere except Anthropic's
-/// own hosts; tokens live only in the local Keychain.
+/// API. Values below mirror what the Claude Code CLI uses and can change
+/// without notice. The usage response shape was checked against a real
+/// response captured on 2026-10-21 (the fixture in `Tests/UsageTests`).
+/// Claude credentials go nowhere except Anthropic's own hosts and live only
+/// in the local Keychain.
 enum Config {
     /// Subscription usage endpoint (same data as Claude Code `/usage`).
     static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
