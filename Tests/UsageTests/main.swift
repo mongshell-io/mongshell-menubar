@@ -233,6 +233,22 @@ do {
     check("bucket set changed → different key", AuthDebugLog.usageUnknownKey(bucketGone) != base)
 }
 
+// MARK: usage meter — number follows the mode, color follows risk and the toggle
+
+do {
+    let used = Meter(usedPercent: 90, showRemaining: false, colorCoding: true)
+    let remaining = Meter(usedPercent: 90, showRemaining: true, colorCoding: true)
+    let mono = Meter(usedPercent: 90, showRemaining: true, colorCoding: false)
+    check("consumed mode shows the used percent", used.displayPercent == 90)
+    check("remaining mode shows 100 - used", remaining.displayPercent == 10)
+    check("90% used → red", used.color == Palette.red)
+    check("remaining mode keeps the risk color (10% left is still red)",
+          remaining.color == Palette.red)
+    check("color coding off → mono, not a risk color", mono.color == Palette.mono)
+    check("color coding off with 10% used → still mono",
+          Meter(usedPercent: 10, showRemaining: false, colorCoding: false).color == Palette.mono)
+}
+
 // MARK: result
 
 if failures.isEmpty {

@@ -9,7 +9,7 @@ struct PopoverView: View {
     var onQuit: () -> Void
 
     private var snap: UsageSnapshot { model.snapshot }
-    private var fiveMeter: Meter { Meter(usedPercent: snap.fiveHourPercent, showRemaining: prefs.showRemaining) }
+    private var fiveMeter: Meter { Meter(usedPercent: snap.fiveHourPercent, showRemaining: prefs.showRemaining, colorCoding: prefs.colorCoding) }
     /// Explicit label (both modes) so it's never ambiguous whether the
     /// numbers/graphs show consumed vs remaining amount.
     private var modeSuffix: String { prefs.showRemaining ? " · 남은 양" : " · 사용량" }
@@ -306,12 +306,12 @@ struct PopoverView: View {
             }
             .padding(.bottom, 14)
 
-            usageBar(meter: Meter(usedPercent: snap.weeklyAllPercent, showRemaining: prefs.showRemaining),
+            usageBar(meter: Meter(usedPercent: snap.weeklyAllPercent, showRemaining: prefs.showRemaining, colorCoding: prefs.colorCoding),
                      label: "전체 모델", color: nil)
 
             ForEach(snap.models) { m in
                 Spacer().frame(height: 16)
-                usageBar(meter: Meter(usedPercent: m.percent, showRemaining: prefs.showRemaining),
+                usageBar(meter: Meter(usedPercent: m.percent, showRemaining: prefs.showRemaining, colorCoding: prefs.colorCoding),
                          label: m.name, color: Palette.fablePurple)
             }
 
@@ -320,7 +320,7 @@ struct PopoverView: View {
             // is left out, not left blank, when the entry has no reset time.
             ForEach(snap.extraLimits) { limit in
                 Spacer().frame(height: 16)
-                usageBar(meter: Meter(usedPercent: limit.percent, showRemaining: prefs.showRemaining),
+                usageBar(meter: Meter(usedPercent: limit.percent, showRemaining: prefs.showRemaining, colorCoding: prefs.colorCoding),
                          label: limit.name, color: nil)
                 if limit.resetAt != nil {
                     Text(limit.resetText)

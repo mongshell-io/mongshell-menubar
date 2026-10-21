@@ -101,11 +101,14 @@ echo "▶ running github tests"
 
 # The usage response parser and the snapshot it fills: known limit kinds,
 # unknown kinds kept as extra rows, the flat fallback, and the debug-log
-# summary line. `AuthDebugLog` is compiled for its timestamp format, which
-# pulls in the constants and the token type it names; nothing here touches
-# the network or the Keychain. The @MainActor model is left out, as above.
+# summary line, plus the usage `Meter` (display number and the risk color
+# with its mono fallback). `AuthDebugLog` is compiled for its timestamp
+# format, which pulls in the constants and the token type it names; nothing
+# here touches the network or the Keychain. The @MainActor model is left out,
+# as above.
 echo "▶ compiling usage tests"
 swiftc -o "$OUT/usage-tests" \
+  "$APP/Design/Palette.swift" \
   "$APP/Models/UsageState.swift" \
   "$APP/Services/AuthDebugLog.swift" \
   "$APP/Services/Config.swift" \
