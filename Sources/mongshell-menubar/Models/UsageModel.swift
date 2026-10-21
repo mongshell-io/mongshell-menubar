@@ -34,6 +34,10 @@ final class UsageModel: ObservableObject {
     /// could overwrite the notice and let the next CLI 401 downgrade it to a
     /// plain `signedOut`.
     private var sessionExpiredUnresolved = false
+    /// `AuthDebugLog.usageUnknownKey` of the last snapshot whose unknown
+    /// limits were logged — the set of unknown things, not their numbers —
+    /// so a response that keeps carrying the same ones is logged once.
+    private var lastUnknownKey: String?
 
     // MARK: Lifecycle
 
@@ -142,6 +146,27 @@ final class UsageModel: ObservableObject {
         loadState = .loaded(source)
         backoff = 0
         sessionExpiredUnresolved = false
+        logUnknownLimitsIfChanged(snap)
+    }
+
+    /// Writes one line when the response starts carrying limits or buckets
+    /// the app has no rule for, or when that set changes (a percentage
+    /// moving within the same set does not count). Nothing is written while
+    /// it stays the same, nor when it goes away.
+    private func logUnknownLimitsIfChanged(_ snap: UsageSnapshot) {
+        let key = AuthDebugLog.usageUnknownKey(snap)
+        guard key != lastUnknownKey else { return }
+        lastUnknownKey = key
+        if let line = AuthDebugLog.usageUnknownLine(snap) { AuthDebugLog.write(line) }
+    }
+
+    /// Snapshot hook: shows a given snapshot and state without any network,
+    /// so reference images are deterministic and never carry real usage.
+    func presentForSnapshot(_ snap: UsageSnapshot, state: LoadState) {
+        pollTask?.cancel()
+        pollTask = nil
+        snapshot = snap
+        loadState = state
     }
 
     private enum OwnTokenRenewal {

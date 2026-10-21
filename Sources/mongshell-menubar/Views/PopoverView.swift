@@ -314,6 +314,21 @@ struct PopoverView: View {
                 usageBar(meter: Meter(usedPercent: m.percent, showRemaining: prefs.showRemaining),
                          label: m.name, color: Palette.fablePurple)
             }
+
+            // Limits the app has no rule for (a reset/bonus granted from the
+            // settings page). Risk-colored like "전체 모델"; the reset caption
+            // is left out, not left blank, when the entry has no reset time.
+            ForEach(snap.extraLimits) { limit in
+                Spacer().frame(height: 16)
+                usageBar(meter: Meter(usedPercent: limit.percent, showRemaining: prefs.showRemaining),
+                         label: limit.name, color: nil)
+                if limit.resetAt != nil {
+                    Text(limit.resetText)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.textTertiary)
+                        .padding(.top, 6)
+                }
+            }
         }
         .padding(.horizontal, 18)
         .padding(.top, 15)

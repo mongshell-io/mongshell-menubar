@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the regression tests: Claude Code settings, the openclaw server agent,
 # the app's openclaw status client, the OAuth token path, the GitHub PR
-# region, then server/install.sh's option rules.
+# region, the usage response parser, then server/install.sh's option rules.
 #
 # Not `swift test`: that needs XCTest or swift-testing, and neither ships with
 # the Command Line Tools this project builds against (no Xcode required is a
@@ -64,9 +64,11 @@ echo "▶ running openclaw client tests"
 
 # AuthService itself pulls in AppKit, the loopback server and the Keychain, so
 # the token-endpoint classification lives in its own file and is compiled here
-# with just the token type and the constants it needs.
+# with just the token type and the constants it needs. `UsageState` rides
+# along only because `AuthDebugLog` names `UsageSnapshot` for its usage line.
 echo "▶ compiling auth tests"
 swiftc -o "$OUT/auth-tests" \
+  "$APP/Models/UsageState.swift" \
   "$APP/Services/AuthDebugLog.swift" \
   "$APP/Services/AuthError.swift" \
   "$APP/Services/Config.swift" \
@@ -96,6 +98,24 @@ swiftc -o "$OUT/github-tests" \
 
 echo "▶ running github tests"
 "$OUT/github-tests"
+
+# The usage response parser and the snapshot it fills: known limit kinds,
+# unknown kinds kept as extra rows, the flat fallback, and the debug-log
+# summary line. `AuthDebugLog` is compiled for its timestamp format, which
+# pulls in the constants and the token type it names; nothing here touches
+# the network or the Keychain. The @MainActor model is left out, as above.
+echo "▶ compiling usage tests"
+swiftc -o "$OUT/usage-tests" \
+  "$APP/Models/UsageState.swift" \
+  "$APP/Services/AuthDebugLog.swift" \
+  "$APP/Services/Config.swift" \
+  "$APP/Services/Credentials.swift" \
+  "$APP/Services/TimeText.swift" \
+  "$APP/Services/UsageAPIClient.swift" \
+  "$ROOT/Tests/UsageTests/main.swift"
+
+echo "▶ running usage tests"
+"$OUT/usage-tests"
 
 # Plain bash: sources the real server/lib.sh, exits non-zero on any failure.
 echo "▶ running server install option tests"

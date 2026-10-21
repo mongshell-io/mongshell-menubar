@@ -39,4 +39,42 @@ enum AuthDebugLog {
         let hours = max(0, Int(end.timeIntervalSince(start)) / 3600)
         return "\(hours / 24)d\(hours % 24)h"
     }
+
+    // MARK: usage response — limits the app has no rule for
+
+    /// One line naming what the usage response carried that the app has no
+    /// rule for, or nil when there is nothing to report. Percentages and
+    /// reset times only — never tokens or amounts.
+    static func usageUnknownLine(_ snap: UsageSnapshot) -> String? {
+        var parts: [String] = []
+        if !snap.extraLimits.isEmpty {
+            let limits = snap.extraLimits.map { limit in
+                "kind=\(limit.kind) percent=\(limit.percent) resets_at=\(iso(limit.resetAt))"
+                + " is_active=\(limit.isActive.map { "\($0)" } ?? "-") scope=\(limit.scopeModel ?? "-")"
+            }
+            parts.append("usage unknown limits " + limits.joined(separator: ", "))
+        }
+        if !snap.unknownTopLevel.isEmpty {
+            let buckets = snap.unknownTopLevel.map { bucket in
+                "\(bucket.key) utilization=\(bucket.utilization.map { "\($0)" } ?? "-")"
+                + " resets_at=\(iso(bucket.resetAt))"
+            }
+            parts.append("top-level " + buckets.joined(separator: ", "))
+        }
+        guard !parts.isEmpty else { return nil }
+        return parts.joined(separator: " | ")
+    }
+
+    /// What `usageUnknownLine` is deduplicated on: the *set* of unknown
+    /// things (kind, scope, is_active, reset time; bucket key), not their
+    /// moving numbers — a percentage ticking up must not write a line per
+    /// poll. nil when there is nothing unknown.
+    static func usageUnknownKey(_ snap: UsageSnapshot) -> String? {
+        guard !snap.extraLimits.isEmpty || !snap.unknownTopLevel.isEmpty else { return nil }
+        let limits = snap.extraLimits.map { limit in
+            "\(limit.kind)/\(limit.scopeModel ?? "-")/\(limit.isActive.map { "\($0)" } ?? "-")/\(iso(limit.resetAt))"
+        }
+        let buckets = snap.unknownTopLevel.map(\.key)
+        return "limits=\(limits.joined(separator: ",")) top=\(buckets.joined(separator: ","))"
+    }
 }

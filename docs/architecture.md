@@ -54,6 +54,7 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
 - 폴링 주기는 사용자 설정값과 `Config.minPollInterval` 중 큰 값. 기본이자 하한이 180초다.
 - `429` 응답 시 지수 백오프 (`base * 2^n`, 상한 3600초).
 - 응답 스키마가 비공개라 `parse()` 는 후보 키 경로를 여러 개 탐색하고 채울 수 있는 것만 채운다.
+- `limits` 의 모르는 `kind` 는 버리지 않고 `extraLimits` 로 실어 팝오버의 7일 한도 아래에 그리고(설정 화면의 제한 초기화/보너스가 이 경로로 보인다), 최상위의 모르는 객체 키는 `unknownTopLevel` 로 실어 디버그 로그에만 남긴다 — 모르는 것의 집합이 바뀔 때 한 줄.
 - 토큰이 없으면 네트워크를 타지 않고 `UsageSnapshot.sample` 로 렌더한다.
 
 ### 2. Claude Code 설정 편집 (양방향)
