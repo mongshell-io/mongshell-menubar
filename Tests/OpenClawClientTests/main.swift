@@ -155,7 +155,7 @@ do {
     let zalgo = detail(String(repeating: "a" + String(repeating: "\u{0301}", count: 50), count: 20))
     let zalgoScalars = zalgo?.unicodeScalars.count ?? .max
     check("detail 결합 문자 누적 → 스칼라 480 이하, 글자 단위로 자름",
-          zalgoScalars <= OpenClawStatusClient.displayScalarLimit && zalgo?.count == 9,
+          zalgoScalars <= DisplayText.scalarLimit && zalgo?.count == 9,
           "\(zalgoScalars) scalars, \(String(describing: zalgo?.count)) chars")
     let downDetail = detail("바이너리\n없음\t" + String(repeating: "가", count: 500), health: "down")
     check("down detail 도 한 줄·120자로 정화",
