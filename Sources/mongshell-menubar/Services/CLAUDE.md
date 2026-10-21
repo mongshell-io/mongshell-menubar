@@ -88,6 +88,7 @@ non_goals:
 
 - 토큰은 Keychain 에만 둔다. `UserDefaults`·파일·로그 어디에도 쓰지 않는다.
 - Anthropic 호스트 외 어디에도 전송하지 않는다.
+- 토큰·인증 코드를 싣는 요청(`UsageAPIClient`·`OAuthTokenClient`)은 `BoundedHTTP` 세션으로만 보낸다 — 리다이렉트를 따르지 않는다. 사양은 [docs/architecture.md § Auth](../../../docs/architecture.md#auth) 가 권위다.
 - 디버그 로그에 토큰·인증 코드를 남기지 않는다.
 - Claude Code 의 Keychain 항목은 **읽기 전용**으로 취급한다. 우리 것이 아니다.
 

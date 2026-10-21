@@ -38,6 +38,8 @@ DB·백엔드 서비스가 없다. 메뉴바 앱은 단일 프로세스 클라�
 ```
 UsageModel.pollLoop()  ──(@MainActor, Task)
    └─ CredentialStore.token()      ← Keychain (자체 토큰 → Claude Code 토큰 순)
+   └─ AuthService.refresh(_:)      ← 자체 토큰이 만료됐을 때, 그리고 사용량 401 뒤 한 번
+        └─ POST https://platform.claude.com/v1/oauth/token   (OAuthTokenClient · BoundedHTTP: 타임아웃 30초, 리다이렉트 거부, 200·400·401 만 본문을 64KB 까지 읽음)
    └─ UsageAPIClient.fetch(token:)
         └─ GET https://api.anthropic.com/api/oauth/usage   (BoundedHTTP: 타임아웃 30초, 리다이렉트 거부, 200 만 본문을 1MB 까지 읽음)
              Authorization: Bearer …
@@ -56,6 +58,7 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
 - 응답 스키마가 비공개라 `parse()` 는 후보 키 경로를 여러 개 탐색하고 채울 수 있는 것만 채운다.
 - `limits` 의 모르는 `kind` 는 버리지 않고 `extraLimits` 로 실어 팝오버의 7일 한도 아래에 그리고(설정 화면의 제한 초기화/보너스가 이 경로로 보인다), 최상위의 모르는 객체 키는 `unknownTopLevel` 로 실어 디버그 로그에만 남긴다 — 모르는 것의 집합이 바뀔 때 한 줄. 필터 규칙 셋: (1) 최상위 키 중 값이 null 인 것과 모양을 아는 것(`seven_day_breakdown`·`weekly_scoped_shares`·`member_dashboard_available`)은 세지 않고, 모르는 **객체** 키만 `unknownTopLevel` 에 든다. (2) 로그 줄은 kind·percent·resets_at(과 is_active·scope 모델명·utilization)만 담고 토큰·금액은 넣지 않는다. (3) 응답에서 온 문자열(`kind`·모델명·키 이름)은 `parse()` 에서 한 줄로 평탄화하고 글자 수 상한을 두며, `extraLimits`·`unknownTopLevel` 은 각각 개수 상한까지만 싣고 초과분은 버린다 — 상한값은 `Config`(`usageDisplayTextLimit`·`usageExtraLimitsCap`·`usageUnknownTopLevelCap`)가 권위다.
 - 토큰이 없으면 네트워크를 타지 않고 `UsageSnapshot.sample` 로 렌더한다.
+- 자체 토큰 갱신이 `400` + `invalid_grant` 로 실패하면 자체 토큰을 버린다 — 다음 폴링은 Claude Code 토큰으로, 없으면 로그아웃 상태로 넘어간다. 그 밖의 실패(전송 오류·5xx·거부된 3xx·응답 크기 상한 초과)는 토큰을 유지하고 다음 폴링에 다시 시도한다.
 
 ### 2. Claude Code 설정 편집 (양방향)
 
@@ -208,7 +211,7 @@ Claude Code 사용자는 로그인 없이 기존 토큰을 재사용한다. 다�
 - **1순위: 루프백** (`LoopbackServer`, RFC 8252) — 임의 free 포트를 열고 브라우저가 `/callback?code=…&state=…` 로 돌아오면 자동 완료.
 - **폴백: 수동 붙여넣기** — 루프백 리다이렉트가 거부되면 콘솔 콜백 페이지에 표시된 `code#state` 를 앱에 붙여넣는다.
 
-**인증 경계**: 토큰은 Keychain 에만 저장되고 `api.anthropic.com` / `platform.claude.com` 외 어디에도 전송되지 않는다. 텔레메트리·크래시 리포터가 없다. 토큰을 싣는 두 요청 — 사용량 요청(`UsageAPIClient`, Bearer 토큰)과 토큰 엔드포인트 요청(`OAuthTokenClient`, `refresh_token` 또는 인증 코드 + `code_verifier` 가 든 POST 바디) — 은 모두 `BoundedHTTP` 세션으로 보내 리다이렉트를 따르지 않으므로, 3xx 로 토큰·인증 코드가 다른 호스트에 보내지는 경로가 코드에서 막혀 있다. 토큰 엔드포인트는 타임아웃 30초, 본문은 200 과 OAuth 에러 코드(400·401, RFC 6749 §5.2)에서만 64KB(`Config.oauthTokenMaxResponseBytes`)까지 읽는다 — 400 의 `invalid_grant` 가 죽은 refresh token 을 버리는 근거다.
+**인증 경계**: 토큰은 Keychain 에만 저장되고 `api.anthropic.com` / `platform.claude.com` 외 어디에도 전송되지 않는다. 텔레메트리·크래시 리포터가 없다. 토큰을 싣는 두 요청 — 사용량 요청(`UsageAPIClient`, Bearer 토큰)과 토큰 엔드포인트 요청(`OAuthTokenClient`, `refresh_token` 또는 인증 코드 + `code_verifier` 가 든 POST 바디) — 은 모두 `BoundedHTTP` 세션으로 보내 리다이렉트를 따르지 않으므로, 3xx 로 토큰·인증 코드가 다른 호스트에 보내지는 경로가 코드에서 막혀 있다.
 
 **openclaw 상태 URL** (서버 에이전트): 경로의 토큰(32자리 hex)이 유일한 접근 통제인 읽기 전용 capability URL 이다. Claude 자격증명과 무관하며, `server/install.sh --rotate-token` 으로 폐기·재발급한다. 앱은 이것을 Keychain 이 아니라 `Preferences`(UserDefaults)에 두고, userinfo 없는 https 주소만 받는다.
 
