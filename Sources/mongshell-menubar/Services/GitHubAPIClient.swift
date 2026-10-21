@@ -129,7 +129,7 @@ struct GitHubAPIClient: Sendable {
           commits(last: 1) { nodes { commit { statusCheckRollup { state
             contexts(first: \(contextsPageSize)) { totalCount nodes { __typename
               ... on CheckRun { name status conclusion startedAt completedAt detailsUrl
-                checkSuite { workflowRun { workflow { name } } app { slug } } }
+                checkSuite { workflowRun { runNumber event workflow { name } } app { slug } } }
               ... on StatusContext { context state createdAt targetUrl } } } } } } }
         }
         """
@@ -399,7 +399,7 @@ struct GitHubAPIClient: Sendable {
             mergeable: mergeable(node["mergeable"]),
             mergeState: mergeState(node["mergeStateStatus"]),
             checksRollup: checksRollup(rollup),
-            checks: latestRuns(contexts.runs),
+            checks: latestRuns(withoutSupersededRuns(contexts.runs)),
             checksListComplete: contexts.complete,
             updatedAt: isoDate(node["updatedAt"]),
             mergedAt: isoDate(node["mergedAt"]),
@@ -458,7 +458,7 @@ struct GitHubAPIClient: Sendable {
     /// GitHub's `totalCount` matches what we could read. A missing count, a
     /// page cut at thirty, or a node of a kind we skip each leave it
     /// incomplete — what we couldn't read might be the failing one.
-    private static func checks(_ rollup: Any?) -> (runs: [CheckRunEntry], complete: Bool) {
+    private static func checks(_ rollup: Any?) -> (runs: [ParsedContext], complete: Bool) {
         guard let contexts = (rollup as? [String: Any])?["contexts"] as? [String: Any],
               let nodes = contexts["nodes"] as? [Any]
         else { return ([], false) }
@@ -480,8 +480,42 @@ struct GitHubAPIClient: Sendable {
     /// the same name, so it is never merged with one.
     typealias CheckRunEntry = (key: RerunKey?, check: PRCheck)
 
-    /// A re-run adds a run under the same key instead of replacing the old
-    /// one, so the list holds both. Keeps one per key — the latest
+    /// The Actions run a CheckRun belongs to — nil unless its workflow name,
+    /// trigger event and run number all came back.
+    struct WorkflowRun: Hashable, Sendable {
+        /// Runs of one workflow started by one kind of event. A newer run in
+        /// the series hides the older ones on GitHub; a `push` run and a
+        /// `pull_request` run of the same workflow don't hide each other.
+        struct Series: Hashable, Sendable {
+            let workflow: String
+            let event: String
+        }
+        let series: Series
+        /// Grows by one per run of the workflow; a re-run attempt keeps it.
+        let number: Int
+    }
+
+    /// One parsed context and the workflow run it came from, if known.
+    typealias ParsedContext = (run: WorkflowRun?, entry: CheckRunEntry)
+
+    /// Drops every CheckRun of a run that a newer run of its series
+    /// replaced — even a job the newer run doesn't have yet (one still
+    /// waiting on `needs`), which re-run dedupe alone would keep as the old
+    /// run's CANCELLED. Contexts with no known run are all kept: without the
+    /// run number nothing says they were replaced. Order is kept.
+    static func withoutSupersededRuns(_ contexts: [ParsedContext]) -> [CheckRunEntry] {
+        var newest: [WorkflowRun.Series: Int] = [:]
+        for run in contexts.compactMap(\.run) {
+            newest[run.series] = max(newest[run.series] ?? run.number, run.number)
+        }
+        return contexts.filter { context in
+            guard let run = context.run else { return true }
+            return run.number == newest[run.series]
+        }.map(\.entry)
+    }
+
+    /// A re-run attempt adds a run under the same key instead of replacing
+    /// the old one, so the list holds both. Keeps one per key — the latest
     /// (`isEarlier`), the one later in the response on a tie. Survivors keep
     /// their original order.
     static func latestRuns(_ runs: [CheckRunEntry]) -> [PRCheck] {
@@ -507,7 +541,7 @@ struct GitHubAPIClient: Sendable {
         }
     }
 
-    private static func check(_ node: [String: Any]?) -> CheckRunEntry? {
+    private static func check(_ node: [String: Any]?) -> ParsedContext? {
         guard let node else { return nil }
         switch node["__typename"] as? String {
         case "CheckRun":
@@ -518,7 +552,8 @@ struct GitHubAPIClient: Sendable {
                               startedAt: isoDate(node["startedAt"]),
                               completedAt: isoDate(node["completedAt"]),
                               url: httpsURL(node["detailsUrl"]))
-            return (checkSuiteName(node["checkSuite"]).map { .checkRun(suite: $0, name: name) }, run)
+            return (workflowRun(node["checkSuite"]),
+                    (checkSuiteName(node["checkSuite"]).map { .checkRun(suite: $0, name: name) }, run))
         case "StatusContext":
             // Commit statuses carry a creation time only — no duration.
             let context = node["context"] as? String ?? ""
@@ -526,7 +561,7 @@ struct GitHubAPIClient: Sendable {
                                  outcome: statusContextOutcome(state: node["state"] as? String),
                                  startedAt: nil, completedAt: nil,
                                  url: httpsURL(node["targetUrl"]))
-            return (.status(context: context), status)
+            return (nil, (.status(context: context), status))
         default:
             return nil
         }
@@ -539,6 +574,17 @@ struct GitHubAPIClient: Sendable {
         let workflow = ((suite?["workflowRun"] as? [String: Any])?["workflow"] as? [String: Any])?["name"] as? String
         let app = (suite?["app"] as? [String: Any])?["slug"] as? String
         return [workflow, app].lazy.compactMap { $0 }.first { !$0.isEmpty }
+    }
+
+    /// nil when any of the three is missing — another app's run has no
+    /// `workflowRun`, and a partial answer can't place the run in a series.
+    private static func workflowRun(_ any: Any?) -> WorkflowRun? {
+        guard let run = (any as? [String: Any])?["workflowRun"] as? [String: Any],
+              let workflow = nonEmptyString((run["workflow"] as? [String: Any])?["name"]),
+              let event = nonEmptyString(run["event"]),
+              let number = int(run["runNumber"])
+        else { return nil }
+        return WorkflowRun(series: .init(workflow: workflow, event: event), number: number)
     }
 
     // MARK: Check vocabulary
