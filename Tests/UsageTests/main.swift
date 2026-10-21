@@ -12,8 +12,10 @@ import Foundation
 // otherwise; its dedupe key ignores the moving numbers; hostile numbers
 // (1e300, Int.max, non-numbers) fold to 100/0/nil without a trap; response
 // strings reach labels and the log as one bounded line, and unknown rows
-// stop at the cap; and the `Meter` shows the mode's number with the risk
-// color (or monochrome when color coding is off).
+// stop at the cap; the status code maps onto the error the model branches
+// on (401/403 → re-auth, 429 → back off with Retry-After); and the `Meter`
+// shows the mode's number with the risk color (or monochrome when color
+// coding is off).
 //
 // Run with `./scripts/test.sh`, which compiles this against the real sources
 // (the @MainActor model is left out, as for the other bundles).
@@ -315,6 +317,32 @@ do {
     let snap = try! UsageAPIClient.parse(Data(#"{"limits":[],"\n\t ":{"utilization":5},"nimbus_quill":{"utilization":5}}"#.utf8))
     check("blank top-level key → skipped, named key kept",
           snap.unknownTopLevel.map(\.key) == ["nimbus_quill"], "\(snap.unknownTopLevel.map(\.key))")
+}
+
+// MARK: status code → snapshot or the error the model branches on
+
+func interpretError(_ status: Int, retryAfter: String? = nil, _ data: Data = Data()) -> APIError? {
+    do {
+        _ = try UsageAPIClient.interpret(statusCode: status, retryAfter: retryAfter, data: data)
+        return nil
+    } catch {
+        return error as? APIError
+    }
+}
+
+do {
+    let snap = try? UsageAPIClient.interpret(statusCode: 200, retryAfter: nil, data: response())
+    check("200 → parsed snapshot", snap?.fiveHourPercent == 4 && snap?.weeklyAllPercent == 23)
+    check("200 with a broken body → badResponse", interpretError(200, body("not json")) == .badResponse)
+    check("401 → unauthorized", interpretError(401) == .unauthorized)
+    check("403 → unauthorized", interpretError(403) == .unauthorized)
+    check("429 + Retry-After → rateLimited(seconds)",
+          interpretError(429, retryAfter: "120") == .rateLimited(retryAfter: 120))
+    check("429 without Retry-After → rateLimited(nil)",
+          interpretError(429) == .rateLimited(retryAfter: nil))
+    check("429 with a non-numeric Retry-After → rateLimited(nil)",
+          interpretError(429, retryAfter: "Wed, 21 Oct 2026 07:28:00 GMT") == .rateLimited(retryAfter: nil))
+    check("500 → http(500)", interpretError(500) == .http(500))
 }
 
 // MARK: usage meter — number follows the mode, color follows risk and the toggle

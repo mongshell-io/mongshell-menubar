@@ -28,17 +28,24 @@ struct UsageAPIClient {
             throw APIError.badResponse
         }
         guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse }
+        return try Self.interpret(statusCode: http.statusCode,
+                                  retryAfter: http.value(forHTTPHeaderField: "Retry-After"),
+                                  data: data)
+    }
 
-        switch http.statusCode {
+    /// Status code → snapshot or error. Split from `fetch` so the mapping the
+    /// model branches on (401/403 → re-auth, 429 → back off) is testable
+    /// without a server.
+    static func interpret(statusCode: Int, retryAfter: String?, data: Data) throws -> UsageSnapshot {
+        switch statusCode {
         case 200:
-            return try Self.parse(data)
+            return try parse(data)
         case 401, 403:
             throw APIError.unauthorized
         case 429:
-            let retry = (http.value(forHTTPHeaderField: "Retry-After")).flatMap(TimeInterval.init)
-            throw APIError.rateLimited(retryAfter: retry)
+            throw APIError.rateLimited(retryAfter: retryAfter.flatMap(TimeInterval.init))
         default:
-            throw APIError.http(http.statusCode)
+            throw APIError.http(statusCode)
         }
     }
 
