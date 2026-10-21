@@ -142,6 +142,40 @@ do {
     }
 }
 
+// MARK: transport — which bodies are read, and the real shape fits the cap
+
+do {
+    check("200 reads the body (the token)", OAuthTokenClient.readsBody(statusCode: 200))
+    // invalid_grant is judged from the 400 body; judged on the code alone it
+    // would keep retrying a dead refresh token every poll.
+    check("400 reads the body (invalid_grant lives there)", OAuthTokenClient.readsBody(statusCode: 400))
+    check("401 reads the body (invalid_client)", OAuthTokenClient.readsBody(statusCode: 401))
+    check("3xx/403/429/5xx are judged on the code alone",
+          [301, 302, 307, 308, 403, 429, 500, 503].allSatisfy { !OAuthTokenClient.readsBody(statusCode: $0) })
+
+    // The shape the endpoint returns, with token-length strings.
+    let access = String(repeating: "a", count: 108)
+    let refresh = String(repeating: "r", count: 108)
+    let real = body(#"{"token_type":"Bearer","access_token":"\#(access)","expires_in":28800,"#
+        + #""refresh_token":"\#(refresh)","scope":"user:inference user:profile"}"#)
+    check("real-shaped token response is far under the cap",
+          Int64(real.count) * 16 < Config.oauthTokenMaxResponseBytes,
+          "\(real.count) bytes vs \(Config.oauthTokenMaxResponseBytes)")
+}
+
+do {
+    // A refused redirect comes back as the 3xx itself with no body read. It
+    // must not pass for a token, and must not throw the token away either.
+    let err = interpretError(307, Data())
+    if case .tokenExchangeFailed(let detail) = err {
+        check("307 handed back by the refused redirect → tokenExchangeFailed (token kept)", true)
+        check("307 detail carries the status", detail == "status=307 body=", detail)
+    } else {
+        check("307 handed back by the refused redirect → tokenExchangeFailed (token kept)", false,
+              String(describing: err))
+    }
+}
+
 // MARK: OAuthToken Keychain decoding
 
 do {

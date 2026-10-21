@@ -29,6 +29,11 @@ enum Config {
     // Anthropic migrated console.anthropic.com → platform.claude.com; the
     // token exchange + callback now live on the new host.
     static let oauthTokenURL = URL(string: "https://platform.claude.com/v1/oauth/token")!
+    /// Largest token-endpoint response read. A token response is a few short
+    /// strings and numbers and an OAuth error body is smaller still — both
+    /// well under 2 KB; 64 KiB leaves room for the shape to grow many times
+    /// over while keeping a surprising answer from filling memory.
+    static let oauthTokenMaxResponseBytes: Int64 = 64 * 1024
     static let oauthRedirectURI = "https://platform.claude.com/oauth/code/callback"
     static let oauthScopes = "org:create_api_key user:profile user:inference"
 
