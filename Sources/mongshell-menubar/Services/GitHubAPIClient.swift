@@ -129,7 +129,7 @@ struct GitHubAPIClient: Sendable {
           commits(last: 1) { nodes { commit { statusCheckRollup { state
             contexts(first: \(contextsPageSize)) { totalCount nodes { __typename
               ... on CheckRun { name status conclusion startedAt completedAt detailsUrl
-                checkSuite { workflowRun { runNumber event workflow { name } } app { slug } } }
+                checkSuite { workflowRun { runNumber event workflow { databaseId name } } app { slug } } }
               ... on StatusContext { context state createdAt targetUrl } } } } } } }
         }
         """
@@ -480,14 +480,16 @@ struct GitHubAPIClient: Sendable {
     /// the same name, so it is never merged with one.
     typealias CheckRunEntry = (key: RerunKey?, check: PRCheck)
 
-    /// The Actions run a CheckRun belongs to — nil unless its workflow name,
+    /// The Actions run a CheckRun belongs to — nil unless its workflow id,
     /// trigger event and run number all came back.
     struct WorkflowRun: Hashable, Sendable {
         /// Runs of one workflow started by one kind of event. A newer run in
         /// the series hides the older ones on GitHub; a `push` run and a
         /// `pull_request` run of the same workflow don't hide each other.
+        /// The workflow is its id, not its name: two workflow files can share
+        /// a `name:`, and each counts its own run numbers.
         struct Series: Hashable, Sendable {
-            let workflow: String
+            let workflowID: Int
             let event: String
         }
         let series: Series
@@ -580,11 +582,11 @@ struct GitHubAPIClient: Sendable {
     /// `workflowRun`, and a partial answer can't place the run in a series.
     private static func workflowRun(_ any: Any?) -> WorkflowRun? {
         guard let run = (any as? [String: Any])?["workflowRun"] as? [String: Any],
-              let workflow = nonEmptyString((run["workflow"] as? [String: Any])?["name"]),
+              let workflowID = int((run["workflow"] as? [String: Any])?["databaseId"]),
               let event = nonEmptyString(run["event"]),
               let number = int(run["runNumber"])
         else { return nil }
-        return WorkflowRun(series: .init(workflow: workflow, event: event), number: number)
+        return WorkflowRun(series: .init(workflowID: workflowID, event: event), number: number)
     }
 
     // MARK: Check vocabulary

@@ -211,10 +211,10 @@ print("▸ withoutSupersededRuns")
 do {
     typealias Context = GitHubAPIClient.ParsedContext
     func ctx(_ name: String, _ outcome: PRCheckOutcome, run number: Int?,
-             workflow: String = "verify", event: String = "pull_request",
+             workflow: String = "verify", workflowID: Int = 335_587_108, event: String = "pull_request",
              start: TimeInterval? = 0, end: TimeInterval? = 60) -> Context {
         let run = number.map {
-            GitHubAPIClient.WorkflowRun(series: .init(workflow: workflow, event: event), number: $0)
+            GitHubAPIClient.WorkflowRun(series: .init(workflowID: workflowID, event: event), number: $0)
         }
         return (run, (.checkRun(suite: workflow, name: name), chk(name, outcome, start: start, end: end)))
     }
@@ -241,7 +241,7 @@ do {
                                                         ctx("test", .passed, run: 11)])
     check("event 가 다르면 번호가 작아도 지우지 않음",
           events.map(\.check.name) == ["deploy", "test"], "\(events.map(\.check.name))")
-    let workflows = GitHubAPIClient.withoutSupersededRuns([ctx("build", .failed, run: 3, workflow: "CI"),
+    let workflows = GitHubAPIClient.withoutSupersededRuns([ctx("build", .failed, run: 3, workflow: "CI", workflowID: 7),
                                                            ctx("test", .passed, run: 875)])
     check("다른 워크플로의 실행 번호와는 비교하지 않음", workflows.count == 2)
 
@@ -897,10 +897,12 @@ do {
 print("▸ 밀려난 실행 끝에서 끝까지")
 do {
     func run(_ name: String, _ status: String, _ conclusion: String?, _ start: String, _ end: String?,
-             runNumber: Int?, event: String? = "pull_request") -> String {
+             runNumber: Int?, event: String? = "pull_request",
+             workflow: String = "verify", workflowID: Int? = 335_587_108) -> String {
         func json(_ value: String?) -> String { value.map { "\"\($0)\"" } ?? "null" }
         let number = runNumber.map(String.init) ?? "null"
-        return #"{"__typename":"CheckRun","name":"\#(name)","status":"\#(status)","conclusion":\#(json(conclusion)),"startedAt":"2026-10-20T\#(start)Z","completedAt":\#(json(end.map { "2026-10-20T\($0)Z" })),"detailsUrl":"https://x/\#(name)","checkSuite":{"workflowRun":{"runNumber":\#(number),"event":\#(json(event)),"workflow":{"name":"verify"}},"app":{"slug":"github-actions"}}}"#
+        let id = workflowID.map(String.init) ?? "null"
+        return #"{"__typename":"CheckRun","name":"\#(name)","status":"\#(status)","conclusion":\#(json(conclusion)),"startedAt":"2026-10-20T\#(start)Z","completedAt":\#(json(end.map { "2026-10-20T\($0)Z" })),"detailsUrl":"https://x/\#(name)","checkSuite":{"workflowRun":{"runNumber":\#(number),"event":\#(json(event)),"workflow":{"databaseId":\#(id),"name":"\#(workflow)"}},"app":{"slug":"github-actions"}}}"#
     }
     let vercel = #"{"__typename":"CheckRun","name":"Vercel Preview Comments","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-10-20T15:14:10Z","completedAt":"2026-10-20T15:14:10Z","detailsUrl":"https://x/v","checkSuite":{"workflowRun":null,"app":{"slug":"vercel"}}}"#
     func pullRequest(_ contexts: [String]) -> GitHubPullRequest? {
@@ -932,6 +934,20 @@ do {
     check("push 실행은 pull_request 실행에 밀리지 않음 (파싱 경로)",
           otherEvent?.checks.map(\.name) == ["deploy", "test"] && otherEvent.map { verdict($0) } == .checksFailed,
           "\(String(describing: otherEvent?.checks.map(\.name)))")
+    // Two workflow files both named `verify`: each counts its own runs, so
+    // the other file's bigger number says nothing about this one.
+    let sameName = pullRequest([run("lint", "COMPLETED", "FAILURE", "15:10:00", "15:11:00",
+                                    runNumber: 12, workflowID: 999),
+                                run("test", "IN_PROGRESS", nil, "15:14:45", nil, runNumber: 875)])
+    check("이름은 같고 워크플로 id 가 다르면 작은 runNumber 쪽 FAILURE 가 남음 (파싱 경로)",
+          sameName?.checks.map(\.name) == ["lint", "test"] && sameName.map { verdict($0) } == .checksFailed,
+          "\(String(describing: sameName?.checks.map(\.name)))")
+    let noWorkflowID = pullRequest([run("automerge", "COMPLETED", "CANCELLED", "15:14:42", "15:14:42",
+                                        runNumber: 874, workflowID: nil),
+                                    run("test", "IN_PROGRESS", nil, "15:14:45", nil, runNumber: 875)])
+    check("워크플로 id 를 못 읽은 실행은 밀려났다고 보지 않음",
+          noWorkflowID?.checks.map(\.name) == ["automerge", "test"],
+          "\(String(describing: noWorkflowID?.checks.map(\.name)))")
     let noEvent = pullRequest([run("automerge", "COMPLETED", "CANCELLED", "15:14:42", "15:14:42",
                                    runNumber: 874, event: nil),
                                run("test", "IN_PROGRESS", nil, "15:14:45", nil, runNumber: 875)])
@@ -1004,8 +1020,8 @@ do {
     check("mergeStateStatus 요청", q.contains(" mergeStateStatus "))
     check("first: 20 / contexts first: 30", q.contains("first: 20)") && q.contains("contexts(first: 30)"))
     check("contexts 의 totalCount 요청", q.contains("contexts(first: 30) { totalCount nodes"))
-    check("CheckRun 의 실행 번호·event·워크플로 이름·앱 slug 요청",
-          q.contains("checkSuite { workflowRun { runNumber event workflow { name } } app { slug } }"))
+    check("CheckRun 의 실행 번호·event·워크플로 id·이름·앱 slug 요청",
+          q.contains("checkSuite { workflowRun { runNumber event workflow { databaseId name } } app { slug } }"))
     check("mutation 아님", !q.contains("mutation"))
     // The day boundary follows the calendar handed in, not UTC.
     var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
