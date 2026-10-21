@@ -345,8 +345,9 @@ do {
     check("429 with a non-numeric Retry-After → rateLimited(nil)",
           interpretError(429, retryAfter: "Wed, 21 Oct 2026 07:28:00 GMT") == .rateLimited(retryAfter: nil))
     check("500 → http(500)", interpretError(500) == .http(500))
-    // Redirects are refused, so a 3xx comes back as the response itself.
-    check("302 (refused redirect) → http(302), not followed", interpretError(302) == .http(302))
+    // `RedirectRefuser` hands a 3xx back as the response itself; this pins
+    // only how that response maps, not the refusal.
+    check("3xx handed back by the refused redirect → http(302)", interpretError(302) == .http(302))
 }
 
 // MARK: transport — only a 200 body is read, and the real shape fits the cap
