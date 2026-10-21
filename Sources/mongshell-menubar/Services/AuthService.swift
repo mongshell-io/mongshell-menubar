@@ -11,6 +11,8 @@ import AppKit
 @MainActor
 final class AuthService: NSObject {
 
+    private let tokenClient = OAuthTokenClient()
+
     func signIn() async throws -> OAuthToken {
         guard !Config.oauthClientID.isEmpty else { throw AuthError.notConfigured }
         // Seamless loopback first; fall back to manual code paste if the
@@ -99,7 +101,7 @@ final class AuthService: NSObject {
         }
         let session = AuthDebugLog.session(token)
         do {
-            var renewed = try await postToken([
+            var renewed = try await tokenClient.post([
                 "grant_type": "refresh_token",
                 "refresh_token": refresh,
                 "client_id": Config.oauthClientID
@@ -137,7 +139,7 @@ final class AuthService: NSObject {
     // MARK: - Token exchange
 
     private func exchange(code: String, verifier: String, redirectURI: String) async throws -> OAuthToken {
-        try await postToken([
+        try await tokenClient.post([
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirectURI,
@@ -145,31 +147,6 @@ final class AuthService: NSObject {
             "code_verifier": verifier,
             "state": verifier
         ])
-    }
-
-    private func postToken(_ body: [String: String]) async throws -> OAuthToken {
-        var req = URLRequest(url: Config.oauthTokenURL)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        req.setValue(Config.userAgent, forHTTPHeaderField: "User-Agent")
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
-
-        guard status == 200,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let access = json["access_token"] as? String
-        else {
-            throw AuthError.tokenError(status: status, body: data)
-        }
-
-        var expires: Date?
-        if let secs = json["expires_in"] as? Double { expires = Date().addingTimeInterval(secs) }
-        return OAuthToken(accessToken: access,
-                          refreshToken: json["refresh_token"] as? String,
-                          expiresAt: expires)
     }
 
     // MARK: - PKCE

@@ -196,6 +196,7 @@ Sources/mongshell-menubar/
                             LoginItemModel(로그인 항목 상태 캐시/안내)
   Services/…                Config, Credentials(Keychain), UsageAPIClient, AuthService(PKCE),
                             LoopbackServer(OAuth 루프백 리다이렉트 수신),
+                            OAuthTokenClient(토큰 교환·갱신 요청),
                             TimeText, BoundedHTTP(리다이렉트 거부·바이트 캡 전송 공용),
                             OpenClawStatusClient(상태 URL HTTPS 읽기/관대한 디코딩),
                             GitHubAPIClient(GraphQL 1요청·응답 해석), GitHubCredentials(자체 PAT → gh Keychain),

@@ -2,9 +2,9 @@ import Foundation
 
 // Regression tests for the OAuth token path.
 //
-// Pinned here: the token-endpoint classification that decides whether a dead
-// refresh token is discarded (invalid_grant) or kept (anything else). Getting
-// this wrong either leaves a dead token retrying every poll (the bug this
+// Pinned here: how a token-endpoint response becomes a token, and the
+// classification that decides whether a dead refresh token is discarded
+// (invalid_grant) or kept (anything else). Getting this wrong either leaves a dead token retrying every poll (the bug this
 // pins) or throws away a live token on a transient error. Also the Keychain
 // decoding of tokens saved before `signedInAt` existed, and the age format
 // the diagnostic log prints.
@@ -90,6 +90,110 @@ check("invalidGrant has a Korean user message",
 check("invalidGrant log summary names the error and description",
       AuthError.invalidGrant("Refresh token expired").logSummary
           == "status=400 error=invalid_grant (Refresh token expired)")
+
+// MARK: token response → token or classification
+
+func interpretError(_ status: Int, _ data: Data) -> AuthError? {
+    do {
+        _ = try OAuthTokenClient.interpret(statusCode: status, data: data)
+        return nil
+    } catch {
+        return error as? AuthError
+    }
+}
+
+do {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let token = try? OAuthTokenClient.interpret(
+        statusCode: 200,
+        data: body(#"{"access_token":"acc","refresh_token":"ref","expires_in":3600,"token_type":"Bearer"}"#),
+        now: now)
+    check("200 with access_token → token", token?.accessToken == "acc")
+    check("200 carries refresh_token", token?.refreshToken == "ref")
+    check("expires_in counts from now", token?.expiresAt == now.addingTimeInterval(3600))
+    check("signedInAt is left to the caller", token != nil && token?.signedInAt == nil)
+
+    let bare = try? OAuthTokenClient.interpret(statusCode: 200, data: body(#"{"access_token":"acc"}"#))
+    check("200 without refresh_token/expires_in still yields a token",
+          bare?.accessToken == "acc" && bare?.refreshToken == nil && bare?.expiresAt == nil)
+}
+
+do {
+    if case .tokenExchangeFailed = interpretError(200, body(#"{"token_type":"Bearer"}"#)) {
+        check("200 without access_token → tokenExchangeFailed", true)
+    } else {
+        check("200 without access_token → tokenExchangeFailed", false)
+    }
+    if case .tokenExchangeFailed = interpretError(200, body("<html>ok</html>")) {
+        check("200 with a non-JSON body → tokenExchangeFailed", true)
+    } else {
+        check("200 with a non-JSON body → tokenExchangeFailed", false)
+    }
+    // A 2xx other than 200 is not a token, even with one in the body.
+    if case .tokenExchangeFailed = interpretError(201, body(#"{"access_token":"acc"}"#)) {
+        check("201 with access_token → tokenExchangeFailed", true)
+    } else {
+        check("201 with access_token → tokenExchangeFailed", false)
+    }
+    // A 200 in a shape we don't read is most likely still a token response:
+    // nothing of its body may reach the log line or the user-facing message.
+    let wrapped = interpretError(200, body(#"{"data":{"access_token":"SECRET","refresh_token":"SECRET"}}"#))
+    if case .tokenExchangeFailed(let detail) = wrapped {
+        check("200 in an unknown shape → detail names the keys only", detail == "status=200 keys=data", detail)
+    } else {
+        check("200 in an unknown shape → tokenExchangeFailed", false, String(describing: wrapped))
+    }
+    check("200 in an unknown shape leaks nothing into the log line",
+          wrapped?.logSummary.contains("SECRET") == false)
+    check("200 in an unknown shape leaks nothing into the user message",
+          wrapped?.errorDescription?.contains("SECRET") == false)
+    let flat = interpretError(200, body(#"{"accessToken":"SECRET"}"#))
+    check("200 with a renamed token key → key name, not the value",
+          flat?.logSummary == "status=200 keys=accessToken", flat?.logSummary ?? "nil")
+    let raw = interpretError(200, body("SECRET"))
+    check("200 with a non-JSON body → size only",
+          raw?.logSummary == "status=200 body=6 bytes", raw?.logSummary ?? "nil")
+
+    if case .invalidGrant = interpretError(400, body(#"{"error":"invalid_grant"}"#)) {
+        check("400 invalid_grant reaches invalidGrant through interpret", true)
+    } else {
+        check("400 invalid_grant reaches invalidGrant through interpret", false)
+    }
+}
+
+// MARK: transport — which bodies are read, and the real shape fits the cap
+
+do {
+    check("200 reads the body (the token)", OAuthTokenClient.readsBody(statusCode: 200))
+    // invalid_grant is judged from the 400 body; judged on the code alone it
+    // would keep retrying a dead refresh token every poll.
+    check("400 reads the body (invalid_grant lives there)", OAuthTokenClient.readsBody(statusCode: 400))
+    check("401 reads the body (invalid_client)", OAuthTokenClient.readsBody(statusCode: 401))
+    check("3xx/403/429/5xx are judged on the code alone",
+          [301, 302, 307, 308, 403, 429, 500, 503].allSatisfy { !OAuthTokenClient.readsBody(statusCode: $0) })
+
+    // The shape the endpoint returns, with token-length strings.
+    let access = String(repeating: "a", count: 108)
+    let refresh = String(repeating: "r", count: 108)
+    let real = body(#"{"token_type":"Bearer","access_token":"\#(access)","expires_in":28800,"#
+        + #""refresh_token":"\#(refresh)","scope":"user:inference user:profile"}"#)
+    check("real-shaped token response is far under the cap",
+          Int64(real.count) * 16 < Config.oauthTokenMaxResponseBytes,
+          "\(real.count) bytes vs \(Config.oauthTokenMaxResponseBytes)")
+}
+
+do {
+    // A refused redirect comes back as the 3xx itself with no body read. It
+    // must not pass for a token, and must not throw the token away either.
+    let err = interpretError(307, Data())
+    if case .tokenExchangeFailed(let detail) = err {
+        check("307 handed back by the refused redirect → tokenExchangeFailed (token kept)", true)
+        check("307 detail carries the status", detail == "status=307 body=", detail)
+    } else {
+        check("307 handed back by the refused redirect → tokenExchangeFailed (token kept)", false,
+              String(describing: err))
+    }
+}
 
 // MARK: OAuthToken Keychain decoding
 

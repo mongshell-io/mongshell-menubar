@@ -3,11 +3,11 @@ import Foundation
 /// Central place for the (unofficial) endpoint + OAuth parameters.
 ///
 /// ⚠️ These target Claude's *subscription* usage, for which there is no public
-/// API. Values below mirror what the Claude Code CLI uses. They are unverified
-/// placeholders where noted — see Phase 0 in the plan: capture a real
-/// oauth/usage response and confirm the exact client_id / headers / schema
-/// before shipping. Nothing here is transmitted anywhere except Anthropic's
-/// own hosts; tokens live only in the local Keychain.
+/// API. Values below mirror what the Claude Code CLI uses and can change
+/// without notice. The usage response shape was checked against a real
+/// response captured on 2026-10-21 (the fixture in `Tests/UsageTests`).
+/// Claude credentials go nowhere except Anthropic's own hosts and live only
+/// in the local Keychain.
 enum Config {
     /// Subscription usage endpoint (same data as Claude Code `/usage`).
     static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
@@ -29,6 +29,11 @@ enum Config {
     // Anthropic migrated console.anthropic.com → platform.claude.com; the
     // token exchange + callback now live on the new host.
     static let oauthTokenURL = URL(string: "https://platform.claude.com/v1/oauth/token")!
+    /// Largest token-endpoint response read. A token response is a few short
+    /// strings and numbers and an OAuth error body is smaller still — both
+    /// well under 2 KB; 64 KiB leaves room for the shape to grow many times
+    /// over while keeping a surprising answer from filling memory.
+    static let oauthTokenMaxResponseBytes: Int64 = 64 * 1024
     static let oauthRedirectURI = "https://platform.claude.com/oauth/code/callback"
     static let oauthScopes = "org:create_api_key user:profile user:inference"
 

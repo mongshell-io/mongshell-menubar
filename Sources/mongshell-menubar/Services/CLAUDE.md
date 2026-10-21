@@ -20,7 +20,7 @@ non_goals:
 | 상수·엔드포인트·OAuth 파라미터 | `Config` |
 | Keychain | `Credentials` |
 | 사용량 API | `UsageAPIClient` |
-| OAuth 흐름 | `AuthService`, `LoopbackServer` |
+| OAuth 흐름 (토큰 엔드포인트 요청은 `OAuthTokenClient`) | `AuthService`, `LoopbackServer`, `OAuthTokenClient` |
 | 사용자 설정 파일 | `ClaudeSettingsStore` |
 | openclaw 서버 상태 URL (HTTPS 읽기 전용) — openclaw 판정과 서버 호스트 신호(`host`)를 한 문서에서 읽는다 | `OpenClawStatusClient` |
 | 로그인 항목 (ServiceManagement) | `LoginItemService` |
@@ -88,6 +88,7 @@ non_goals:
 
 - 토큰은 Keychain 에만 둔다. `UserDefaults`·파일·로그 어디에도 쓰지 않는다.
 - Anthropic 호스트 외 어디에도 전송하지 않는다.
+- 토큰·인증 코드를 싣는 요청(`UsageAPIClient`·`OAuthTokenClient`)은 `BoundedHTTP` 세션으로만 보낸다 — 리다이렉트를 따르지 않는다. 사양은 [docs/architecture.md § Auth](../../../docs/architecture.md#auth) 가 권위다.
 - 디버그 로그에 토큰·인증 코드를 남기지 않는다.
 - Claude Code 의 Keychain 항목은 **읽기 전용**으로 취급한다. 우리 것이 아니다.
 
