@@ -25,7 +25,7 @@ DEV_ID="${DEV_ID:?set DEV_ID to your 'Developer ID Application: …' identity}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-mongshell-menubar-notary}"
 
 echo "▶ building release bundle"
-"$ROOT/scripts/make_app.sh" release   # produces mongshell-menubar.app (ad-hoc); we re-sign below
+"$ROOT/scripts/make_app.sh" release   # produces mongshell-menubar.app (locally signed); we re-sign below
 
 # make_app.sh leaves the 0.0.0 placeholder when it can't see a vX.Y.Z tag — fine
 # for a local build, not for one we hand out (Decision #47).
