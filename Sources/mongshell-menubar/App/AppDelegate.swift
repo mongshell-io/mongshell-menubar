@@ -165,6 +165,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.publisher(for: NSPopover.didCloseNotification, object: githubPopover)
             .sink { [weak self] _ in self?.github.setPopoverOpen(false) }
             .store(in: &cancellables)
+        // A click popover opens with the app active (`togglePopover`), so the
+        // app going inactive means the user went elsewhere. AppKit holds back
+        // a .transient popover's close while one of its menus is tracking and
+        // doesn't look again once the menu is gone: a click outside that only
+        // dismissed the ⋯ menu left the popover up (#70).
+        NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                for popover in self.clickPopovers.values where popover.isShown {
+                    popover.performClose(nil)
+                }
+            }
+            .store(in: &cancellables)
 
         let githubHover = NSPopover()
         githubHover.behavior = .applicationDefined
@@ -362,6 +375,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // condition under which AppKit opens a .transient popover on the first
         // click and closes it on a click outside (Decision #8, #36/#39). Only
         // the positioning rect narrows to the region.
+        //
+        // Activate first. The status-item click leaves the app inactive, so
+        // the first click inside the popover activated it — and that late
+        // activation ended the ⋯ menu the same click had just opened (#70).
+        // `NSApp.activate()` is only a request and wasn't granted here; the
+        // `ignoringOtherApps` form activated at once (macOS 27).
+        NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: rect, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
     }
