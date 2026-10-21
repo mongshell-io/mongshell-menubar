@@ -135,6 +135,25 @@ do {
     } else {
         check("201 with access_token → tokenExchangeFailed", false)
     }
+    // A 200 in a shape we don't read is most likely still a token response:
+    // nothing of its body may reach the log line or the user-facing message.
+    let wrapped = interpretError(200, body(#"{"data":{"access_token":"SECRET","refresh_token":"SECRET"}}"#))
+    if case .tokenExchangeFailed(let detail) = wrapped {
+        check("200 in an unknown shape → detail names the keys only", detail == "status=200 keys=data", detail)
+    } else {
+        check("200 in an unknown shape → tokenExchangeFailed", false, String(describing: wrapped))
+    }
+    check("200 in an unknown shape leaks nothing into the log line",
+          wrapped?.logSummary.contains("SECRET") == false)
+    check("200 in an unknown shape leaks nothing into the user message",
+          wrapped?.errorDescription?.contains("SECRET") == false)
+    let flat = interpretError(200, body(#"{"accessToken":"SECRET"}"#))
+    check("200 with a renamed token key → key name, not the value",
+          flat?.logSummary == "status=200 keys=accessToken", flat?.logSummary ?? "nil")
+    let raw = interpretError(200, body("SECRET"))
+    check("200 with a non-JSON body → size only",
+          raw?.logSummary == "status=200 body=6 bytes", raw?.logSummary ?? "nil")
+
     if case .invalidGrant = interpretError(400, body(#"{"error":"invalid_grant"}"#)) {
         check("400 invalid_grant reaches invalidGrant through interpret", true)
     } else {

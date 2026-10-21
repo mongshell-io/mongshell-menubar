@@ -30,11 +30,19 @@ enum AuthError: LocalizedError {
     ///
     /// The detail names only the `error` field when the body is the standard
     /// OAuth error shape, and falls back to a body prefix otherwise — it ends
-    /// up in the diagnostic log and in the user-facing message.
+    /// up in the diagnostic log and in the user-facing message. A 2xx that
+    /// didn't yield a token is the exception: its body is most likely a token
+    /// response in a shape we don't read, so only its top-level key names (or
+    /// its size) go into the detail, never the body itself.
     static func tokenError(status: Int, body: Data) -> AuthError {
         let fields = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
         if status == 400, fields?["error"] as? String == "invalid_grant" {
             return .invalidGrant(fields?["error_description"] as? String ?? "")
+        }
+        if (200..<300).contains(status) {
+            let shape = fields.map { "keys=\($0.keys.sorted().joined(separator: ",").prefix(160))" }
+                ?? "body=\(body.count) bytes"
+            return .tokenExchangeFailed("status=\(status) \(shape)")
         }
         if let error = fields?["error"] as? String {
             return .tokenExchangeFailed("status=\(status) error=\(error)")
