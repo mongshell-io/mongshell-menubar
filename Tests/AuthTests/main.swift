@@ -2,9 +2,9 @@ import Foundation
 
 // Regression tests for the OAuth token path.
 //
-// Pinned here: the token-endpoint classification that decides whether a dead
-// refresh token is discarded (invalid_grant) or kept (anything else). Getting
-// this wrong either leaves a dead token retrying every poll (the bug this
+// Pinned here: how a token-endpoint response becomes a token, and the
+// classification that decides whether a dead refresh token is discarded
+// (invalid_grant) or kept (anything else). Getting this wrong either leaves a dead token retrying every poll (the bug this
 // pins) or throws away a live token on a transient error. Also the Keychain
 // decoding of tokens saved before `signedInAt` existed, and the age format
 // the diagnostic log prints.
@@ -90,6 +90,57 @@ check("invalidGrant has a Korean user message",
 check("invalidGrant log summary names the error and description",
       AuthError.invalidGrant("Refresh token expired").logSummary
           == "status=400 error=invalid_grant (Refresh token expired)")
+
+// MARK: token response → token or classification
+
+func interpretError(_ status: Int, _ data: Data) -> AuthError? {
+    do {
+        _ = try OAuthTokenClient.interpret(statusCode: status, data: data)
+        return nil
+    } catch {
+        return error as? AuthError
+    }
+}
+
+do {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let token = try? OAuthTokenClient.interpret(
+        statusCode: 200,
+        data: body(#"{"access_token":"acc","refresh_token":"ref","expires_in":3600,"token_type":"Bearer"}"#),
+        now: now)
+    check("200 with access_token → token", token?.accessToken == "acc")
+    check("200 carries refresh_token", token?.refreshToken == "ref")
+    check("expires_in counts from now", token?.expiresAt == now.addingTimeInterval(3600))
+    check("signedInAt is left to the caller", token != nil && token?.signedInAt == nil)
+
+    let bare = try? OAuthTokenClient.interpret(statusCode: 200, data: body(#"{"access_token":"acc"}"#))
+    check("200 without refresh_token/expires_in still yields a token",
+          bare?.accessToken == "acc" && bare?.refreshToken == nil && bare?.expiresAt == nil)
+}
+
+do {
+    if case .tokenExchangeFailed = interpretError(200, body(#"{"token_type":"Bearer"}"#)) {
+        check("200 without access_token → tokenExchangeFailed", true)
+    } else {
+        check("200 without access_token → tokenExchangeFailed", false)
+    }
+    if case .tokenExchangeFailed = interpretError(200, body("<html>ok</html>")) {
+        check("200 with a non-JSON body → tokenExchangeFailed", true)
+    } else {
+        check("200 with a non-JSON body → tokenExchangeFailed", false)
+    }
+    // A 2xx other than 200 is not a token, even with one in the body.
+    if case .tokenExchangeFailed = interpretError(201, body(#"{"access_token":"acc"}"#)) {
+        check("201 with access_token → tokenExchangeFailed", true)
+    } else {
+        check("201 with access_token → tokenExchangeFailed", false)
+    }
+    if case .invalidGrant = interpretError(400, body(#"{"error":"invalid_grant"}"#)) {
+        check("400 invalid_grant reaches invalidGrant through interpret", true)
+    } else {
+        check("400 invalid_grant reaches invalidGrant through interpret", false)
+    }
+}
 
 // MARK: OAuthToken Keychain decoding
 

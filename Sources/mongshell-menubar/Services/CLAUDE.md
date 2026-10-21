@@ -20,7 +20,7 @@ non_goals:
 | 상수·엔드포인트·OAuth 파라미터 | `Config` |
 | Keychain | `Credentials` |
 | 사용량 API | `UsageAPIClient` |
-| OAuth 흐름 | `AuthService`, `LoopbackServer` |
+| OAuth 흐름 (토큰 엔드포인트 요청은 `OAuthTokenClient`) | `AuthService`, `LoopbackServer`, `OAuthTokenClient` |
 | 사용자 설정 파일 | `ClaudeSettingsStore` |
 | openclaw 서버 상태 URL (HTTPS 읽기 전용) — openclaw 판정과 서버 호스트 신호(`host`)를 한 문서에서 읽는다 | `OpenClawStatusClient` |
 | 로그인 항목 (ServiceManagement) | `LoginItemService` |

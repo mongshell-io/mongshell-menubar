@@ -64,8 +64,8 @@ echo "▶ running openclaw client tests"
 "$OUT/client-tests"
 
 # AuthService itself pulls in AppKit, the loopback server and the Keychain, so
-# the token-endpoint classification lives in its own file and is compiled here
-# with just the token type and the constants it needs. `UsageState` rides
+# the token-endpoint request and its classification live in their own files
+# and are compiled here with just the token type and the constants they need. `UsageState` rides
 # along only because `AuthDebugLog` names `UsageSnapshot` for its usage line.
 echo "▶ compiling auth tests"
 swiftc -o "$OUT/auth-tests" \
@@ -74,6 +74,7 @@ swiftc -o "$OUT/auth-tests" \
   "$APP/Services/AuthError.swift" \
   "$APP/Services/Config.swift" \
   "$APP/Services/Credentials.swift" \
+  "$APP/Services/OAuthTokenClient.swift" \
   "$ROOT/Tests/AuthTests/main.swift"
 
 echo "▶ running auth tests"
