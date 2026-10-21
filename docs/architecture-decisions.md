@@ -135,7 +135,7 @@
 
 ## Decision #11-2: 뷰 로컬 상태는 `@State` 매크로 대신 `State<Value>` 수동 펼침
 
-- **도입**: 미정 (#24)
+- **도입**: v1.2.0 (#24)
 - **컨텍스트**: Command Line Tools 27.0 (2026-09) 은 macOS 27 SDK 를 기본으로 쓰고, 이 SDK 에서 `@State` 는 프로퍼티 래퍼가 아니라 `SwiftUIMacros` 플러그인이 전개하는 **매크로**가 됐다. 그 플러그인은 Xcode 에만 동봉되고 CLT 에는 없어서 `@State` 가 한 줄만 있어도 CLT 빌드가 실패한다. "Xcode 없이 빌드 가능" 은 Decision 3 / #11-1 이 세운 전제다.
 - **결정**: `@State` 를 쓰지 않는다. `State<Value>` 프로퍼티 래퍼 타입은 SDK 에 그대로 남아 있으므로, 매크로가 만들었을 저장 프로퍼티(`_x = State(initialValue:)`)와 접근자(`wrappedValue` get / nonmutating set)를 직접 적는다.
 - **이유**: 대안은 셋이었다. (a) 스크립트에서 이전 SDK(26.5) 를 고정 — 다음 CLT 업데이트에서 그 SDK 가 빠지면 도리어 설치 부담이 생긴다. (b) Xcode 설치 요구 — 전제를 깬다. (c) 수동 펼침 — 의미가 `@State` 와 동일하고 수정 범위가 뷰 한 곳이라 가장 싸다. `@StateObject` + `ObservableObject` 로 바꾸는 것도 되지만 생명주기 의미가 달라져 동작 보존이 아니다.
@@ -145,7 +145,7 @@
 
 ## Decision #25: openclaw 감시를 원격 서버 에이전트 + Funnel 정적 상태 파일로
 
-- **도입**: 미정 (#25)
+- **도입**: v1.2.0 (#25)
 - **컨텍스트**: openclaw 가 메뉴바 앱을 쓰는 맥북이 아니라 24시간 도는 별도 서버 맥으로 옮겨갔다. 맥북은 여러 대이고 서버와 다른 네트워크에 있으며, 포트포워딩은 하지 않고 클라이언트에 Tailscale 을 설치하지 않는다. #4 의 로컬 셸아웃은 전제 자체가 사라졌다.
 - **결정**: 로컬 모드를 완전히 제거한다. 서버 맥에서 이 repo 의 `mongshell-openclaw-agent`(LaunchAgent)가 `openclaw channels status --probe` 를 판정하고 자동복구를 수행한 뒤, 판정 결과를 JSON 파일로 쓴다. 오픈소스판 Tailscale 의 `tailscale funnel --https=8443 --set-path /<토큰> <파일>` 이 그 파일을 **공개 전용 포트 8443** 에 공개하고, 메뉴바 앱은 그 URL 을 HTTPS 로 읽기만 한다.
 - **이유**:
@@ -169,7 +169,7 @@
 
 ## Decision #31: 상태 문서에 서버 호스트 신호(전원·디스크)를 추가
 
-- **도입**: 미정 (#31)
+- **도입**: v1.2.0 (#31)
 - **컨텍스트**: #25 로 openclaw 게이트웨이의 건강은 메뉴바에서 보이게 됐지만, 서버 맥 자체가 곧 멈출 조짐(어댑터가 빠짐, 디스크가 참)은 여전히 접속해서 봐야 알았다. 게이트웨이가 정상이어도 서버가 배터리로 돌고 있으면 몇 시간 뒤 함께 죽는다. [PHILOSOPHY.md](PHILOSOPHY.md) § Admission Criteria 가 이런 신호의 입장 기준으로 신설됐고, 전원과 디스크 여유가 5개 기준을 통과했다.
 - **결정**: #25 의 상태 문서에 최상위 `host` 객체를 추가한다. 에이전트가 IOKit 전원 정보와 홈 볼륨의 여유 공간을 읽어 신호별(`power.health`, `disk.health`)·종합(`host.health`) 판정을 `ok` / `warning` / `critical` 로 내리고, 판정과 함께 표시에 쓰는 상태값(불리언 `pluggedIn` · `charging`, 수치 `batteryPercent` · `availableBytes`)만 싣는다. 앱은 읽어서 표시하고 알릴 뿐이다. 메뉴바에는 openclaw 표시 아래에 서버 글리프 + 점을 쌓고, 팝오버에는 openclaw 섹션 아래 서버 섹션을 둔다. 두 점은 서로 독립이다 — 게이트웨이가 다운이어도 서버가 멀쩡하면 빨강 아래 초록이다.
 - **판정 규칙** (에이전트 `HostRules` 한 벌):
@@ -214,7 +214,7 @@
 
 ## Decision #40: 최소 지원을 macOS 26 으로 — 배포 타깃이 바이너리의 SDK 버전으로 찍히므로
 
-- **도입**: 미정 (#40)
+- **도입**: v1.2.0 (#40)
 - **컨텍스트**: `swift build` 로 링크한 바이너리의 SDK 버전(`LC_BUILD_VERSION` 의 `sdk`)은 컴파일에 실제로 쓴 SDK(27)가 아니라 `Package.swift` 의 배포 타깃 값으로 찍힌다. SwiftPM 이 `SDKROOT` 없이 컴파일러를 불러 링커가 SDK 버전을 읽지 못하고 배포 타깃으로 채우기 때문이다 (Swift 6.4 툴체인에서 확인 — 같은 링크 명령에 `SDKROOT` 만 주면 27 로 찍힌다). macOS 는 이 값으로 앱에 적용할 호환 동작을 고른다. 배포 타깃이 14 였던 동안 앱은 macOS 27 위에서 "14 SDK 로 만든 앱" 으로 돌았고, 그 동작에서 SwiftUI 는 실행할 때마다 `Settings { EmptyView() }` Scene 을 빈 창("mongshell-menubar Settings")으로 열었다.
 - **결정**: 배포 타깃을 macOS 26 으로 올린다 (`Package.swift` 의 `platforms`, `Info.plist` 의 `LSMinimumSystemVersion`).
 - **이유**: 이 앱을 쓰는 맥이 모두 macOS 26 이상이라 잃는 것이 없다. 대안은 넷이었다. (a) 15 로만 올림 — 빈 창은 사라지고 화면도 거의 그대로지만, 구형 SDK 호환 동작으로 도는 상태가 남는다. (b) 배포 타깃은 두고 `.app` 조립 때 SDK 버전을 고쳐 찍음(`vtool` 등) — `swift build` 산출물을 그대로 쓰는 스냅샷 렌더와 `.app` 이 서로 다른 동작으로 갈린다. (c) `applicationShouldOpenUntitledFile` 에서 거절 — 시험 앱에서 빈 창을 막지 못했다. (d) SwiftUI App 생명주기를 버리고 Scene 없이 AppKit 으로 — 메인 메뉴(편집 단축키, ⌘,)를 손으로 만들어야 한다.
@@ -226,7 +226,7 @@
 
 ## Decision #45: GitHub PR 을 단일 status item 안의 옵트인 두 번째 영역으로
 
-- **도입**: 미정 (#45)
+- **도입**: v1.2.0 (#45)
 - **컨텍스트**: 내 PR 의 리뷰 요청·검사·머지 가능 여부는 브라우저를 열어 확인하러 가는 왕복이 실재한다 ([PHILOSOPHY.md](PHILOSOPHY.md) § Admission Criteria 1). 그러나 #31 이 세로 스택 두 줄을 다 써서, 기준 4(폭을 늘리지 않는다)로는 들어올 자리가 없었다. 두 번째 status item 은 #5 가 배제했고, 신호등 점 하나로 접는 것도 답이 아니었다 — 막힌 PR 의 번호와 개수가 글랜스의 핵심이라 점 하나로는 부족하다. 스택은 Tauri 같은 웹 스택으로 별도 앱을 만드는 안도 검토했으나, 영역 분리 자체가 단일 프로세스를 요구하고 NSPopover 가 공짜로 주는 열기·닫기를 다시 만들어야 해서(#35·#37·#38 의 실패) 배제했다.
 - **결정**:
   - (a) [PHILOSOPHY.md](PHILOSOPHY.md) § Admission Criteria 4 에 "옵트인 두 번째 영역" 예외를 신설한다. 같은 status item 안에 세로 헤어라인으로 나뉜 GitHub 영역 — 글리프 `arrow.triangle.pull` · 신호등 점 · 처리할 PR 수 — 을 두고, 기본값은 꺼짐이다. (#52 부터 글리프는 머지 가능한 내 PR 이 있으면 `arrow.triangle.merge` 초록으로 바뀐다.)
@@ -271,7 +271,7 @@
 
 ## Decision #47: 앱 번들 버전은 빌드 시 git tag 에서 찍는다
 
-- **도입**: 미정 (#47)
+- **도입**: v1.2.0 (#47)
 - **컨텍스트**: 버전 SSOT 는 git tag 다 (`docs/architecture.md` § 배포, `/release` 는 태그만 만들고 파일을 고치지 않는다). 그런데 `Resources/Info.plist` 의 `CFBundleShortVersionString` 은 손으로 적은 `0.1.0` 이었고 `make_app.sh` 가 그대로 복사해, 태그가 `v1.1.2` 인데도 앱은 0.1.0 으로 찍혔다. 사용자에게 보이지 않아 드러나지 않았지만, GitHub PR 영역(#45)이 GitHub API 요청의 `User-Agent` 에 이 값을 싣도록 설계돼 외부로 나가는 값이 된다.
 - **결정**: `make_app.sh` 가 번들을 조립할 때 `git describe --tags --abbrev=0 --match 'v[0-9]*'` 로 가장 가까운 태그를 읽어, `vX.Y.Z` 형식이면 번들 안 `Info.plist` 사본의 `CFBundleShortVersionString` 을 그 값으로 바꾼다 (서명 전에). 저장소의 `Info.plist` 에는 `0.0.0` 자리표시만 둔다. `release.sh` 는 `make_app.sh` 를 거치므로 같은 값을 받는다.
 - **이유**: 대안은 셋이었다. (a) 릴리스마다 `Info.plist` 를 손으로 올림 — 태그와 파일 두 곳에 같은 값을 복제하는 것이고, `/release` 가 파일을 고치지 않는 불변식 때문에 별도 chore PR 이 매번 필요해 결국 밀린다 (지금 상태가 그 결과다). (b) `git describe` 전체 문자열(`1.1.2-5-gabc1234`)을 씀 — `CFBundleShortVersionString` 은 마침표로 나뉜 정수 세 개여야 해서 넣을 수 없다. (c) 빌드 시 가장 가까운 태그 — 파생 가능한 값을 복제하지 않고, 형식도 지킨다.
@@ -283,7 +283,7 @@
 
 ## Decision #49: 내 PR 의 squash 머지를 팝오버에서 — 첫 원격 쓰기
 
-- **도입**: 미정 (#49)
+- **도입**: v1.2.0 (#49)
 - **컨텍스트**: #45 로 내 PR 의 막힘·검사 상태를 메뉴바에서 보게 됐지만, "머지 가능" 배지가 붙은 PR 을 머지하려면 브라우저로 다시 가야 했다. 막힘이 없다는 것을 이미 앱이 보여 준 뒤라, 남은 왕복은 버튼 한 번을 누르러 가는 것뿐이다. 그런데 [PHILOSOPHY.md](PHILOSOPHY.md) § Out of Scope 는 "승인·머지 같은 쓰기 동작" 을 범위 밖에 두었고, 이 앱에는 지금까지 원격에 쓰는 동작이 하나도 없었다.
 - **결정**:
   - (a) Out of Scope 를 "내 PR 의 squash 머지 하나 외의 쓰기 동작" 으로 좁힌다. 승인·코멘트·라벨·다른 머지 방식(merge commit·rebase)·브랜치 삭제는 여전히 범위 밖이다.
@@ -317,7 +317,7 @@
 
 ## Decision #52: 머지 가능한 내 PR 을 메뉴바 글리프로
 
-- **도입**: 미정 (#52)
+- **도입**: v1.2.0 (#52)
 - **컨텍스트**: #49 로 팝오버에서 머지할 수 있게 됐지만, GitHub 영역은 막힌 PR 이 없고 CI 가 돌지 않으면 초록 점만 보인다. 머지할 PR 이 있는지는 팝오버를 열어 머지 버튼을 찾아봐야 알아서, 그것을 확인하려고 계속 클릭하게 됐다. 그런데 영역은 #45 (a) 에서 "글리프 · 점 · 숫자 하나" 를 상한으로 받았고 숫자 칸은 이미 처리할 PR 수가 쓰고 있다.
 - **결정**:
   - (a) "지금 머지 가능" 은 팝오버의 머지 버튼과 같은 기준이다 — 팝오버에 그려지는 내 PR 행(숨긴 레포 제외, 섹션 상한 `Config.githubSectionCaps.mine` 까지 — 그 너머는 "외 N건" 으로 접혀 버튼이 없다) 중 `GitHubMergePolicy.canOffer(_, section: .mine)` 이 참인 것. 그 PR 의 머지 요청이 나가 있거나(`.merging`) 끝난(`.merged`) 것은 세지 않는다. 실패(`.failed`)는 버튼이 다시 나오므로 센다. 판정은 `GitHubGlance` 의 순수 함수가 모델의 머지 상태를 인자로 받아 하고, 모델은 머지 상태가 바뀔 때마다 glance 를 다시 계산한다.
