@@ -185,7 +185,7 @@ struct OpenClawStatusClient: Sendable {
     static let detailDisplayLimit = 120
 
     private static func health(name: Any?, detail: String?) -> OpenClawHealth {
-        let detail = displayText(detail ?? "", limit: detailDisplayLimit)
+        let detail = DisplayText.flatten(detail ?? "", limit: detailDisplayLimit)
         switch name as? String {
         case "ok":       return .ok(detail: detail)
         case "degraded": return .degraded(detail: detail)
@@ -193,35 +193,10 @@ struct OpenClawStatusClient: Sendable {
         case let other?:
             // Something the agent knows and we don't — not provably healthy,
             // not provably down. Amber, with the raw word so it's diagnosable.
-            return .degraded(detail: "알 수 없는 상태: \(displayText(other, limit: unknownHealthDisplayLimit))")
+            return .degraded(detail: "알 수 없는 상태: \(DisplayText.flatten(other, limit: unknownHealthDisplayLimit))")
         case nil:
             return .degraded(detail: "알 수 없는 상태")
         }
-    }
-
-    /// Scalars kept per displayed text, on top of the character limit: one
-    /// character can stack any number of combining marks ("Zalgo" text), so a
-    /// character count alone doesn't bound what gets drawn.
-    static let displayScalarLimit = 480
-    /// Replaced by a space: control characters plus every line break —
-    /// U+2028/U+2029 aren't control characters but still break the line.
-    private static let lineBreaking = CharacterSet.controlCharacters.union(.newlines)
-
-    /// Remote text made safe to show on one line: control characters and line
-    /// breaks become spaces, then it's cut to `limit` characters and at most
-    /// `displayScalarLimit` scalars.
-    private static func displayText(_ raw: String, limit: Int) -> String {
-        let flattened = String(String.UnicodeScalarView(raw.unicodeScalars.map {
-            lineBreaking.contains($0) ? " " : $0
-        }))
-        var kept = ""
-        var scalarCount = 0
-        for character in flattened.trimmingCharacters(in: .whitespaces).prefix(limit) {
-            scalarCount += character.unicodeScalars.count
-            if scalarCount > displayScalarLimit { break }
-            kept.append(character)
-        }
-        return kept
     }
 
     private static func healEvent(_ any: Any?) -> OpenClawHealEvent? {

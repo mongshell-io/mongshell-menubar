@@ -56,6 +56,11 @@ struct UsageAPIClient {
     /// ```
     /// (`five_hour`/`seven_day` objects mirror session/weekly_all; the old
     /// `seven_day_<model>` keys are always null now.)
+    ///
+    /// Any other `kind` (a limit reset or bonus granted from the settings
+    /// page would arrive as one) is kept as an `ExtraLimit` rather than
+    /// dropped, and the code-named top-level objects (`iguana_necktie`…) are
+    /// noted in `unknownTopLevel` so the debug log can say what came.
     static func parse(_ data: Data) throws -> UsageSnapshot {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw APIError.badResponse
@@ -64,20 +69,37 @@ struct UsageAPIClient {
         var fivePct = 0, weeklyPct = 0
         var fiveReset: Date?, weeklyReset: Date?
         var models: [ModelUsage] = []
+        var extraLimits: [ExtraLimit] = []
+        var seenExtraKinds: [String: Int] = [:]
 
         let limits = root["limits"] as? [[String: Any]] ?? []
         for limit in limits {
             let pct = percentInt(limit["percent"])
             let reset = isoDate(limit["resets_at"])
+            // Pretty-printed in both rows below, so one model never shows
+            // under two spellings ("Fable" / "Fable 5") in the same section.
+            let scopeModel = scopeModelName(limit).map(prettyModelName)
             switch limit["kind"] as? String {
             case "session":
                 fivePct = pct; fiveReset = reset
             case "weekly_all":
                 weeklyPct = pct; weeklyReset = reset
             case "weekly_scoped":
-                let name = ((limit["scope"] as? [String: Any])?["model"] as? [String: Any])?["display_name"] as? String
-                models.append(ModelUsage(name: prettyModelName(name ?? "모델"), percent: pct))
-            default:
+                models.append(ModelUsage(name: scopeModel ?? "모델", percent: pct))
+            case let rawKind?:
+                let kind = displayText(rawKind)
+                guard !kind.isEmpty, extraLimits.count < Config.usageExtraLimitsCap else { break }
+                let seen = seenExtraKinds[kind, default: 0]
+                seenExtraKinds[kind] = seen + 1
+                extraLimits.append(ExtraLimit(
+                    id: seen == 0 ? kind : "\(kind)-\(seen)",
+                    kind: kind,
+                    scopeModel: scopeModel,
+                    percent: pct,
+                    resetAt: reset,
+                    resetText: TimeText.resetsAt(reset),
+                    isActive: limit["is_active"] as? Bool))
+            case nil:
                 break
             }
         }
@@ -98,9 +120,37 @@ struct UsageAPIClient {
             weeklyResetText: TimeText.resetsAt(weeklyReset),
             weeklyResetAt: weeklyReset,
             models: models,
+            extraLimits: extraLimits,
+            unknownTopLevel: unknownTopLevel(in: root),
             creditsText: creditsText(from: root),
             lastUpdated: Date()
         )
+    }
+
+    /// Top-level keys that are not "unknown": the ones the app reads, plus
+    /// ones it does not read but whose shape it knows (`seven_day_breakdown`
+    /// is an object of per-model rows, `weekly_scoped_shares` an array,
+    /// `member_dashboard_available` a bool) — those must not log a line on
+    /// every launch. Everything else is a code-named candidate.
+    private static let knownTopLevelKeys: Set<String> = [
+        "limits", "five_hour", "seven_day", "spend", "extra_usage",
+        "seven_day_breakdown", "weekly_scoped_shares", "member_dashboard_available",
+    ]
+
+    /// The code-named top-level objects, sorted by key so the summary line is
+    /// stable across polls. Null-valued keys (most of them) are skipped, as is
+    /// a key that flattens to nothing, and past the cap the rest are dropped.
+    private static func unknownTopLevel(in root: [String: Any]) -> [UnknownBucket] {
+        let buckets: [UnknownBucket] = root.keys.sorted().compactMap { key in
+            guard !knownTopLevelKeys.contains(key),
+                  let object = root[key] as? [String: Any] else { return nil }
+            let name = displayText(key)
+            guard !name.isEmpty else { return nil }
+            return UnknownBucket(key: name,
+                                 utilization: percentValue(object["utilization"]),
+                                 resetAt: isoDate(object["resets_at"]))
+        }
+        return Array(buckets.prefix(Config.usageUnknownTopLevelCap))
     }
 
     /// Usage-credits balance — shown ONLY when the user has the pay-as-you-go
@@ -121,13 +171,32 @@ struct UsageAPIClient {
 
     // MARK: helpers
 
+    private static func scopeModelName(_ limit: [String: Any]) -> String? {
+        let name = ((limit["scope"] as? [String: Any])?["model"] as? [String: Any])?["display_name"] as? String
+        return name.map(displayText)
+    }
+
+    /// Every response string that reaches a label or the log goes through
+    /// here: one line, at most `Config.usageDisplayTextLimit` characters.
+    private static func displayText(_ raw: String) -> String {
+        DisplayText.flatten(raw, limit: Config.usageDisplayTextLimit)
+    }
+
     /// `utilization` is a 0…100 percentage already — round + clamp, no scaling.
     private static func percentInt(_ any: Any?) -> Int {
+        percentValue(any) ?? 0
+    }
+
+    /// nil when the field is absent, not a number, or not finite. Clamped
+    /// while still a Double: `Int(_:)` traps on a value outside Int's range,
+    /// and a hostile `1e300` must fold to 100, not crash the poll.
+    private static func percentValue(_ any: Any?) -> Int? {
         let v: Double
         if let d = any as? Double { v = d }
         else if let i = any as? Int { v = Double(i) }
-        else { return 0 }
-        return max(0, min(100, Int(v.rounded())))
+        else { return nil }
+        guard v.isFinite else { return nil }
+        return Int(max(0, min(100, v.rounded())))
     }
 
     private static func isoDate(_ any: Any?) -> Date? {

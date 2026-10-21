@@ -46,6 +46,9 @@ enum SnapshotRenderer {
                   to: base, "menubar_host_strip_\(name)", scale: 3)
         }
         write(PopoverPreview(), to: base, "popover", scale: 2)
+        UsageModel.shared.presentForSnapshot(.snapshotExtraLimit(now: now), state: .loaded(.oauthLogin))
+        write(PopoverPreview(), to: base, "popover_extra_limit", scale: 2)
+        UsageModel.shared.presentForSnapshot(.sample, state: .signedOut)
         OpenClawModel.shared.presentForSnapshot(
             .snapshotOK(now: now, host: .snapshotOnBattery), now: now)
         write(PopoverPreview(), to: base, "popover_host_on_battery", scale: 2)
@@ -520,6 +523,25 @@ private struct GitHubSectionPreview: View {
         }
         .formStyle(.grouped)
         .frame(width: 380, height: 420)
+    }
+}
+
+private extension UsageSnapshot {
+    /// The sample plus one limit of a kind the app does not know — what a
+    /// reset/bonus from the settings page would look like. Kept out of
+    /// `.sample` itself: the signed-out popover must not show a fake bonus.
+    static func snapshotExtraLimit(now: Date) -> UsageSnapshot {
+        var snapshot = UsageSnapshot.sample
+        // Pinned to a weekday + clock like `.sample.weeklyResetAt`, so the
+        // caption reads "수요일 21:59 초기화" whenever the render runs.
+        let resetAt = Calendar.current.nextDate(
+            after: now,
+            matching: DateComponents(hour: 21, minute: 59, weekday: 4),
+            matchingPolicy: .nextTime)
+        snapshot.extraLimits = [ExtraLimit(
+            id: "bonus", kind: "bonus", scopeModel: nil, percent: 12,
+            resetAt: resetAt, resetText: TimeText.resetsAt(resetAt), isActive: true)]
+        return snapshot
     }
 }
 

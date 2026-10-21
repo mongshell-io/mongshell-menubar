@@ -28,7 +28,8 @@ struct HoverSummaryView: View {
     /// the consumed/remaining mode via `Meter`, the single source of truth
     /// shared with the gauges/popover; color-free text keeps this minimal.
     private func row(window: String, used: Int, reset: String) -> some View {
-        let display = Meter(usedPercent: used, showRemaining: prefs.showRemaining).displayPercent
+        let display = Meter(usedPercent: used, showRemaining: prefs.showRemaining,
+                            colorCoding: prefs.colorCoding).displayPercent
         return GridRow {
             Text("\(window) \(modeLabel)")
                 .font(.system(size: 12, weight: .medium))

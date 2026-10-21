@@ -79,11 +79,15 @@ enum Palette {
 struct Meter {
     let usedPercent: Int
     let showRemaining: Bool
+    /// `Preferences.colorCoding` — off means the mono fallback, never a
+    /// risk color (Views/CLAUDE.md § 디자인 토큰).
+    let colorCoding: Bool
 
     /// The number to display: consumed amount, or remaining amount.
     var displayPercent: Int { showRemaining ? 100 - usedPercent : usedPercent }
-    /// Color always reflects risk (how much is consumed), regardless of mode.
-    var color: Color { Palette.statusColor(for: usedPercent, colorCoding: true) }
+    /// Color always reflects risk (how much is consumed), regardless of mode —
+    /// or the mono fallback when color coding is off.
+    var color: Color { Palette.statusColor(for: usedPercent, colorCoding: colorCoding) }
 }
 
 extension Color {

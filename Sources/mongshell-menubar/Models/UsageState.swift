@@ -7,6 +7,42 @@ struct ModelUsage: Identifiable, Equatable {
     var id: String { name }
 }
 
+/// A `limits` entry whose `kind` the app does not know — e.g. a limit reset
+/// or bonus granted from the Claude settings page. Carried through rather than
+/// dropped so a new kind shows up in the popover without a release.
+struct ExtraLimit: Identifiable, Equatable {
+    /// `kind`, with an index suffix when the response repeats a kind.
+    let id: String
+    let kind: String
+    /// `scope.model.display_name` when the entry has one.
+    let scopeModel: String?
+    let percent: Int
+    let resetAt: Date?
+    /// e.g. "일요일 21:59 초기화"; empty when `resetAt` is nil.
+    let resetText: String
+    /// `is_active` as sent; nil when absent. Logged only — the response marks
+    /// `weekly_all` inactive too, so it does not mean "currently in effect".
+    let isActive: Bool?
+
+    /// Shown as the row label. Nothing is invented: the kind with its
+    /// underscores spaced, prefixed by the scope's model name when there is
+    /// one ("Fable 5 · bonus") — so a scoped row still differs from the
+    /// `weekly_scoped` row of the same model.
+    var name: String {
+        let spacedKind = kind.replacingOccurrences(of: "_", with: " ")
+        guard let scopeModel else { return spacedKind }
+        return "\(scopeModel) · \(spacedKind)"
+    }
+}
+
+/// A top-level response object the app does not read (`iguana_necktie`-style
+/// code names). Only the non-sensitive fields are kept, for the debug log.
+struct UnknownBucket: Equatable {
+    let key: String
+    let utilization: Int?
+    let resetAt: Date?
+}
+
 /// Normalized usage snapshot that drives every view. Populated from the
 /// oauth/usage response, or from sample data when signed out.
 ///
@@ -28,6 +64,10 @@ struct UsageSnapshot: Equatable {
     var weeklyResetAt: Date?
     /// Per-model weekly rows (Opus/Fable/…).
     var models: [ModelUsage]
+    /// `limits` entries of a kind the app does not know, in response order.
+    var extraLimits: [ExtraLimit]
+    /// Top-level objects the app does not read, sorted by key. Debug log only.
+    var unknownTopLevel: [UnknownBucket]
 
     /// Usage-credits status when meaningful (e.g. "$4.20 남음" / "크레딧 소진"),
     /// else nil. Derived from the response `spend`/`extra_usage`.
@@ -46,6 +86,8 @@ struct UsageSnapshot: Equatable {
             matching: DateComponents(hour: 21, minute: 59, weekday: 1),
             matchingPolicy: .nextTime),
         models: [ModelUsage(name: "Fable 5", percent: 25)],
+        extraLimits: [],
+        unknownTopLevel: [],
         creditsText: nil,
         lastUpdated: .distantPast
     )
