@@ -116,4 +116,4 @@ NOTARY_PROFILE="mongshell-menubar-notary" ./scripts/release.sh
 
 앱 번들의 `CFBundleShortVersionString` 은 `make_app.sh` 가 빌드 시 가장 가까운 `vX.Y.Z` 태그에서 찍는다 (Decision #47) — `Resources/Info.plist` 의 `0.0.0` 은 자리표시다. 릴리스 빌드 전에 `git fetch --tags` 로 태그를 받아 둔다 — `release.sh` 는 번들 버전이 `0.0.0` 자리표시로 남으면 서명 전에 멈춘다.
 
-`make_app.sh` 의 ad-hoc 서명은 로컬 전용이다 — 남에게 주면 Gatekeeper 가 막고, 빌드마다 서명이 바뀌어 Keychain 토큰이 무효화된다. 준비물과 절차는 [README](../README.md) § 배포 참조.
+`make_app.sh` 의 서명은 로컬 전용이다 — 남에게 주면 Gatekeeper 가 막는다. 서명 신원은 Apple Development 인증서가 있으면 그것이고, 없으면 팀 ID 가 없는 서명이라 빌드마다 Keychain 재승인이 필요하다 (Decision #68, 고르는 순서와 인증서 발급은 [README](../README.md) § 개발용). 배포 준비물과 절차는 [README](../README.md) § 배포 참조.

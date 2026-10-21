@@ -31,26 +31,42 @@ fi
 
 # Code signature so Keychain / UserNotifications / ASWebAuth work locally.
 #
-# Prefer a self-signed code-signing certificate over an ad-hoc signature. The
-# Keychain's "always allow" grant is bound to the app's designated requirement,
-# and an ad-hoc signature pins that to the binary's cdhash — which changes on
-# every rebuild, so the Claude Code credentials prompt comes back each time. A
-# certificate makes the requirement `identifier … and certificate leaf = H"…"`,
-# which survives rebuilds. See README § 개발용 for creating one.
+# The Keychain recognizes the app twice. An item's ACL matches the app's
+# designated requirement, and the item's partition list matches a partition
+# ID derived from the signature: `teamid:<TEAMID>` when the signature carries
+# a Team ID, `cdhash:<hash>` when it doesn't. The cdhash changes on every
+# rebuild, so any signature without a Team ID — ad-hoc, or a self-signed
+# certificate — brings the "allow" prompt back after each rebuild, even while
+# the ACL still matches (a self-signed leaf keeps the ACL, not the partition).
+# An Apple Development certificate (free with an Apple ID, issued by Xcode)
+# carries a Team ID, so one "Always Allow" survives rebuilds. README § 개발용.
 #
-# NOTE: `find-identity` without `-v` on purpose. A self-signed root is reported
-# as CSSMERR_TP_NOT_TRUSTED (no trust anchor), so `-v` filters it out — but
-# codesign doesn't need a trust chain, and Keychain ACL matching only compares
-# the leaf certificate's hash. Requiring `-v` would mean never using the cert.
-SIGN_ID="${SIGN_ID:-mongshell-menubar Dev}"
-if security find-identity -p codesigning 2>/dev/null | grep -qF "\"$SIGN_ID\""; then
-  echo "▶ codesign ($SIGN_ID)"
-  codesign --force --deep --sign "$SIGN_ID" "$APP" || {
-    echo "  (signing with '$SIGN_ID' failed — falling back to ad-hoc)"
+# Identity order: an explicit SIGN_ID → the first valid Apple Development
+# identity → the self-signed "mongshell-menubar Dev" → ad-hoc.
+#
+# Apple Development is picked by its SHA-1 rather than its name: after a
+# renewal two identities share the name and codesign refuses an ambiguous one.
+# The self-signed lookup stays without `-v`: a self-signed root is reported as
+# CSSMERR_TP_NOT_TRUSTED, which `-v` filters out, yet codesign doesn't need a
+# trust chain.
+sign_with() {  # $1 = identity (name or SHA-1), $2 = what to call it in the log
+  echo "▶ codesign ($2)"
+  codesign --force --deep --sign "$1" "$APP" || {
+    echo "  (signing with '$2' failed — falling back to ad-hoc)"
     codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
   }
+}
+
+SELF_SIGNED_ID="mongshell-menubar Dev"
+if [[ -n "${SIGN_ID:-}" ]]; then
+  sign_with "$SIGN_ID" "$SIGN_ID"
+elif DEV_LINE="$(security find-identity -v -p codesigning 2>/dev/null | grep -m1 '"Apple Development: ')"; then
+  sign_with "$(awk '{print $2}' <<<"$DEV_LINE")" "$(cut -d'"' -f2 <<<"$DEV_LINE")"
+elif security find-identity -p codesigning 2>/dev/null | grep -qF "\"$SELF_SIGNED_ID\""; then
+  echo "  (no Apple Development identity — '$SELF_SIGNED_ID' has no Team ID, so Keychain prompts repeat per rebuild)"
+  sign_with "$SELF_SIGNED_ID" "$SELF_SIGNED_ID"
 else
-  echo "▶ ad-hoc codesign (no '$SIGN_ID' identity — Keychain prompts will repeat)"
+  echo "▶ ad-hoc codesign (no signing identity — Keychain prompts will repeat per rebuild)"
   codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || \
     echo "  (codesign skipped/failed — app still runs unsigned for local dev)"
 fi
