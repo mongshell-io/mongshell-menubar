@@ -1,7 +1,7 @@
 import Foundation
 
-/// The transport the HTTPS clients share (`OpenClawStatusClient`,
-/// `GitHubAPIClient`): a session that follows no redirect and keeps nothing on
+/// The transport the HTTPS clients share (`UsageAPIClient`,
+/// `OpenClawStatusClient`, `GitHubAPIClient`): a session that follows no redirect and keeps nothing on
 /// disk, and a body read that gives up past a byte cap. Each client decides
 /// its own cap, its own timeout and which status codes carry a body worth
 /// reading — this only enforces what they decided.

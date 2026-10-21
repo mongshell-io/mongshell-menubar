@@ -13,7 +13,9 @@ import Foundation
 // (1e300, Int.max, non-numbers) fold to 100/0/nil without a trap; response
 // strings reach labels and the log as one bounded line, and unknown rows
 // stop at the cap; the status code maps onto the error the model branches
-// on (401/403 → re-auth, 429 → back off with Retry-After); and the `Meter`
+// on (401/403 → re-auth, 429 → back off with Retry-After, a refused 3xx →
+// an HTTP error); only a 200 body is read and the real shape sits far under
+// the response cap; and the `Meter`
 // shows the mode's number with the risk color (or monochrome when color
 // coding is off).
 //
@@ -343,6 +345,21 @@ do {
     check("429 with a non-numeric Retry-After → rateLimited(nil)",
           interpretError(429, retryAfter: "Wed, 21 Oct 2026 07:28:00 GMT") == .rateLimited(retryAfter: nil))
     check("500 → http(500)", interpretError(500) == .http(500))
+    // Redirects are refused, so a 3xx comes back as the response itself.
+    check("302 (refused redirect) → http(302), not followed", interpretError(302) == .http(302))
+}
+
+// MARK: transport — only a 200 body is read, and the real shape fits the cap
+
+do {
+    check("200 reads the body", UsageAPIClient.readsBody(statusCode: 200))
+    // A large 401/429 page must still surface as re-auth / back-off, not as
+    // "too large" — the size cap only applies to bodies that are read.
+    check("401/403/429/302/500 are judged on the code alone",
+          [401, 403, 429, 302, 500].allSatisfy { !UsageAPIClient.readsBody(statusCode: $0) })
+    let real = Int64(response().count)
+    check("real-shaped response is far under the cap",
+          real * 100 < Config.usageMaxResponseBytes, "\(real) bytes vs \(Config.usageMaxResponseBytes)")
 }
 
 // MARK: usage meter — number follows the mode, color follows risk and the toggle

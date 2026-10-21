@@ -106,12 +106,13 @@ echo "▶ running github tests"
 # with its mono fallback). `AuthDebugLog` is compiled for its timestamp
 # format, which pulls in the constants and the token type it names; nothing
 # here touches the network or the Keychain. The @MainActor model is left out,
-# as above.
+# as above. `BoundedHTTP` rides along because the client's transport names it.
 echo "▶ compiling usage tests"
 swiftc -o "$OUT/usage-tests" \
   "$APP/Design/Palette.swift" \
   "$APP/Models/UsageState.swift" \
   "$APP/Services/AuthDebugLog.swift" \
+  "$APP/Services/BoundedHTTP.swift" \
   "$APP/Services/Config.swift" \
   "$APP/Services/Credentials.swift" \
   "$APP/Services/DisplayText.swift" \
