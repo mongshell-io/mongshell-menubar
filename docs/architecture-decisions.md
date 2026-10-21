@@ -15,7 +15,7 @@
 |---|-----------|------|
 | 1 | 자격증명 = Keychain 2단 폴백 (자체 OAuth → Claude Code CLI) | active |
 | 2 | 비공식 사용량 엔드포인트 + Claude Code OAuth client 재사용 | active (ToS 회색지대 — 의식적 수용) |
-| 3 | 배포 이원화 — ad-hoc 로컬 빌드 기본, Developer ID 공증은 선택 | active |
+| 3 | 배포 이원화 — ad-hoc 로컬 빌드 기본, Developer ID 공증은 선택 | active (로컬 빌드의 서명 신원과, 토큰 유지 이득이 남에게 배포하는 경우로 좁혀진 것은 #68) |
 | #3 | 메뉴바를 단일 Claude 마크 + 5h/7d 동시 표시로 | active (표시 형태는 #5 에서 링 게이지로 컴팩트화) |
 | #4 | openclaw 통합을 완전 선택 기능으로 (미설치 시 완전 비가시) | superseded by #25 |
 | #5 | openclaw 를 두 번째 status item 이 아닌 단일 아이템에 일원화 | active (서버 점을 아래 줄에 쌓는 것은 #31) |
@@ -30,6 +30,7 @@
 | #47 | 앱 번들 버전(`CFBundleShortVersionString`)은 빌드 시 가장 가까운 `vX.Y.Z` 태그에서 찍는다 | active |
 | #49 | 내 PR 의 squash 머지를 팝오버에서 — 첫 원격 쓰기 (`CLEAN` 인 내 PR 만, 한 번 클릭, `expectedHeadOid`) | active (두 번 누르기 → 한 번 클릭은 후속) |
 | #52 | 머지 가능한 내 PR 을 메뉴바 글리프로 — 숫자를 늘리지 않고 글리프를 바꾼다, 개수는 hover | active |
+| #68 | 로컬 빌드는 팀 ID 가 있는 Apple Development 인증서로 서명한다 — 키체인 파티션 목록이 팀 ID 없는 서명을 빌드 해시로 식별하므로 | active |
 
 ---
 
@@ -340,3 +341,20 @@
   - 결정: 머지 가능이면 `Palette.mergePillFill`(= `green`)로 채운 14×13pt 둥근 알약 위에 merge 글리프를 흰색(`mergePillGlyph`) 9pt bold 로 그린다. 없으면 기존 회색 pull 글리프 그대로다. 글리프 칸은 상태와 무관하게 알약 폭(14pt)으로 고정한다 — (b) 의 "pull 글리프 폭 고정 칸" 을 대체한다.
   - 이유: 채운 면적이 선보다 훨씬 커서 색 변화가 글랜스에 들어온다. 알약은 자기 배경이라 상태바 라이트·다크 어디서나 같은 대비다. 칸을 알약 폭으로 고정하면 상태가 바뀌어도 status item 이 흔들리지 않는다는 (b) 의 폭 불변을 지킨다.
   - 결과·트레이드오프: 영역이 상시 6pt 넓어진다(약 46 → 52pt) — 머지 가능 여부가 바뀔 때마다 옆 항목이 밀리는 것보다 낫다고 봤다. 알약은 영역에서 가장 강한 시각 요소가 되지만, 막힘(빨간 점 + 숫자)보다 덜 급한 신호다 — 머지 가능은 "할 수 있는 것" 이라 눈에 띄는 쪽이 맞다고 봤다.
+
+## Decision #68: 로컬 빌드는 팀 ID 가 있는 Apple Development 인증서로 서명한다
+
+- **도입**: 미정 (#68)
+- **컨텍스트**: 재빌드한 앱을 처음 띄울 때마다 키체인 접근 프롬프트가 다시 떴고, 거부하면 토큰을 못 읽어 로그인을 다시 요구했다. Decision 3 은 이것을 ad-hoc 서명의 대가로 받아들였고, `make_app.sh` 는 자기 서명 인증서(`mongshell-menubar Dev`)로 서명하면 designated requirement 가 `certificate leaf` 로 고정되어 해결된다고 보았다. 그러나 키체인은 ACL 과 별도로 항목의 **파티션 목록**을 검사하고, 파티션 ID 는 서명에 팀 ID 가 있으면 `teamid:`, 없으면 `cdhash:` 다. 자기 서명 인증서에는 팀 ID 가 없어 빌드마다 새 `cdhash:` 가 되고, ACL 이 맞아도 프롬프트가 다시 떴다. 2026-10-21 에 비밀값 없이 ACL 을 덤프해 보니 `gh:github.com` 항목의 파티션 목록에 `cdhash:` 가 15개 쌓여 있었고, `com.mongshell.menubar.tokens` 는 ACL 앱이 인증서 요구사항 하나뿐인데 파티션에 `cdhash:` 가 3개였다.
+- **결정**: `make_app.sh` 는 서명 신원을 이 순서로 고른다 — 명시한 `SIGN_ID` → 키체인의 유효한 `Apple Development:` 신원(이름이 아니라 SHA-1 로 지정) → 자기 서명 `mongshell-menubar Dev` → ad-hoc. 인증서 서명에는 `release.sh` 처럼 hardened runtime(`--options runtime`)을 켠다. README 는 자기 서명 인증서 대신 Apple Development 인증서 발급을 안내하고, 그 개인 키가 `codesign` 에 이미 열려 있어 무엇이 넓어지는지 적는다.
+- **이유**: 대안은 셋이었다. (a) 자기 서명 인증서 유지 — 위 증거대로 파티션 검사에서 걸려 문제를 풀지 못한다. (b) Data Protection 키체인 + access group — 엔타이틀먼트와 프로비저닝이 필요하고, 다른 앱의 항목(Claude Code·gh CLI)은 여전히 기존 키체인에 있어 그 프롬프트는 남는다. (c) Apple Development 인증서 — 무료 Apple ID 로 Xcode 에서 발급되고 팀 ID 가 찍혀 파티션 ID 가 `teamid:` 로 빌드와 무관해진다. 발급에만 Xcode 가 필요하고 빌드는 계속 Command Line Tools 로 되므로 Decision 3·#11-1 의 "Xcode 없이 빌드" 전제를 깨지 않는다.
+- **결과**:
+  - Apple Development 인증서가 있는 맥에서는 서명이 바뀐 직후 항목마다 한 번 *항상 허용* 하면 그 뒤 재빌드에 묻지 않는다.
+  - 인증서가 없는 맥은 지금과 같다 — 자기 서명이나 ad-hoc 으로 떨어지고 빌드마다 재승인이 필요하다. 기본 설치 경로는 여전히 Apple 계정이 필요 없다.
+  - 자기 서명 경로는 기존 설정을 깨지 않으려고 폴백으로만 남긴다. 프롬프트 측면의 이득은 없다.
+  - Decision 3 의 "Developer ID 로 서명하면 토큰이 유지된다 — 유료 경로의 실질 이득" 은 남에게 배포하는 경우(Gatekeeper·공증, 받는 사람의 토큰 유지)로 좁혀진다. 직접 빌드하는 사람은 무료 Apple ID 로 같은 효과를 얻는다.
+- **트레이드오프**:
+  - 허용 범위가 넓어진다. 전에는 승인이 그 빌드 하나(`cdhash:`)에 묶였지만, 이제는 identifier 가 `com.mongshell.menubar` 이고 이 Apple ID 의 Apple Development 인증서로 서명된 모든 바이너리가 앱이 만든 항목(`com.mongshell.menubar.tokens` 의 OAuth 토큰, 자체 GitHub PAT 항목)을 프롬프트 없이 읽는다. ACL 이 인증서 이름까지 보므로 팀 ID 만 같은 다른 인증서로는 안 된다.
+  - 그 경계는 두 가지에 기댄다. 하나는 서명 개인 키다 — Xcode 가 만든 개인 키는 ACL 에 `/usr/bin/codesign` 이 들어 있어 (2026-10-21 이 맥에서 비밀값 없이 확인) 같은 사용자의 아무 프로세스나 묻지 않고 이 신원으로 서명할 수 있다. 넓어진 범위는 기본으로 열려 있고, README 가 이 사실을 적는다. 다른 하나는 프로세스 무결성이다 — hardened runtime 으로 이미 서명된 앱에 라이브러리를 주입하는 경로를 막는다.
+  - 수용 근거: 1인용 도구다. 그리고 `Claude Code-credentials` 와 `gh:github.com` 은 ACL 에 `/usr/bin/security` 가, 파티션 목록에 `apple-tool:` 이 들어 있어 같은 사용자 프로세스가 `security` 명령으로 원래부터 프롬프트 없이 읽을 수 있다 (2026-10-21 비밀값 없는 ACL 덤프). 같은 사용자로 도는 악성 코드에 대해 새로 열리는 것은 앱이 만든 항목뿐이다.
+  - 개인 팀의 Apple Development 인증서는 유효기간이 있어 재발급이 필요하다. 이 서명의 designated requirement 는 인증서 지문이 아니라 Apple 앵커와 인증서 이름(`certificate leaf[subject.CN]`)으로 정해지므로, 재발급한 인증서의 이름이 같으면 ACL 이 그대로 맞고 팀 ID 가 같아 파티션 목록도 유지된다. 이름이 바뀌거나 다른 Apple ID 로 바꾸면 항목마다 한 번 다시 허용해야 한다.

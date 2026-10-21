@@ -228,7 +228,7 @@ Claude Code 사용자는 로그인 없이 기존 토큰을 재사용한다. 다�
 
 | 경로 | 도구 | 서명 | 용도 |
 |---|---|---|---|
-| 로컬 사용 | `scripts/make_app.sh` | ad-hoc | 각자 빌드해서 쓰기 (Apple 계정 불필요) |
+| 로컬 사용 | `scripts/make_app.sh` | Apple Development 인증서(무료 Apple ID, 선택)가 있으면 그것, 없으면 팀 ID 없는 서명 — 자기 서명·ad-hoc (Decision #68) | 각자 빌드해서 쓰기 (기본 경로는 Apple 계정 불필요) |
 | 지인 공유 | `scripts/release.sh` | Developer ID + 공증 | `.dmg` 배포 (Gatekeeper 통과, 업데이트 후 토큰 유지) |
 | 서버 에이전트 | `server/install.sh` | 없음 (서버 맥에서 release 빌드) | openclaw·서버 호스트 감시 에이전트 LaunchAgent 등록 + Tailscale Funnel 공개 (8443) |
 

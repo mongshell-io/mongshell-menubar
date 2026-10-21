@@ -91,7 +91,7 @@ GraphQL API 요청 1회(3분 주기, 설정 1~10분; 팝오버를 열면 즉시,
 (또는 Command Line Tools)** 뿐.
 ```bash
 git clone <이 저장소 URL> && cd mongshell-menubar
-./scripts/make_app.sh          # release 빌드 → mongshell-menubar.app 생성(로컬 ad-hoc 서명)
+./scripts/make_app.sh          # release 빌드 → mongshell-menubar.app 생성(로컬 서명)
 open mongshell-menubar.app                 # 메뉴바에 아이콘 등장
 ```
 처음 실행하면:
@@ -104,7 +104,7 @@ open mongshell-menubar.app                 # 메뉴바에 아이콘 등장
 > 크래시합니다. 항상 `.app` 번들(`make_app.sh`)로 실행하세요.
 
 > 재빌드할 때마다 키체인 프롬프트(Claude Code 항목, GitHub 표시를 켰다면 gh 항목까지)가
-> 다시 뜬다면 ad-hoc 서명 때문입니다 —
+> 다시 뜬다면 앱 서명에 팀 ID 가 없기 때문입니다. 무료 Apple ID 로 없앨 수 있습니다(선택) —
 > [로컬 코드 서명 인증서](#키체인-프롬프트가-재빌드마다-다시-뜰-때--로컬-코드-서명-인증서) 참고.
 
 ### 개발용
@@ -115,47 +115,54 @@ swift build && MONGSHELL_SNAPSHOT=/tmp/mongshell_snaps ./.build/debug/mongshell-
 ```
 
 #### 키체인 프롬프트가 재빌드마다 다시 뜰 때 — 로컬 코드 서명 인증서
-`make_app.sh` 는 서명할 인증서가 없으면 ad-hoc 서명(`--sign -`)으로 떨어집니다. 이때
-designated requirement 가 `cdhash H"…"` 로 바이너리 해시에 고정되는데, 키체인의 *항상 허용*
-은 이 requirement 를 기준으로 앱을 식별합니다. 재빌드하면 해시가 바뀌어 macOS 가 다른 앱으로
-보므로 `Claude Code-credentials` 접근 프롬프트가 매번 다시 뜹니다 (GitHub 표시를 켰다면
-gh 의 `gh:github.com` 항목도 같습니다).
+**팀 ID 가 없는 서명(ad-hoc, 자기 서명 인증서)은 재빌드할 때마다** 키체인 프롬프트가 다시
+뜹니다. 키체인이 그런 앱을 빌드마다 바뀌는 바이너리 해시로 알아보기 때문입니다. 대상은
+`Claude Code-credentials`, 앱 자체 로그인 토큰(`com.mongshell.menubar.tokens`), GitHub 표시를
+켰다면 gh 의 `gh:github.com` 항목입니다. 여기서 거부하면 앱이 토큰을 못 읽어 로그인을 다시 하라고
+보입니다. 키체인이 앱을 알아보는 방식과 이 선택이 넓히는 범위는
+[Decision #68](docs/architecture-decisions.md#decision-68-로컬-빌드는-팀-id-가-있는-apple-development-인증서로-서명한다)
+이 권위입니다.
 
-자기 서명 인증서로 서명하면 requirement 가
-`identifier "com.mongshell.menubar" and certificate leaf = H"…"` 가 되어 재빌드에도 신원이
-유지되고, *항상 허용* 을 한 번만 누르면 됩니다. Apple Developer 계정은 필요 없습니다.
+`make_app.sh` 는 이 순서로 서명 신원을 고릅니다.
 
-1. **Certificate Assistant** 실행:
+1. `SIGN_ID` 환경변수로 넘긴 신원
+2. 키체인의 유효한 **Apple Development** 인증서 — 팀 ID 가 있어 *항상 허용* 이 재빌드 후에도 유지됩니다
+3. 자기 서명 인증서 `mongshell-menubar Dev` — 팀 ID 가 없어 재빌드 프롬프트는 막지 못합니다
+4. ad-hoc 서명(`--sign -`)
+
+**Apple Development 인증서 만들기 (만료 시 같은 절차로 재발급).** 유료 Apple Developer 계정은
+필요 없습니다. 무료 Apple ID 로 Xcode 가 개인 팀(Personal Team)의 Apple Development 인증서를
+발급합니다. Xcode 는 이 발급과 만료 시 재발급에만 필요하고, 빌드는 계속 Command Line Tools 로
+됩니다.
+
+1. Xcode → Settings → Accounts 에서 Apple ID 를 추가합니다.
+2. 그 계정을 고르고 **Manage Certificates…** → `+` → **Apple Development** 를 누릅니다.
+3. 인증서가 보이는지 확인합니다.
    ```bash
-   open "/System/Library/CoreServices/Certificate Assistant.app"
+   security find-identity -v -p codesigning   # "Apple Development: …" 가 보이면 됩니다
    ```
-   > macOS 26 에서는 Keychain Access 를 열면 Passwords 앱으로 리다이렉트되고 **인증서 지원
-   > 메뉴가 없습니다.** 예전 문서의 `Keychain Access → 인증서 지원 → 인증서 생성…` 경로 대신
-   > Certificate Assistant 를 직접 띄우세요.
-2. **직접 인증서 생성(Create a Certificate for Yourself)** 선택
-3. 이름 `mongshell-menubar Dev` / 신원 유형 **자기 서명 루트** / 인증서 유형 **코드 서명**
-   - 유효기간 기본값은 365일 — 늘리려면 "기본값 무효화" 체크 후 `Validity Period` 에 `3650`
-   - `Key Usage` 는 `Signature` 만 (`Certificate Signing` 은 켜지 마세요),
-     `Extended Key Usage` 는 `Code Signing`, `Subject Alternate Name` 은 체크 해제
-   - 저장 위치 Keychain 은 **`login`**
-4. 확인 → `./scripts/make_app.sh`
-   ```bash
-   security find-identity -p codesigning   # -v 없이
-   ```
+4. `./scripts/make_app.sh` 를 실행합니다. 로그에 `▶ codesign (Apple Development: …)` 가 찍힙니다.
 
-`-v` 를 붙이면 `0 valid identities found` 로 나옵니다. 자기 서명 루트는 신뢰 앵커가 없어
-`CSSMERR_TP_NOT_TRUSTED` 로 분류되기 때문인데 **이 상태로도 문제없습니다** — `codesign` 은 신뢰
-체인을 요구하지 않고, 키체인 ACL 매칭도 리프 인증서 지문 비교라 신뢰 여부와 무관합니다. 따라서
-`security add-trusted-cert` 로 신뢰 설정을 건드릴 필요가 없습니다. `make_app.sh` 도 같은 이유로
-`-v` 없이 인증서를 찾습니다.
-
-이름을 다르게 지었으면 `SIGN_ID="<인증서 이름>" ./scripts/make_app.sh` 로 넘기세요. 서명이
-제대로 붙었는지는 이렇게 확인합니다 — `cdhash` 가 아니라 `certificate leaf` 가 나와야 합니다.
+서명이 바뀐 직후 처음 실행하면 키체인 프롬프트가 항목마다 한 번씩 더 뜹니다. 여기서 *항상 허용*
+을 누르면 그 뒤로는 재빌드해도 묻지 않습니다. 팀 ID 가 찍혔는지는 이렇게 확인합니다 —
+`TeamIdentifier=not set` 이 아니라 팀 ID 가 나와야 합니다.
 ```bash
-codesign -dvvv --requirements - mongshell-menubar.app
+codesign -dv mongshell-menubar.app 2>&1 | grep TeamIdentifier
 ```
-첫 서명 때 개인 키 접근 프롬프트가 한 번 뜨는데 여기서도 *항상 허용* 을 누르면 됩니다.
-배포용 `release.sh` 는 Developer ID 로 다시 서명하므로 영향받지 않습니다.
+
+**알고 쓰셔야 할 것.** Xcode 가 만든 개인 키는 접근 목록에 `codesign` 이 이미 들어 있어, 빌드할
+때 묻지 않습니다. 그 말은 이 맥에서 같은 사용자로 도는 어떤 프로그램이든 묻지 않고 이 인증서로
+서명할 수 있다는 뜻입니다. 그런 프로그램은 이 앱의 신원을 흉내 낸 바이너리를 만들어 앱이 저장한
+로그인 토큰과 GitHub PAT 를 프롬프트 없이 읽을 수 있습니다. 이 설정으로 새로 열리는 범위와
+수용한 근거는 Decision #68 에 있습니다.
+
+재발급한 인증서의 이름이 같으면 키체인 허용도 그대로 유지됩니다. 다시 묻는다면 항목마다 한 번
+*항상 허용* 하면 됩니다.
+
+자기 서명 인증서 `mongshell-menubar Dev` 를 이미 만들어 두셨다면 지워도 됩니다. 팀 ID 가 없어
+재빌드 프롬프트를 막지 못합니다. 다른 이름의 인증서를 쓰려면
+`SIGN_ID="<인증서 이름>" ./scripts/make_app.sh` 로 넘기세요. 배포용 `release.sh` 는 Developer ID
+로 다시 서명하므로 영향받지 않습니다.
 
 테스트는 `swift test` 가 아니라 `scripts/test.sh` 입니다 — `swift test` 는 XCTest 나
 swift-testing 을 요구하는데 둘 다 Command Line Tools 에 들어 있지 않아서, Xcode 없이 빌드
@@ -241,8 +248,8 @@ Sources/mongshell-openclaw-agent/     서버 맥용 에이전트 (server/README.
   사용합니다. 로그인·토큰이 없으면 UI는 샘플 데이터로 렌더됩니다.
 
 ## 배포 (지인에게 서명된 dmg 공유)
-`scripts/make_app.sh`는 로컬 개발용 ad-hoc 서명까지만 하므로, 남에게 주면 Gatekeeper가
-차단합니다. 서명·공증된 `.dmg`는 `scripts/release.sh`로 만듭니다.
+`scripts/make_app.sh`는 로컬 개발용 서명(Apple Development 인증서가 없으면 팀 ID 없는 서명)
+까지만 하므로, 남에게 주면 Gatekeeper가 차단합니다. 서명·공증된 `.dmg`는 `scripts/release.sh`로 만듭니다.
 
 **준비물(1회):** Apple Developer 계정($99/년) + **Developer ID Application** 인증서.
 ```bash
@@ -258,8 +265,8 @@ DEV_ID="Developer ID Application: Your Name (TEAMID)" \
 NOTARY_PROFILE="mongshell-menubar-notary" scripts/release.sh
 # → mongshell-menubar.dmg 생성. 받는 사람은 Applications로 드래그 후 실행.
 ```
-정식 Developer ID로 서명하면 **로그인 토큰이 업데이트 후에도 유지**됩니다(ad-hoc은 빌드마다
-서명이 바뀌어 재로그인 필요). 각 사용자는 자기 Claude 계정으로 로그인하며, 토큰은 각자
+정식 Developer ID로 서명하면 **로그인 토큰이 업데이트 후에도 유지**됩니다(팀 ID 가 없는
+서명은 빌드마다 키체인 재승인이 필요). 각 사용자는 자기 Claude 계정으로 로그인하며, 토큰은 각자
 Keychain에만 저장됩니다.
 
 > **주의:** 이 앱은 Claude Code의 client_id/User-Agent와 비공개 엔드포인트를 사용하는

@@ -31,26 +31,49 @@ fi
 
 # Code signature so Keychain / UserNotifications / ASWebAuth work locally.
 #
-# Prefer a self-signed code-signing certificate over an ad-hoc signature. The
-# Keychain's "always allow" grant is bound to the app's designated requirement,
-# and an ad-hoc signature pins that to the binary's cdhash — which changes on
-# every rebuild, so the Claude Code credentials prompt comes back each time. A
-# certificate makes the requirement `identifier … and certificate leaf = H"…"`,
-# which survives rebuilds. See README § 개발용 for creating one.
+# A signature without a Team ID (ad-hoc, self-signed) makes the Keychain ask
+# again after every rebuild; an Apple Development certificate doesn't. Why,
+# and what that widens: Decision #68. Setup: README § 개발용.
 #
-# NOTE: `find-identity` without `-v` on purpose. A self-signed root is reported
-# as CSSMERR_TP_NOT_TRUSTED (no trust anchor), so `-v` filters it out — but
-# codesign doesn't need a trust chain, and Keychain ACL matching only compares
-# the leaf certificate's hash. Requiring `-v` would mean never using the cert.
-SIGN_ID="${SIGN_ID:-mongshell-menubar Dev}"
-if security find-identity -p codesigning 2>/dev/null | grep -qF "\"$SIGN_ID\""; then
-  echo "▶ codesign ($SIGN_ID)"
-  codesign --force --deep --sign "$SIGN_ID" "$APP" || {
-    echo "  (signing with '$SIGN_ID' failed — falling back to ad-hoc)"
-    codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
-  }
+# The first identity present wins (order below). An explicit SIGN_ID that
+# fails to sign stops the build. An identity picked here that fails falls back
+# straight to ad-hoc, with a warning on stderr. Certificate signatures get the
+# hardened runtime, as release.sh does.
+#
+# Apple Development is picked by its SHA-1 rather than its name: after a
+# renewal two identities can share the name, and codesign refuses an
+# ambiguous one. The self-signed lookup stays without `-v`: a self-signed root
+# is reported as CSSMERR_TP_NOT_TRUSTED, which `-v` filters out, yet codesign
+# doesn't need a trust chain. Both listings are read into variables first, so
+# no `grep` can close a pipe on `security` and trip pipefail.
+sign_with() {  # $1 = identity (name or SHA-1), $2 = name for the log, $3 = stop|adhoc on failure
+  echo "▶ codesign ($2)"
+  codesign --force --deep --options runtime --sign "$1" "$APP" && return
+  if [[ "$3" == stop ]]; then
+    echo "✗ signing with SIGN_ID '$2' failed — fix SIGN_ID or unset it" >&2
+    exit 1
+  fi
+  echo "  (signing with '$2' failed — falling back to ad-hoc; Keychain prompts will repeat per rebuild)" >&2
+  codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+}
+
+SELF_SIGNED_ID="mongshell-menubar Dev"
+IDENTITIES="$(security find-identity -p codesigning 2>/dev/null || true)"
+VALID_IDENTITIES="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+DEV_LINES="$(grep '"Apple Development: ' <<<"$VALID_IDENTITIES" || true)"
+if [[ -n "${SIGN_ID:-}" ]]; then
+  sign_with "$SIGN_ID" "$SIGN_ID" stop
+elif [[ -n "$DEV_LINES" ]]; then
+  DEV_LINE="$(head -n 1 <<<"$DEV_LINES")"
+  if (( $(wc -l <<<"$DEV_LINES") > 1 )); then
+    echo "  (several Apple Development identities — using the first; pin one with SIGN_ID=<SHA-1>)" >&2
+  fi
+  sign_with "$(awk '{print $2}' <<<"$DEV_LINE")" "$(cut -d'"' -f2 <<<"$DEV_LINE")" adhoc
+elif grep -qF "\"$SELF_SIGNED_ID\"" <<<"$IDENTITIES"; then
+  echo "  (no Apple Development identity — '$SELF_SIGNED_ID' has no Team ID, so Keychain prompts repeat per rebuild)" >&2
+  sign_with "$SELF_SIGNED_ID" "$SELF_SIGNED_ID" adhoc
 else
-  echo "▶ ad-hoc codesign (no '$SIGN_ID' identity — Keychain prompts will repeat)"
+  echo "▶ ad-hoc codesign (no signing identity — Keychain prompts will repeat per rebuild)"
   codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || \
     echo "  (codesign skipped/failed — app still runs unsigned for local dev)"
 fi
