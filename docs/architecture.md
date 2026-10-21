@@ -17,7 +17,7 @@ non_goals:
 | 최소 플랫폼 | macOS 26 (Decision #40) |
 | UI | SwiftUI 뷰 + AppKit 호스팅 (`NSStatusItem`, `NSPopover`, `NSWindow`) |
 | 동시성 | Swift Concurrency (`@MainActor` 격리, `Task`, `async/await`) |
-| 네트워크 | `URLSession` (Foundation). HTTPS 클라이언트(openclaw 상태·GitHub)는 `BoundedHTTP` 를 공유한다 — ephemeral 세션, 리다이렉트 거부, 바이트 캡 |
+| 네트워크 | `URLSession` (Foundation). HTTPS 클라이언트(사용량·openclaw 상태·GitHub)는 `BoundedHTTP` 를 공유한다 — ephemeral 세션, 리다이렉트 거부, 바이트 캡 |
 | GitHub PR (선택 기능) | GitHub GraphQL API (`POST https://api.github.com/graphql`, 공식 API) — `URLSession` 위 `BoundedHTTP` (Decision #45) |
 | 로컬 리스너 | `Network.framework` (`NWListener`) — OAuth 루프백 |
 | 자격증명 | Security.framework Keychain (generic password) |
@@ -39,7 +39,7 @@ DB·백엔드 서비스가 없다. 메뉴바 앱은 단일 프로세스 클라�
 UsageModel.pollLoop()  ──(@MainActor, Task)
    └─ CredentialStore.token()      ← Keychain (자체 토큰 → Claude Code 토큰 순)
    └─ UsageAPIClient.fetch(token:)
-        └─ GET https://api.anthropic.com/api/oauth/usage
+        └─ GET https://api.anthropic.com/api/oauth/usage   (BoundedHTTP: 타임아웃 30초, 리다이렉트 거부, 200 만 본문을 1MB 까지 읽음)
              Authorization: Bearer …
              User-Agent: claude-code/<version>      ← 필수
              anthropic-beta: oauth-2025-04-20
@@ -208,7 +208,7 @@ Claude Code 사용자는 로그인 없이 기존 토큰을 재사용한다. 다�
 - **1순위: 루프백** (`LoopbackServer`, RFC 8252) — 임의 free 포트를 열고 브라우저가 `/callback?code=…&state=…` 로 돌아오면 자동 완료.
 - **폴백: 수동 붙여넣기** — 루프백 리다이렉트가 거부되면 콘솔 콜백 페이지에 표시된 `code#state` 를 앱에 붙여넣는다.
 
-**인증 경계**: 토큰은 Keychain 에만 저장되고 `api.anthropic.com` / `platform.claude.com` 외 어디에도 전송되지 않는다. 텔레메트리·크래시 리포터가 없다.
+**인증 경계**: 토큰은 Keychain 에만 저장되고 `api.anthropic.com` / `platform.claude.com` 외 어디에도 전송되지 않는다. 텔레메트리·크래시 리포터가 없다. 사용량 요청은 `BoundedHTTP` 세션으로 보내 리다이렉트를 따르지 않으므로, 3xx 로 Bearer 토큰이 다른 호스트에 보내지는 경로가 없다.
 
 **openclaw 상태 URL** (서버 에이전트): 경로의 토큰(32자리 hex)이 유일한 접근 통제인 읽기 전용 capability URL 이다. Claude 자격증명과 무관하며, `server/install.sh --rotate-token` 으로 폐기·재발급한다. 앱은 이것을 Keychain 이 아니라 `Preferences`(UserDefaults)에 두고, userinfo 없는 https 주소만 받는다.
 

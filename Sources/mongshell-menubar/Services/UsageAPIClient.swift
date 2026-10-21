@@ -8,10 +8,23 @@ enum APIError: Error, Equatable {
 }
 
 /// Calls the (unofficial) subscription usage endpoint and maps the response
-/// into a `UsageSnapshot`. The response schema is undocumented, so decoding is
-/// deliberately tolerant: it probes several candidate key paths and fills what
-/// it can. Confirm/tighten in Phase 0 once a real payload is captured.
+/// into a `UsageSnapshot`. The shape `parse` reads is the one the endpoint
+/// returned on 2026-10-21 (pinned as the fixture in `Tests/UsageTests`). The
+/// schema is still undocumented and may change without notice, so decoding
+/// stays deliberately tolerant: it probes several candidate key paths and
+/// fills what it can.
+///
+/// The request carries the Bearer token, so it goes through `BoundedHTTP`:
+/// no redirect is followed (a 3xx can't carry the token to another host),
+/// nothing is cached, and the body is read only up to
+/// `Config.usageMaxResponseBytes`.
 struct UsageAPIClient {
+    /// The endpoint answers in well under a second. Past this the poll gives
+    /// up and the next one (at least `Config.minPollInterval` later) tries
+    /// again, instead of a stalled request holding the loop.
+    static let requestTimeout: TimeInterval = 30
+
+    private static let session = BoundedHTTP.makeSession(timeout: requestTimeout)
 
     func fetch(token: OAuthToken) async throws -> UsageSnapshot {
         var req = URLRequest(url: Config.usageURL)
@@ -23,22 +36,42 @@ struct UsageAPIClient {
 
         let (data, resp): (Data, URLResponse)
         do {
-            (data, resp) = try await URLSession.shared.data(for: req)
+            (data, resp) = try await BoundedHTTP.download(
+                req, session: Self.session, maxBytes: Config.usageMaxResponseBytes,
+                readsBody: Self.readsBody(statusCode:))
+        } catch is BoundedHTTP.ResponseTooLarge {
+            throw APIError.badResponse
         } catch {
+            // Transport failure, timeout or cancellation — the model shows
+            // one error state for all of them, as before.
             throw APIError.badResponse
         }
         guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse }
+        return try Self.interpret(statusCode: http.statusCode,
+                                  retryAfter: http.value(forHTTPHeaderField: "Retry-After"),
+                                  data: data)
+    }
 
-        switch http.statusCode {
+    /// Only a 200 carries a usage document. Every other code is judged on the
+    /// code and the `Retry-After` header alone, so a large error page still
+    /// surfaces as 401/429/… rather than tripping the size cap.
+    static func readsBody(statusCode: Int) -> Bool {
+        statusCode == 200
+    }
+
+    /// Status code → snapshot or error. Split from `fetch` so the mapping the
+    /// model branches on (401/403 → re-auth, 429 → back off) is testable
+    /// without a server.
+    static func interpret(statusCode: Int, retryAfter: String?, data: Data) throws -> UsageSnapshot {
+        switch statusCode {
         case 200:
-            return try Self.parse(data)
+            return try parse(data)
         case 401, 403:
             throw APIError.unauthorized
         case 429:
-            let retry = (http.value(forHTTPHeaderField: "Retry-After")).flatMap(TimeInterval.init)
-            throw APIError.rateLimited(retryAfter: retry)
+            throw APIError.rateLimited(retryAfter: retryAfter.flatMap(TimeInterval.init))
         default:
-            throw APIError.http(http.statusCode)
+            throw APIError.http(statusCode)
         }
     }
 

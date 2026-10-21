@@ -58,6 +58,12 @@ enum Config {
     /// answer is dropped rather than drawn.
     static let usageExtraLimitsCap = 16
     static let usageUnknownTopLevelCap = 16
+    /// Largest usage response read. The real one is a few KB (three limits,
+    /// a handful of mostly-null top-level keys); 1 MiB leaves room for the
+    /// schema to grow many times over while keeping a surprising answer —
+    /// which `parse` would walk, keep, render and log in full — from filling
+    /// memory.
+    static let usageMaxResponseBytes: Int64 = 1024 * 1024
 
     // MARK: GitHub (Decision #45)
 
