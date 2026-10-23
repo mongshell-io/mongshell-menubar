@@ -154,7 +154,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         githubPopover.behavior = .transient
         let githubHC = NSHostingController(rootView: GitHubPopoverView(
             model: github, prefs: prefs,
-            onOpenSettings: { [weak self] in self?.openSettings() }))
+            onOpenSettings: { [weak self] in self?.openSettings() },
+            onQuit: { NSApp.terminate(nil) }))
         githubHC.sizingOptions = [.preferredContentSize]
         githubPopover.contentViewController = githubHC
         clickPopovers[.github] = githubPopover

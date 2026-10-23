@@ -506,7 +506,7 @@ private struct GitHubHoverPreview: View {
 private struct GitHubPopoverPreview: View {
     @ObservedObject var github: GitHubModel
     var body: some View {
-        GitHubPopoverView(model: github, prefs: .shared, onOpenSettings: {})
+        GitHubPopoverView(model: github, prefs: .shared, onOpenSettings: {}, onQuit: {})
             .padding(24)
             .background(Color(hex: 0xE8E6E1))
     }
