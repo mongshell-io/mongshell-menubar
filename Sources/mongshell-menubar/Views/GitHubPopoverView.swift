@@ -11,6 +11,7 @@ struct GitHubPopoverView: View {
     @ObservedObject var model: GitHubModel
     @ObservedObject var prefs: Preferences
     var onOpenSettings: () -> Void
+    var onQuit: () -> Void
 
     /// The lists are only shown when the glance reads the snapshot too
     /// (loaded, or loading / rate-limited with an earlier answer) — the
@@ -86,8 +87,9 @@ struct GitHubPopoverView: View {
     private var overflowMenu: some View {
         Menu {
             Button("새로고침") { model.refreshNow() }
-            Button("GitHub 에서 열기") { open(Self.pullsURL) }
             Button("설정…") { onOpenSettings() }
+            Divider()
+            Button("mongshell-menubar 종료") { onQuit() }
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.system(size: 14))
@@ -98,8 +100,6 @@ struct GitHubPopoverView: View {
         .fixedSize()
         .frame(width: 22)
     }
-
-    private static let pullsURL = URL(string: "https://github.com/pulls")!
 
     // MARK: State banner (mockup § C3)
 
