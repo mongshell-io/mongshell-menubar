@@ -15,6 +15,8 @@ enum Palette {
     static let textPrimary   = Color(hex: 0x1D1D1F)
     static let textSecondary = Color(hex: 0x86868B)
     static let textTertiary  = Color(hex: 0xA1A1A6)
+    /// GitHub PR/이슈 번호 — 회색 줄 안에서도 바로 읽히도록 본문색으로 띄운다.
+    static let prNumber      = textPrimary
 
     // Popover surfaces / lines
     static let popoverBG = Color(hex: 0xFBFBFD)
