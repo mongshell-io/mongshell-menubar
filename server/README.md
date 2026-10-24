@@ -52,7 +52,7 @@ openclaw 게이트웨이가 24시간 도는 **서버 맥**에 설치하는 감�
   - 게이트웨이가 **에이전트를 설치할 같은 사용자**의 `~/Library/LaunchAgents/` 에 plist 로 등록돼 있고, 파일 이름에 `claw` 가 들어 있다 (openclaw 기본 레이블: `ai.openclaw.gateway`)
   - 그 plist 의 **파일 이름(확장자 제외)이 plist 안의 `Label` 과 같을 것** — 에이전트는 파일 이름을 레이블로 보고 `launchctl kickstart` 한다
   - 확인: `ls -l /opt/homebrew/bin/openclaw /usr/local/bin/openclaw; ls ~/Library/LaunchAgents | grep -i claw` — 바이너리는 둘 중 하나만 보이면 정상이다 (다른 쪽의 `No such file or directory` 는 무시). 레이블 일치는 [E](#e-serverinstallsh-실행) 의 게이트웨이 레이블 확인 명령으로 본다
-- [ ] **repo 클론 가능** — `https://github.com/mongshellio/mongshell-menubar` 는 공개 repo 라 인증 없이 클론된다
+- [ ] **repo 클론 가능** — `https://github.com/mongshell-io/mongshell-menubar` 는 공개 repo 라 인증 없이 클론된다
 - [ ] **외부망 기기 하나** — 와이파이를 끈 휴대폰 등. 공개 URL 확인용
 - [ ] **URL 보관 장소** — 비밀번호 관리자 등 (설치가 출력하는 URL 이 곧 접근권이다)
 - 소요 시간: 처음이면 **30~60분** (대부분 Command Line Tools 설치와 관리 콘솔 설정). 이후 맥북 1대당 5~10분.
@@ -82,7 +82,7 @@ openclaw 게이트웨이가 24시간 도는 **서버 맥**에 설치하는 감�
 - [ ] **repo 클론** — 위치는 자유지만 `~/Documents`·`~/Desktop`·`~/Downloads` 는 피한다 (iCloud 동기화·개인정보 보호 권한 프롬프트 영향권). 권장:
   ```bash
   mkdir -p ~/src && cd ~/src
-  git clone https://github.com/mongshellio/mongshell-menubar.git
+  git clone https://github.com/mongshell-io/mongshell-menubar.git
   cd mongshell-menubar
   ```
   성공: `ls server` 에 `README.md install.sh lib.sh uninstall.sh` 가 보인다. 이후 명령은 모두 이 repo 루트에서 실행한다.
@@ -279,7 +279,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 - [ ] **메뉴바 앱 설치** — 이 repo 의 방법 중 하나:
   - 직접 빌드 (Command Line Tools 필요, Apple 계정 불필요): 루트 README [§ 설치 — 각자 빌드해서 쓰기](../README.md#설치--각자-빌드해서-쓰기-apple-계정-불필요)
     ```bash
-    git clone https://github.com/mongshellio/mongshell-menubar.git && cd mongshell-menubar
+    git clone https://github.com/mongshell-io/mongshell-menubar.git && cd mongshell-menubar
     ./scripts/make_app.sh          # release 빌드 → mongshell-menubar.app
     open mongshell-menubar.app
     ```
@@ -321,7 +321,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 - `어댑터 분리` / `배터리 부족` 은 서버가 배터리로 돌고 있다고(`"pluggedIn" : false`) 보냈을 때만 나온다. 전원이 🟡/🔴 인데 그 값이 `true` 이거나 없으면 `전원 주의` / `전원 위험` 으로 나온다 — 이 에이전트는 그런 문서를 만들지 않으므로, 보인다면 원인은 둘 중 하나다. 앱이 전원 판정(`host.power.health`)을 읽지 못해 🟡 로 접었거나(모르는 값·없음 — 이 경우는 `전원 주의` 만 나온다), 판정은 읽혔는데 `pluggedIn` 이 `false` 가 아니다(빠졌거나 `true` — `전원 위험` 은 이 경우뿐이다) ([5-2](#5-2-공개-url--메뉴바-증상별)).
 - 임계값(20% · 20GB · 5GB)은 에이전트에 고정돼 있고 설치 옵션으로 바꿀 수 없다. GB 는 10진(10⁹ 바이트)이다.
 - 내장 배터리가 없는 서버(맥 미니 등)는 전원 줄 없이 디스크 줄만 나온다. UPS 는 읽지 않는다.
-- CI 러너 줄은 `/Library/LaunchDaemons/com.github.actions-runner.*.plist` 가 있는 서버에서만 나온다. 대수는 그 plist 개수다. 에이전트는 sudo 없이 `launchctl print system/<레이블>` 로 프로세스가 떠 있는지만 본다 — 프로세스는 떠 있는데 GitHub 연결이 끊긴 상태나, 14일 미연결로 GitHub 이 등록을 지운 상태는 보지 못한다 (Decision #75). 러너가 죽으면 다시 띄우는 것은 LaunchDaemon 의 `KeepAlive` 이고 에이전트는 재시작하지 않는다.
+- CI 러너 줄은 `/Library/LaunchDaemons/com.github.actions-runner.*.plist` 가 있는 서버에서만 나온다. 대수는 그 plist 개수다. 에이전트는 sudo 없이 `launchctl print system/<레이블>` 로 프로세스가 떠 있는지만 본다 — 프로세스는 떠 있는데 GitHub 연결이 끊긴 상태나, 14일 미연결로 GitHub 이 등록을 지운 상태는 보지 못한다 (Decision #75). 러너가 죽으면 다시 띄우는 것은 LaunchDaemon 의 `KeepAlive` 이고 에이전트는 재시작하지 않는다. 러너 설치는 조직 저장소 [mongshell-io/server-mac](https://github.com/mongshell-io/server-mac) 의 `ci-runner/setup-ci-runner.sh` 가 한다.
 - 러너 레벨이 🟡/🔴 인데 개수가 전부 동작(예: `4/4`)이면 `CI 러너 주의` / `CI 러너 위험` 으로 나온다 — 앱이 러너 판정(`host.runners.health`)을 읽지 못해 🟡 로 접은 경우다.
 
 서버 신호가 **나빠질 때** 맥북에 알림이 뜬다:
