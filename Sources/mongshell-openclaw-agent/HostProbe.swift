@@ -185,7 +185,10 @@ enum HostProbe {
     /// `Probe.run`'s kill and read grace) per runner onto every cycle — and
     /// the gateway probe before it may already take 10s of a 15s minimum
     /// interval. Past the budget the remaining runners go unasked, which is
-    /// "not heard" like any other (see `readRunners`).
+    /// "not heard" like any other (see `readRunners`). The budget bounds when
+    /// the last question may start and how long it may wait, not the stage's
+    /// wall time: a last question that hangs still gets `Probe.run`'s kill and
+    /// read grace on top, so the stage can run about 2s past it.
     static let runnersDeadline: TimeInterval = 10
 
     /// How many runners are installed and how many launchd reports running,

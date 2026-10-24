@@ -128,7 +128,7 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
 | `host.disk` | 객체 또는 `null` | 홈 볼륨이 여유 공간을 알려주지 않으면 `null` |
 | `host.disk.health` | `ok` / `warning` / `critical` | 여유 20GB 미만 → warning, 5GB 미만 → critical (GB = 10⁹ 바이트) |
 | `host.disk.availableBytes` | 정수 | 홈 디렉토리가 있는 볼륨의 여유. 비울 수 있는 공간을 포함한 값(`volumeAvailableCapacityForImportantUsage`)을 먼저 쓰고, 그 값이 없거나 0 이하면 일반 여유 공간으로 폴백 |
-| `host.runners` | 객체 또는 `null` | `/Library/LaunchDaemons/com.github.actions-runner.*.plist` 가 하나도 없으면 `null`. 어느 레이블이든 `launchctl` 을 듣지 못하면(실행 실패·시간 초과·신호 종료·빈 출력) 또는 러너 전체 마감(10초)을 넘기면 신호 전체가 `null` — 재지 않은 판정을 싣지 않는다 |
+| `host.runners` | 객체 또는 `null` | `/Library/LaunchDaemons/com.github.actions-runner.*.plist` 가 하나도 없으면 `null`. 어느 레이블이든 `launchctl` 을 듣지 못하거나(실행 실패·시간 초과·신호 종료·빈 출력) 러너 전체 마감(10초)을 넘기면 신호 전체가 `null` — 재지 않은 판정을 싣지 않는다 |
 | `host.runners.health` | `ok` / `warning` / `critical` | 전부 동작 → ok, 일부만 동작 → warning, 하나도 동작 안 함 → critical |
 | `host.runners.running` | 0 이상 정수 | `launchctl print system/<레이블>` 의 최상위(탭 1개) 줄이 `state = running` 인 러너 수. 하위 블록의 `state = …` 는 보지 않는다. 그 밖의 응답(로드되지 않음 포함)은 동작 안 함 |
 | `host.runners.total` | 1 이상 정수 | 설치된 러너 plist 개수 — 대수는 하드코딩하지 않는다. 레이블·사용자명·경로는 싣지 않는다 |
