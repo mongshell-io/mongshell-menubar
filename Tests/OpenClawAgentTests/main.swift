@@ -620,6 +620,39 @@ do {
                                           timedOut: false)) == nil)
     check("출력 없음 → 관측 없음", HostProbe.interpretRunner(run("  \n", exit: 0)) == nil)
 
+    // The runner budget: a fake clock that each ask moves forward.
+    let fourLabels = ["a", "b", "c", "d"]
+    func budgeted(costs: [TimeInterval], answers: [Bool?] = [true, true, true, true])
+        -> (reading: RunnersReading?, asked: [String], timeouts: [TimeInterval]) {
+        var t: TimeInterval = 100
+        var asked: [String] = []
+        var timeouts: [TimeInterval] = []
+        let reading = HostProbe.countRunning(fourLabels, deadline: 10, clock: { t }) { label, timeout in
+            let i = asked.count
+            asked.append(label)
+            timeouts.append(timeout)
+            t += costs[i]
+            return answers[i]
+        }
+        return (reading, asked, timeouts)
+    }
+    let quick = budgeted(costs: [0.1, 0.1, 0.1, 0.1], answers: [true, false, true, true])
+    check("마감 안 → 전부 묻고 개수", quick.reading == RunnersReading(running: 3, total: 4)
+              && quick.asked == fourLabels, "\(String(describing: quick.reading))")
+    check("레이블별 타임아웃은 runnerPrintTimeout 상한",
+          quick.timeouts.allSatisfy { $0 == HostProbe.runnerPrintTimeout }, "\(quick.timeouts)")
+    let slow = budgeted(costs: [4, 4, 4, 4])
+    check("마감 넘김 → 남은 레이블은 묻지 않고 신호 없음",
+          slow.reading == nil && slow.asked == ["a", "b", "c"], "\(slow.asked)")
+    check("마감에 가까우면 남은 시간만큼만 기다림", slow.timeouts == [5, 5, 2], "\(slow.timeouts)")
+    let exact = budgeted(costs: [5, 5, 0, 0])
+    check("마감 정각 → 다음 레이블 묻지 않음", exact.reading == nil && exact.asked == ["a", "b"],
+          "\(exact.asked)")
+    let unheard = budgeted(costs: [0, 0, 0, 0], answers: [true, nil, true, true])
+    check("하나라도 듣지 못함 → 신호 없음, 그 뒤는 묻지 않음",
+          unheard.reading == nil && unheard.asked == ["a", "b"], "\(unheard.asked)")
+    check("러너 마감 10초", HostProbe.runnersDeadline == 10)
+
     let dir = root.appendingPathComponent("LaunchDaemons")
     try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     for name in ["com.github.actions-runner.org-2.plist", "com.github.actions-runner.org.plist",

@@ -70,7 +70,7 @@ Decision #45·#49·#52 의 모델 쪽 규약은 넷이다. 주기와 요청 정�
 ## 알림·백오프
 
 - 임계 알림은 **레벨이 올라갈 때 한 번만** 보낸다 (`lastNotifiedLevel`). 폴링마다 재발송하지 않는다.
-- 서버 호스트 알림(Decision #31)은 **신호별**(전원·디스크·CI 러너 따로)로 같은 원칙을 따른다. 규칙(기준점·상승 시 알림·쿨다운·미뤄 둔 알림·게이트)은 [docs/architecture.md § 3. openclaw 상태](../../../docs/architecture.md#3-openclaw-상태-선택-경로) 의 서버 호스트 신호 절이 권위이고, 여기서 지킬 규약은 넷이다.
+- 서버 호스트 알림(Decision #31 · CI 러너는 #75)은 **신호별**(전원·디스크·CI 러너 따로)로 같은 원칙을 따른다. 규칙(기준점·상승 시 알림·쿨다운·미뤄 둔 알림·게이트)은 [docs/architecture.md § 3. openclaw 상태](../../../docs/architecture.md#3-openclaw-상태-선택-경로) 의 서버 호스트 신호 절이 권위이고, 여기서 지킬 규약은 넷이다.
   - 판정은 순수 값 타입 `ServerHostAlertWatch` 에 둔다. 모델은 결과를 받아 보내기만 한다.
   - 감시에는 **신선한 문서의 `host` 만** 넘긴다 — `hostHealth.reportedHost` (두절·부재는 `nil`; 배경: Decision #31).
   - 알림 발송 여부는 복구 알림과 같은 문(`canNotifyAboutServer`)을 지나고, **문이 닫혀 있으면 그 사실을 감시에 넘긴다** (`observe(_:now:canNotify: false)`) — 감시가 그 관측으로 초기화된다.

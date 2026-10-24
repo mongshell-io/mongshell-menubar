@@ -179,24 +179,53 @@ enum HostProbe {
     static let launchctlPath = "/bin/launchctl"
     /// `launchctl print` answers from launchd's memory in well under a second.
     static let runnerPrintTimeout: TimeInterval = 5
+    /// Budget for asking about every runner in one probe. Healthy, four
+    /// runners take well under a second in all; asked one by one, a launchd
+    /// that hangs on each would otherwise stack `runnerPrintTimeout` (plus
+    /// `Probe.run`'s kill and read grace) per runner onto every cycle — and
+    /// the gateway probe before it may already take 10s of a 15s minimum
+    /// interval. Past the budget the remaining runners go unasked, which is
+    /// "not heard" like any other (see `readRunners`).
+    static let runnersDeadline: TimeInterval = 10
 
     /// How many runners are installed and how many launchd reports running,
     /// or nil when no runner is installed — or when launchctl couldn't be
-    /// heard for one of them.
+    /// heard for one of them, or the runner budget ran out first.
     ///
     /// The second nil is deliberate: a runner we failed to ask about is
     /// neither running nor stopped as far as we know, and counting it either
     /// way would publish a verdict nobody measured (a spawn failure would read
-    /// as "all runners down"). Dropping the whole signal leaves the last
-    /// published level standing in the app instead of raising a false alarm.
+    /// as "all runners down"). What dropping the whole signal costs: the app
+    /// draws no runner row, and the overall `host` level is judged on the
+    /// signals left — so for that cycle a server whose runners are all down
+    /// can show green. Only the app's alert watch keeps the last runner level
+    /// as its baseline. No false alarm, and no recovery alert either.
     static func readRunners() -> RunnersReading? {
         let labels = runnerLabels(in: launchDaemonsDir)
         guard !labels.isEmpty else { return nil }
+        return countRunning(
+            labels, deadline: runnersDeadline,
+            clock: { ProcessInfo.processInfo.systemUptime }
+        ) { label, timeout in
+            interpretRunner(Probe.run(launchctlPath, ["print", "system/\(label)"], timeout: timeout))
+        }
+    }
+
+    /// Asks `ask` about each label in turn — with a timeout no longer than
+    /// what is left of `deadline` — and counts the running ones. nil as soon
+    /// as one goes unheard or the deadline (measured on `clock`) has passed
+    /// before a label is asked. Split from `readRunners` so the budget is
+    /// testable without launchd or real time.
+    static func countRunning(_ labels: [String], deadline: TimeInterval,
+                             clock: () -> TimeInterval,
+                             ask: (_ label: String, _ timeout: TimeInterval) -> Bool?)
+        -> RunnersReading? {
+        let start = clock()
         var running = 0
         for label in labels {
-            let result = Probe.run(launchctlPath, ["print", "system/\(label)"],
-                                   timeout: runnerPrintTimeout)
-            guard let isRunning = interpretRunner(result) else { return nil }
+            let remaining = deadline - (clock() - start)
+            guard remaining > 0 else { return nil }
+            guard let isRunning = ask(label, min(runnerPrintTimeout, remaining)) else { return nil }
             if isRunning { running += 1 }
         }
         return RunnersReading(running: running, total: labels.count)

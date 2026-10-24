@@ -128,7 +128,7 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
 | `host.disk` | 객체 또는 `null` | 홈 볼륨이 여유 공간을 알려주지 않으면 `null` |
 | `host.disk.health` | `ok` / `warning` / `critical` | 여유 20GB 미만 → warning, 5GB 미만 → critical (GB = 10⁹ 바이트) |
 | `host.disk.availableBytes` | 정수 | 홈 디렉토리가 있는 볼륨의 여유. 비울 수 있는 공간을 포함한 값(`volumeAvailableCapacityForImportantUsage`)을 먼저 쓰고, 그 값이 없거나 0 이하면 일반 여유 공간으로 폴백 |
-| `host.runners` | 객체 또는 `null` | `/Library/LaunchDaemons/com.github.actions-runner.*.plist` 가 하나도 없으면 `null`. 어느 레이블이든 `launchctl` 을 듣지 못하면(실행 실패·시간 초과·신호 종료·빈 출력) 신호 전체가 `null` — 재지 않은 판정을 싣지 않는다 |
+| `host.runners` | 객체 또는 `null` | `/Library/LaunchDaemons/com.github.actions-runner.*.plist` 가 하나도 없으면 `null`. 어느 레이블이든 `launchctl` 을 듣지 못하면(실행 실패·시간 초과·신호 종료·빈 출력) 또는 러너 전체 마감(10초)을 넘기면 신호 전체가 `null` — 재지 않은 판정을 싣지 않는다 |
 | `host.runners.health` | `ok` / `warning` / `critical` | 전부 동작 → ok, 일부만 동작 → warning, 하나도 동작 안 함 → critical |
 | `host.runners.running` | 0 이상 정수 | `launchctl print system/<레이블>` 의 최상위(탭 1개) 줄이 `state = running` 인 러너 수. 하위 블록의 `state = …` 는 보지 않는다. 그 밖의 응답(로드되지 않음 포함)은 동작 안 함 |
 | `host.runners.total` | 1 이상 정수 | 설치된 러너 plist 개수 — 대수는 하드코딩하지 않는다. 레이블·사용자명·경로는 싣지 않는다 |
@@ -138,7 +138,7 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
 - **앱의 읽기는 관대하다.** `host` 가 없거나 객체가 아니면 서버 점 없이 openclaw 판정만 읽는다. 읽을 수 없는 `health` 값(모르는 문자열, 문자열이 아닌 값)과 `health` 가 빠진 신호는 `warning` 으로 읽는다. `host.health` 가 없거나 `null` 이면 신호 중 가장 나쁜 것이 대신한다. `pluggedIn`·`charging` 은 JSON bool 만, `batteryPercent` 는 0–100 범위의 수만 받고 그 밖의 값은 그 수치만 비운다. `availableBytes` 가 음수이거나 수가 아니면 디스크 신호는 없는 것으로 본다. `host.runners` 는 객체가 아니면 없는 것으로 보고, `running`·`total` 은 0 이상 정수만 받으며, 둘 중 하나라도 쓸 수 없거나 `total` 이 0 이거나 `running > total` 이면 러너 신호는 없는 것으로 본다. `host.health` 가 없을 때의 "가장 나쁜 신호" 에는 러너도 들어간다.
 - **신선도는 openclaw 점과 같은 규칙**이다 (위 연락 두절 판정). 문서가 오래되면 서버 점은 회색이 되고 마지막으로 받은 수치를 흐리게 남긴다. 마지막 성공 응답에 `host` 가 없었거나 성공 응답이 아직 없으면 서버 점을 그리지 않는다 (`.absent`). 두 점은 서로의 값에 영향을 주지 않는다.
 - **표시 위치.** 메뉴바는 openclaw 표시(발자국 + 점) 아래에 서버 글리프 + 점을 쌓는다. 팝오버는 openclaw 섹션 아래에 서버 섹션(상태 한 마디 + 전원 줄 + 디스크 줄 + CI 러너 줄 `CI 러너 3/4`)을 두고, "서버 확인" 시각과 새로고침은 두 섹션 아래에 한 번만 둔다. 서버가 보내지 않은 신호의 줄은 그리지 않는다. 러너 신호는 메뉴바에 새 줄을 만들지 않는다 — 서버 점의 종합 판정에 합쳐진다.
-- **상태 한 마디.** 종합 레벨의 원인이 된 신호를 말한다 (같은 레벨이면 전원 > 디스크 > 러너). 전원의 원인 문구 `어댑터 분리` / `배터리 부족` 은 문서가 `pluggedIn: false` 일 때만 쓰고, `true` 이거나 알 수 없으면 `전원 주의` / `전원 위험` 이다. 디스크는 `디스크 여유 부족` / `디스크 거의 가득`. 러너는 개수가 말하는 대로 `CI 러너 일부 중단`(0 < running < total) / `CI 러너 전부 중단`(running = 0) 이고, 레벨은 나쁜데 개수가 전부 동작이면(앱이 판정을 읽지 못해 접은 경우) `CI 러너 주의` / `CI 러너 위험` 이다. 아는 신호가 종합 레벨을 설명하지 못하면 `주의` / `위험` 이다.
+- **상태 한 마디.** 종합 레벨의 원인이 된 신호를 말한다 (같은 레벨이면 전원 > 디스크 > 러너). 전원의 원인 문구 `어댑터 분리` / `배터리 부족` 은 문서가 `pluggedIn: false` 일 때만 쓰고, `true` 이거나 알 수 없으면 `전원 주의` / `전원 위험` 이다. 디스크는 `디스크 여유 부족` / `디스크 거의 가득`. 러너는 개수가 말하는 대로 `CI 러너 일부 중단`(0 < running < total) / `CI 러너 전부 중단`(running = 0) 이고, 레벨이 나쁜데 running == total 이면 `CI 러너 주의` / `CI 러너 위험` 이다. 아는 신호가 종합 레벨을 설명하지 못하면 `주의` / `위험` 이다.
 - **알림** (`ServerHostAlertWatch`). 전원·디스크·CI 러너를 따로 추적한다.
   - 앱 시작 또는 상태 URL 변경 뒤 첫 성공 응답은 기준점이며 알리지 않는다. 기준점에 없던 신호가 나중에 처음 나타나면 ok 와 비교한다.
   - 레벨이 직전보다 오르면 알린다. 같은 레벨 유지·회복·연락 두절·신호가 사라진 것은 알리지 않는다.
