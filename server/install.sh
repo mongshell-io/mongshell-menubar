@@ -24,8 +24,9 @@ OPTIONS_FILE="$DATA_DIR/options"
 PLIST="$HOME/Library/LaunchAgents/$SELF_LABEL.plist"
 LOG_FILE="$HOME/Library/Logs/$PRODUCT.log"
 DOMAIN="gui/$(id -u)"
-# 에이전트 첫 쓰기는 probe(최대 8s) 뒤에 온다. 여유 있게.
-STATUS_WAIT_SECONDS=40
+# 에이전트 첫 쓰기는 probe(최대 27s)와 호스트 신호(러너 최대 약 12s) 뒤에 온다.
+# 부하가 높으면 둘 다 끝까지 갈 수 있으니 여유 있게.
+STATUS_WAIT_SECONDS=90
 CURL_ATTEMPTS=6
 
 # 이 스크립트가 발급하는 형식(openssl rand -hex 16).

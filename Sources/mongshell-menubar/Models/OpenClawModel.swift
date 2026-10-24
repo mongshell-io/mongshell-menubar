@@ -14,8 +14,8 @@ import UserNotifications
 final class OpenClawModel: ObservableObject {
     static let shared = OpenClawModel()
 
-    /// Floor on the poll interval — the agent itself probes at ≥15s, so polling
-    /// faster only re-reads the same file.
+    /// Floor on the poll interval — the agent itself probes at ≥30s, so polling
+    /// much faster only re-reads the same file.
     static let minimumPollSeconds = 15
 
     @Published private(set) var health: OpenClawHealth = .notConfigured

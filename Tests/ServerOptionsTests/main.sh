@@ -55,9 +55,9 @@ check "auto_heal=2 → 켬 + 경고"           "60 1 1" "$(resolve 'auto_heal=2\
 check "auto_heal=00 → 켬 + 경고"          "60 1 1" "$(resolve 'auto_heal=00\n' "" "")"
 # 2^64 + 30: without the digit cap, bash arithmetic wraps it to an in-range 30.
 check "20자리 숫자 무시 (오버플로로 30 이 되는 값)" "60 1 1" "$(resolve 'interval=18446744073709551646\n' "" "")"
-check "범위 밖 14 무시"                   "60 1 1" "$(resolve 'interval=14\n' "" "")"
+check "범위 밖 29 무시"                   "60 1 1" "$(resolve 'interval=29\n' "" "")"
 check "범위 밖 86401 무시"                "60 1 1" "$(resolve 'interval=86401\n' "" "")"
-check "경계 15 허용"                "15 1 0" "$(resolve 'interval=15\n' "" "")"
+check "경계 30 허용"                "30 1 0" "$(resolve 'interval=30\n' "" "")"
 check "경계 86400 허용"                   "86400 1 0" "$(resolve 'interval=86400\n' "" "")"
 check "앞자리 0 은 10진수 (045 → 45)"     "45 1 0" "$(resolve 'interval=045\n' "" "")"
 check "끝줄 개행 없어도 읽음"             "30 0 0" "$(resolve 'interval=30\nauto_heal=0' "" "")"

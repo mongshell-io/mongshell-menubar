@@ -6,6 +6,13 @@ enum ProbeVerdict: Equatable {
     case ok(detail: String)
     case degraded(detail: String)
     case down
+    /// The probe didn't finish within `Probe.probeTimeout`. Kept distinct from
+    /// `.down`: the run times the CLI's own cold start as well as the gateway's
+    /// answer, and on a loaded host (load average 30+) starting the CLI alone
+    /// has blown the limit while the gateway answered in under a second — so
+    /// the heal tracker wants more of these in a row. Still `down` on the wire,
+    /// with a detail that says why (see StatusFile).
+    case timedOut
     /// No openclaw binary at any known path. Kept distinct from `.down` because
     /// restarting the gateway can't fix a missing install — the heal tracker
     /// treats it as a non-failure. Reported to clients as `down` (see StatusFile).
@@ -35,7 +42,9 @@ enum Probe {
     ]
 
     /// How long `channels status --probe` may take before we call it hung.
-    static let probeTimeout: TimeInterval = 8
+    /// It covers spawning the node CLI, not just the gateway's reply: 8s once
+    /// timed out on a healthy gateway under load (issue #79).
+    static let probeTimeout: TimeInterval = 25
 
     /// Re-resolved per probe (not cached like the app): the agent runs for weeks
     /// and a `brew reinstall` must not require restarting it.
@@ -271,8 +280,8 @@ enum Probe {
     // MARK: Probe + parse
 
     /// Live health probe. `run` is nil when no binary was found (then the
-    /// observation is `.notInstalled`); it's returned so the caller can log a
-    /// timeout, which the verdict alone (`down`) doesn't tell apart.
+    /// observation is `.notInstalled`); it's returned so the caller can log
+    /// the timeout from the run itself.
     static func probe() -> (run: RunResult?, observation: ProbeObservation) {
         guard let bin = binaryPath() else { return (nil, .observed(.notInstalled)) }
         let result = run(bin, ["channels", "status", "--probe"], timeout: probeTimeout)
@@ -282,8 +291,9 @@ enum Probe {
     /// Turns `openclaw channels status --probe` output into an observation, per
     /// the hard-won domain rules. Kept pure (no I/O) so it's trivially testable.
     static func parseProbe(_ result: RunResult) -> ProbeObservation {
-        // A hung/killed probe means the gateway isn't answering.
-        if result.timedOut { return .observed(.down) }
+        // A hung/killed probe: the gateway isn't answering, or the host is too
+        // loaded to start the CLI in time — the output can't tell which.
+        if result.timedOut { return .observed(.timedOut) }
 
         // openclaw always says something when it finishes — even "not
         // reachable" is output. Nothing at all means the agent didn't get to

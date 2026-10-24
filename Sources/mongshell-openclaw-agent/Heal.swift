@@ -1,16 +1,23 @@
 import Foundation
 
-/// Decides *when* to hard-restart the gateway — the same rules as the app's
-/// `OpenClawModel.maybeAutoHeal`: heal on the 2nd consecutive failure, at most
-/// once per cooldown. Pure state; the clock is passed in so tests don't sleep.
+/// Decides *when* to hard-restart the gateway: on the 2nd consecutive failure
+/// — the 4th when every one of them was a timeout — at most once per cooldown.
+/// Pure state; the clock is passed in so tests don't sleep.
 struct HealTracker {
     /// One failed probe can be a blip between longpolls; two in a row is not.
     static let failuresBeforeHeal = 2
+    /// A run made only of timeouts may be a loaded host rather than a hung
+    /// gateway, and a restart then only adds load and kills work in flight
+    /// (issue #79). A real hang still times out every time, so it is healed —
+    /// a few minutes later.
+    static let timeoutsBeforeHeal = 4
     /// A kickstart that didn't help won't help 60s later either — and a
     /// restart loop would hide the real problem behind constant churn.
     static let cooldown: TimeInterval = 600
 
     private(set) var consecutiveFailures = 0
+    /// Whether the current run of failures has one that isn't a timeout.
+    private(set) var runHasHardFailure = false
     private(set) var lastHealAt: Date?
 
     init(lastHealAt: Date? = nil) {
@@ -21,20 +28,42 @@ struct HealTracker {
     /// the gateway can't install a missing binary.
     mutating func record(_ verdict: ProbeVerdict) {
         switch verdict {
-        case .down, .degraded: consecutiveFailures += 1
-        case .ok, .notInstalled: consecutiveFailures = 0
+        case .down, .degraded:
+            consecutiveFailures += 1
+            runHasHardFailure = true
+        case .timedOut:
+            consecutiveFailures += 1
+        case .ok, .notInstalled:
+            resetRun()
+        }
+    }
+
+    /// Counts the re-probe right after a kickstart. A failure there is counted
+    /// like a timeout: the gateway is likely still starting, so a "not
+    /// reachable" says nothing firm — counted as hard, a single timeout after
+    /// the cooldown would heal again whenever the interval is long.
+    mutating func recordAfterHeal(_ verdict: ProbeVerdict) {
+        switch verdict {
+        case .down, .degraded, .timedOut: record(.timedOut)
+        case .ok, .notInstalled: record(verdict)
         }
     }
 
     func isHealDue(now: Date) -> Bool {
-        guard consecutiveFailures >= Self.failuresBeforeHeal else { return false }
+        let needed = runHasHardFailure ? Self.failuresBeforeHeal : Self.timeoutsBeforeHeal
+        guard consecutiveFailures >= needed else { return false }
         if let last = lastHealAt, now.timeIntervalSince(last) < Self.cooldown { return false }
         return true
     }
 
     mutating func markHealed(at now: Date) {
         lastHealAt = now
+        resetRun()
+    }
+
+    private mutating func resetRun() {
         consecutiveFailures = 0
+        runHasHardFailure = false
     }
 }
 

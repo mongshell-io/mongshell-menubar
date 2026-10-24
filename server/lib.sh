@@ -75,7 +75,7 @@ unpublish_path() {
 # ── 설치 옵션 (install.sh) ─────────────────────────────────────────────────
 # 에이전트(Options.defaultInterval/minimumInterval/maximumInterval)와 같은 값.
 DEFAULT_INTERVAL=60
-MIN_INTERVAL=15
+MIN_INTERVAL=30
 MAX_INTERVAL=86400
 DEFAULT_AUTO_HEAL=1
 

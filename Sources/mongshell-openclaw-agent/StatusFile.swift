@@ -46,13 +46,14 @@ struct AgentStatus: Encodable {
 }
 
 extension ProbeVerdict {
-    /// Wire value of `health`. A missing binary is reported as `down`: from a
-    /// client's point of view the gateway isn't there, whatever the reason.
+    /// Wire value of `health`. A missing binary and a timed-out probe are
+    /// reported as `down`: from a client's point of view the gateway isn't
+    /// answering, whatever the reason — `detail` says which.
     var healthName: String {
         switch self {
         case .ok: return "ok"
         case .degraded: return "degraded"
-        case .down, .notInstalled: return "down"
+        case .down, .timedOut, .notInstalled: return "down"
         }
     }
 
@@ -60,6 +61,7 @@ extension ProbeVerdict {
         switch self {
         case .ok(let d), .degraded(let d): return d
         case .down: return nil
+        case .timedOut: return "응답 지연 · \(Int(Probe.probeTimeout))초 초과"
         case .notInstalled: return "openclaw 바이너리 없음"
         }
     }

@@ -183,7 +183,7 @@ enum HostProbe {
     /// runners take well under a second in all; asked one by one, a launchd
     /// that hangs on each would otherwise stack `runnerPrintTimeout` (plus
     /// `Probe.run`'s kill and read grace) per runner onto every cycle — and
-    /// the gateway probe before it may already take 10s of a 15s minimum
+    /// the gateway probe before it may already take 27s of a 30s minimum
     /// interval. Past the budget the remaining runners go unasked, which is
     /// "not heard" like any other (see `readRunners`). The budget bounds when
     /// the last question may start and how long it may wait, not the stage's
