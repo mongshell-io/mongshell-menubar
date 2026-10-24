@@ -15,7 +15,7 @@ struct OpenClawStatus: Equatable, Sendable {
     /// Whether the agent auto-heals. nil = absent (shown as unknown).
     let autoHeal: Bool?
     let lastHeal: OpenClawHealEvent?
-    /// The server host's power and disk verdicts. nil = the agent sent none
+    /// The server host's power, disk and CI runner verdicts. nil = the agent sent none
     /// (an older agent, or no signal could be read).
     let host: ServerHost?
 }

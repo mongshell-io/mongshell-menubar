@@ -2,7 +2,7 @@ import Foundation
 
 // Server-side openclaw watchdog. Runs under launchd on the always-on mac:
 // probe the gateway → maybe hard-restart it → judge the host's own signals
-// (power, disk) → write the verdicts to a JSON file that `tailscale funnel`
+// (power, disk, CI runners) → write the verdicts to a JSON file that `tailscale funnel`
 // serves to the menubar clients. No network listener of our own — funnel does
 // the serving.
 
@@ -99,7 +99,8 @@ func describe(_ host: HostStatus?) -> String {
     guard let host else { return "읽을 신호 없음" }
     let power = host.power.map { "전원 \($0.level.healthName)" } ?? "전원 없음"
     let disk = host.disk.map { "디스크 \($0.level.healthName)" } ?? "디스크 없음"
-    return "\(host.level.healthName) (\(power), \(disk))"
+    let runners = host.runners.map { "러너 \($0.level.healthName)" } ?? "러너 없음"
+    return "\(host.level.healthName) (\(power), \(disk), \(runners))"
 }
 
 // MARK: Loop
@@ -148,7 +149,8 @@ if options.gatewayLabel == options.selfLabel {
 
 /// Judges the host signals and writes the status file, logging changes.
 @MainActor func publish(_ verdict: ProbeVerdict, checkedAt: Date) {
-    let host = HostRules.judge(power: HostProbe.readPower(), disk: HostProbe.readDisk())
+    let host = HostRules.judge(power: HostProbe.readPower(), disk: HostProbe.readDisk(),
+                               runners: HostProbe.readRunners())
 
     let status = AgentStatus(
         checkedAt: checkedAt, verdict: verdict, intervalSeconds: options.interval,

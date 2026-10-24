@@ -23,6 +23,13 @@ struct DiskReading: Equatable {
     let availableBytes: Int64
 }
 
+/// The self-hosted GitHub Actions runners installed as LaunchDaemons, before
+/// any judgement (#75). `total` is never 0 — no runner installed is no reading.
+struct RunnersReading: Equatable {
+    let running: Int
+    let total: Int
+}
+
 /// The judged host signals (Decision #31). A signal that can't be read is nil;
 /// a `HostStatus` exists only when at least one signal could be.
 struct HostStatus: Equatable {
@@ -36,22 +43,30 @@ struct HostStatus: Equatable {
         let level: HostLevel
     }
 
+    struct Runners: Equatable {
+        let reading: RunnersReading
+        let level: HostLevel
+    }
+
     let power: Power?
     let disk: Disk?
+    let runners: Runners?
     /// The worst level among the signals present.
     let level: HostLevel
 }
 
 /// The level of each signal, nil where there is none — what tells one host
 /// verdict from another in the agent's log. The overall level follows from
-/// the pair, so it isn't part of it.
+/// the signals, so it isn't part of it.
 struct HostSignalLevels: Equatable {
     let power: HostLevel?
     let disk: HostLevel?
+    let runners: HostLevel?
 
     init(_ host: HostStatus?) {
         power = host?.power?.level
         disk = host?.disk?.level
+        runners = host?.runners?.level
     }
 }
 
@@ -149,6 +164,111 @@ enum HostProbe {
         }
         return nil
     }
+
+    // MARK: CI runners (#75)
+
+    /// Where the runner installer puts its LaunchDaemon plists, one per runner.
+    static let launchDaemonsDir = URL(fileURLWithPath: "/Library/LaunchDaemons")
+    /// Every runner's label starts with this (`com.github.actions-runner.org`,
+    /// `…org-2`, …). Counted, not listed: the number of runners is whatever
+    /// is installed.
+    static let runnerLabelPrefix = "com.github.actions-runner."
+    private static let plistSuffix = ".plist"
+    /// The same binary `Launchd` (Heal.swift) kickstarts with; repeated here so
+    /// the host probe doesn't pull in the heal code.
+    static let launchctlPath = "/bin/launchctl"
+    /// `launchctl print` answers from launchd's memory in well under a second.
+    static let runnerPrintTimeout: TimeInterval = 5
+    /// Budget for asking about every runner in one probe. Healthy, four
+    /// runners take well under a second in all; asked one by one, a launchd
+    /// that hangs on each would otherwise stack `runnerPrintTimeout` (plus
+    /// `Probe.run`'s kill and read grace) per runner onto every cycle — and
+    /// the gateway probe before it may already take 10s of a 15s minimum
+    /// interval. Past the budget the remaining runners go unasked, which is
+    /// "not heard" like any other (see `readRunners`). The budget bounds when
+    /// the last question may start and how long it may wait, not the stage's
+    /// wall time: a last question that hangs still gets `Probe.run`'s kill and
+    /// read grace on top, so the stage can run about 2s past it.
+    static let runnersDeadline: TimeInterval = 10
+
+    /// How many runners are installed and how many launchd reports running,
+    /// or nil when no runner is installed — or when launchctl couldn't be
+    /// heard for one of them, or the runner budget ran out first.
+    ///
+    /// The second nil is deliberate: a runner we failed to ask about is
+    /// neither running nor stopped as far as we know, and counting it either
+    /// way would publish a verdict nobody measured (a spawn failure would read
+    /// as "all runners down"). What dropping the whole signal costs: the app
+    /// draws no runner row, and the overall `host` level is judged on the
+    /// signals left — so for that cycle a server whose runners are all down
+    /// can show green. Only the app's alert watch keeps the last runner level
+    /// as its baseline. No false alarm, and no recovery alert either.
+    static func readRunners() -> RunnersReading? {
+        let labels = runnerLabels(in: launchDaemonsDir)
+        guard !labels.isEmpty else { return nil }
+        return countRunning(
+            labels, deadline: runnersDeadline,
+            clock: { ProcessInfo.processInfo.systemUptime }
+        ) { label, timeout in
+            interpretRunner(Probe.run(launchctlPath, ["print", "system/\(label)"], timeout: timeout))
+        }
+    }
+
+    /// Asks `ask` about each label in turn — with a timeout no longer than
+    /// what is left of `deadline` — and counts the running ones. nil as soon
+    /// as one goes unheard or the deadline (measured on `clock`) has passed
+    /// before a label is asked. Split from `readRunners` so the budget is
+    /// testable without launchd or real time.
+    static func countRunning(_ labels: [String], deadline: TimeInterval,
+                             clock: () -> TimeInterval,
+                             ask: (_ label: String, _ timeout: TimeInterval) -> Bool?)
+        -> RunnersReading? {
+        let start = clock()
+        var running = 0
+        for label in labels {
+            let remaining = deadline - (clock() - start)
+            guard remaining > 0 else { return nil }
+            guard let isRunning = ask(label, min(runnerPrintTimeout, remaining)) else { return nil }
+            if isRunning { running += 1 }
+        }
+        return RunnersReading(running: running, total: labels.count)
+    }
+
+    /// Runner labels from the plists in `dir`, sorted. An unreadable or
+    /// missing directory is no runners.
+    static func runnerLabels(in dir: URL) -> [String] {
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        return files
+            .filter { $0.hasPrefix(runnerLabelPrefix) && $0.hasSuffix(plistSuffix) }
+            .map { String($0.dropLast(plistSuffix.count)) }
+            .sorted()
+    }
+
+    /// One `launchctl print system/<label>` → running or not; nil when the
+    /// agent didn't get to hear launchctl (it couldn't start, hung, died on a
+    /// signal, or said nothing). Any answer that isn't a top-level
+    /// `state = running` is "not running" — including launchctl's own "Could
+    /// not find service" (plist present but not loaded), which exits non-zero
+    /// with output.
+    static func interpretRunner(_ result: Probe.RunResult) -> Bool? {
+        if result.timedOut { return nil }
+        switch result.termination {
+        case .launchFailed, .signaled: return nil
+        case .exited, .unknown: break
+        }
+        if result.stdout.allSatisfy(\.isWhitespace) { return nil }
+        return isRunning(launchctlPrint: result.stdout)
+    }
+
+    /// The service's own `state` line sits one tab in; nested blocks
+    /// (endpoints, spawn info) carry `state = active` and the like two or more
+    /// tabs in, and must not count.
+    static func isRunning(launchctlPrint output: String) -> Bool {
+        output.split(whereSeparator: \.isNewline).contains { line in
+            guard line.hasPrefix("\t"), !line.dropFirst().hasPrefix("\t") else { return false }
+            return line.trimmingCharacters(in: .whitespaces) == "state = running"
+        }
+    }
 }
 
 /// Policy: the single home of the host thresholds (Decision #31). Clients only
@@ -178,13 +298,21 @@ enum HostRules {
         return .ok
     }
 
+    /// Every runner up is fine, none up is CI stopped outright, anything in
+    /// between still runs jobs, only slower (#75).
+    static func level(for runners: RunnersReading) -> HostLevel {
+        if runners.running >= runners.total { return .ok }
+        return runners.running == 0 ? .critical : .warning
+    }
+
     /// Judges each signal that could be read; nil when none could.
-    static func judge(power: PowerReading?, disk: DiskReading?) -> HostStatus? {
+    static func judge(power: PowerReading?, disk: DiskReading?,
+                      runners: RunnersReading? = nil) -> HostStatus? {
         let judgedPower = power.map { HostStatus.Power(reading: $0, level: level(for: $0)) }
         let judgedDisk = disk.map { HostStatus.Disk(reading: $0, level: level(for: $0)) }
-        guard let worst = [judgedPower?.level, judgedDisk?.level].compactMap({ $0 }).max() else {
-            return nil
-        }
-        return HostStatus(power: judgedPower, disk: judgedDisk, level: worst)
+        let judgedRunners = runners.map { HostStatus.Runners(reading: $0, level: level(for: $0)) }
+        let levels = [judgedPower?.level, judgedDisk?.level, judgedRunners?.level]
+        guard let worst = levels.compactMap({ $0 }).max() else { return nil }
+        return HostStatus(power: judgedPower, disk: judgedDisk, runners: judgedRunners, level: worst)
     }
 }

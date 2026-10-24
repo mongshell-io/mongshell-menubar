@@ -11,7 +11,7 @@ non_goals:
 
 # mongshell-menubar
 
-macOS 메뉴바에 Claude 구독 사용량을 상시 표시하는 1인용 네이티브 앱. SwiftPM executable 타깃 2개(메뉴바 앱 + 서버 맥용 감시 에이전트: openclaw 게이트웨이와 서버 호스트 신호(전원·디스크)를 판정해 싣는다 — `server/README.md`), 외부 의존성 없음. 개발 하네스 = **mongshell-dev 플러그인** (스킬 `/mongshell-dev:qa` 등 네임스페이스 호출 — 흐름도·라우팅은 플러그인 동봉 README 가 권위).
+macOS 메뉴바에 Claude 구독 사용량을 상시 표시하는 1인용 네이티브 앱. SwiftPM executable 타깃 2개(메뉴바 앱 + 서버 맥용 감시 에이전트: openclaw 게이트웨이와 서버 호스트 신호(전원·디스크·CI 러너)를 판정해 싣는다 — `server/README.md`), 외부 의존성 없음. 개발 하네스 = **mongshell-dev 플러그인** (스킬 `/mongshell-dev:qa` 등 네임스페이스 호출 — 흐름도·라우팅은 플러그인 동봉 README 가 권위).
 
 ## 작업 규약 코어 (하네스 상시 규칙)
 <!-- harness-core: 2026-10 -->

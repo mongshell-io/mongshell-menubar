@@ -14,8 +14,8 @@ struct HealRecord: Codable, Equatable {
 /// figures they were judged from (battery percent, free bytes), and nothing
 /// that identifies the machine: no host name, no path, no version.
 struct AgentStatus: Encodable {
-    /// Stays 1 when keys are added (`host`, Decision #31) — clients ignore
-    /// keys they don't know.
+    /// Stays 1 when keys are added (`host`, Decision #31; `host.runners`,
+    /// #75) — clients ignore keys they don't know.
     static let schemaVersion = 1
 
     let checkedAt: Date
@@ -80,7 +80,7 @@ extension HostLevel {
 /// be read (`power` on a mac without a battery) goes out as explicit `null`.
 extension HostStatus: Encodable {
     private enum CodingKeys: String, CodingKey {
-        case health, power, disk
+        case health, power, disk, runners
     }
 
     func encode(to encoder: Encoder) throws {
@@ -88,6 +88,7 @@ extension HostStatus: Encodable {
         try c.encode(level.healthName, forKey: .health)
         try c.encode(power, forKey: .power)
         try c.encode(disk, forKey: .disk)
+        try c.encode(runners, forKey: .runners)
     }
 }
 
@@ -114,6 +115,21 @@ extension HostStatus.Disk: Encodable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(level.healthName, forKey: .health)
         try c.encode(reading.availableBytes, forKey: .availableBytes)
+    }
+}
+
+/// Counts only: runner labels, the user they run as and their paths stay on
+/// the server (Admission Criteria 5).
+extension HostStatus.Runners: Encodable {
+    private enum CodingKeys: String, CodingKey {
+        case health, running, total
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(level.healthName, forKey: .health)
+        try c.encode(reading.running, forKey: .running)
+        try c.encode(reading.total, forKey: .total)
     }
 }
 
