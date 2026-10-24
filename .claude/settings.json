@@ -7,7 +7,7 @@
 		"mongshell": {
 			"source": {
 				"source": "github",
-				"repo": "mongshellio/claude-harness"
+				"repo": "mongshell-io/claude-harness"
 			}
 		}
 	},
