@@ -84,7 +84,7 @@ swift build && MONGSHELL_SNAPSHOT=/tmp/mongshell_snaps ./.build/debug/mongshell-
 | `menubar_strip_dark` / `menubar_strip_light` | 메뉴바 — 사용량 레벨 3쌍 × openclaw 점 (정상 / 두절 / 다운) |
 | `menubar_host_strip_dark` / `menubar_host_strip_light` | 메뉴바 두 줄 스택 — 서버 점 없음(단일 표시, 비교 기준) → 서버 점 ok / warning / critical / 두절. 실제 메뉴바 두께(22pt)로 잘라 그리므로 넘치는 스택은 잘려 보인다 |
 | `popover` | 팝오버 — openclaw 정상, 서버 섹션 없음 |
-| `popover_host_on_battery` | 팝오버 — 서버 섹션, 어댑터가 빠진 서버 (전원 warning) |
+| `popover_host_on_battery` | 팝오버 — 서버 섹션, 어댑터가 빠진 서버 (전원 warning). "서버 확인" 아래 `에이전트 v1.2.0+3` 줄 (Decision #81) — `popover_openclaw_down` 은 버전을 보내지 않는 에이전트라 그 줄이 없다 |
 | `popover_host_disk_critical` | 팝오버 — 서버 섹션, 배터리 없는 서버의 디스크 critical (전원 줄 없음) |
 | `popover_host_unreachable` | 팝오버 — 두절, 서버 섹션에 마지막 값이 흐리게 남음 |
 | `popover_openclaw_unreachable` / `popover_openclaw_down` | 팝오버 — openclaw 두절 / 게이트웨이 다운 |

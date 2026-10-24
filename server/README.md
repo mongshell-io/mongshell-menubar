@@ -244,6 +244,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 - [ ] **외부망**(와이파이 끈 휴대폰 등)에서 상태 URL 을 연다 → JSON 이 보여야 한다. 실제 파일은 키 정렬·들여쓰기된 형태다:
   ```json
   {
+    "agentVersion" : "v1.2.0+3",
     "autoHeal" : true,
     "checkedAt" : "2026-09-29T03:12:45Z",
     "detail" : "Telegram default",
@@ -266,7 +267,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
     "schema" : 1
   }
   ```
-  `health` 는 `ok` / `degraded` / `down` 중 하나다. `host` 아래의 `health` 는 `ok` / `warning` / `critical` 이다 (위 예시는 어댑터가 빠진 맥북 서버). 내장 배터리가 없는 서버는 `"power" : null` 이고, 읽을 수 있는 신호가 하나도 없으면 `"host" : null` 이다. `host` 키가 아예 없으면 구버전 에이전트다 → [4. 코드 업데이트](#코드-업데이트). 서버 맥 자신에서 연 결과는 공개 여부의 증거로 보지 않는다 ([6](#6-첫-설치-때-확인할-것-실기-미검증-가정) 가정 8) — 반드시 외부망 기기로 연다.
+  `health` 는 `ok` / `degraded` / `down` 중 하나다. `host` 아래의 `health` 는 `ok` / `warning` / `critical` 이다 (위 예시는 어댑터가 빠진 맥북 서버). 내장 배터리가 없는 서버는 `"power" : null` 이고, 읽을 수 있는 신호가 하나도 없으면 `"host" : null` 이다. `host` 키가 아예 없으면 구버전 에이전트다 → [4. 코드 업데이트](#코드-업데이트). `agentVersion` 은 설치한 소스의 버전이다 (`null` 이면 git 에서 정하지 못함 — [코드 업데이트](#코드-업데이트) 의 버전 확인). 서버 맥 자신에서 연 결과는 공개 여부의 증거로 보지 않는다 ([6](#6-첫-설치-때-확인할-것-실기-미검증-가정) 가정 8) — 반드시 외부망 기기로 연다.
 - [ ] 1분쯤 뒤 새로고침 → `checkedAt` 이 갱신돼야 한다 (UTC 표기).
 - [ ] 토큰 없이 `https://<서버 DNS 이름>:8443/` 를 열면 **404** 여야 한다 (토큰 경로만 공개). 설치 스크립트도 끝에 이것을 확인한다 — 404 가 아니라 2xx/3xx 면 포트 8443 의 funnel 을 통째로 내리고 중단, 이 맥에서 닿지 않으면 경고만 한다.
 
@@ -413,6 +414,8 @@ git pull && server/install.sh        # 설치 때 쓴 --interval / --no-auto-hea
 ```
 토큰이 재사용되므로 맥북 설정은 그대로 둔다. 새 에이전트가 이전 `status.json` 의 `lastHeal` 을 읽어 복구 쿨다운(600초)을 이어받는다.
 
+**떠 있는 버전 확인.** 설치가 `버전 v1.2.0+3` 을 출력하고, 같은 값이 로그의 `시작 — version=…` 줄, `status.json` 의 `agentVersion`, 맥북 팝오버의 "서버 확인" 아래 `에이전트 v1.2.0+3` 에 나온다. 릴리스 tag 위면 `v1.2.0`, 그 뒤 커밋이 N개면 `v1.2.0+N` 이라 커밋이 늘 때마다 값이 바뀐다 — `git pull` 만 하고 `install.sh` 를 돌리지 않았다면 팝오버의 버전이 그대로다. 서버 맥에서 커밋하지 않은 수정은 버전에 반영되지 않는다. `git 에서 버전을 정하지 못했습니다` 경고가 나오면 클론에 `v*` tag 가 없는 것이다 (`git fetch --tags`).
+
 **서버와 맥북 앱은 어느 쪽을 먼저 올려도 된다.** 서버 호스트 신호(`host`)처럼 상태 문서에 키가 늘어난 경우:
 
 | 먼저 올린 쪽 | 그동안 보이는 것 |
@@ -556,7 +559,7 @@ cat ~/Library/Application\ Support/mongshell-openclaw-agent/status.json
 
 로그 줄 형식 (에이전트가 쓰는 문구). 각 줄은 UTC ISO 시각으로 시작한다:
 ```
-2026-09-29T03:12:45Z 시작 — status-file=… interval=60s autoHeal=true      ← 에이전트 기동
+2026-09-29T03:12:45Z 시작 — version=v1.2.0+3 status-file=… interval=60s autoHeal=true   ← 에이전트 기동. version 은 install.sh 가 git 에서 정한 값 (없으면 `없음`)
 2026-09-29T03:12:45Z 경고: --gateway-label 이 자기 레이블(…)이라 무시하고 자동 탐색합니다
 2026-09-29T03:12:47Z 상태: ok (Telegram default)                          ← 판정이 바뀔 때만
 2026-09-29T03:12:47Z 호스트: warning (전원 warning, 디스크 ok, 러너 ok)   ← 전원·디스크·러너 중 하나라도 레벨이 바뀔 때만 (기동 직후 한 번 포함)
