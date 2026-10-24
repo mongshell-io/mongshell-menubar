@@ -5,6 +5,7 @@ import Foundation
 enum ServerHostAlert: Equatable, Sendable {
     case power(ServerHostPower)
     case disk(ServerHostDisk)
+    case runners(ServerHostRunners)
 }
 
 extension ServerHostAlert {
@@ -14,6 +15,7 @@ extension ServerHostAlert {
         switch self {
         case .power: return "server-host-power"
         case .disk:  return "server-host-disk"
+        case .runners: return "server-host-runners"
         }
     }
 
@@ -26,6 +28,11 @@ extension ServerHostAlert {
             return power.level == .critical ? "서버 배터리 부족" : "서버 전원 어댑터 분리됨"
         case .disk(let disk):
             return disk.level == .critical ? "서버 디스크 거의 가득" : "서버 디스크 여유 부족"
+        case .runners(let runners):
+            // Same rule as the status word: the stop is named only when the
+            // counts show it.
+            if let stopText = runners.stopText { return "서버 CI 러너 \(stopText)" }
+            return runners.level == .critical ? "서버 CI 러너 위험" : "서버 CI 러너 주의"
         }
     }
 
@@ -45,6 +52,8 @@ extension ServerHostAlert {
             return charge.map { "\($0)로 동작 중입니다." } ?? "배터리로 동작 중입니다."
         case .disk(let disk):
             return "여유 \(ServerHostText.bytes(disk.availableBytes))"
+        case .runners(let runners):
+            return "\(runners.total)대 중 \(runners.running)대 동작"
         }
     }
 }
@@ -64,7 +73,7 @@ extension ServerHostAlert {
 /// after the cooldown that still finds the signal above `ok` announces it, at
 /// the level it has then. A signal that recovered in the meantime owes
 /// nothing. A rise beyond the level announced is new and goes out at once.
-/// Power and disk are tracked separately.
+/// Power, disk and the CI runners are tracked separately.
 struct ServerHostAlertWatch: Equatable, Sendable {
     /// How long a signal stays quiet about a level it has already announced.
     static let repeatCooldown: TimeInterval = 3600
@@ -115,6 +124,7 @@ struct ServerHostAlertWatch: Equatable, Sendable {
     private var hasBaseline = false
     private var power = Signal()
     private var disk = Signal()
+    private var runners = Signal()
 
     /// Records the host as last read and returns the signals to announce.
     /// Returns a value so the caller decides whether to notify — the
@@ -135,6 +145,7 @@ struct ServerHostAlertWatch: Equatable, Sendable {
             hasBaseline = true
             power.lastLevel = host?.power?.level
             disk.lastLevel = host?.disk?.level
+            runners.lastLevel = host?.runners?.level
             return []
         }
         // A signal the document doesn't carry is no news either way: the last
@@ -145,6 +156,9 @@ struct ServerHostAlertWatch: Equatable, Sendable {
         }
         if let reported = host?.disk, disk.record(reported.level, now: now) {
             alerts.append(.disk(reported))
+        }
+        if let reported = host?.runners, runners.record(reported.level, now: now) {
+            alerts.append(.runners(reported))
         }
         return alerts
     }

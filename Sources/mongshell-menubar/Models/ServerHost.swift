@@ -27,13 +27,31 @@ struct ServerHostDisk: Equatable, Sendable {
     let availableBytes: Int64
 }
 
+/// The server's self-hosted CI runners (#75): how many launchd reports
+/// running out of how many are installed. `0 <= running <= total`, `total > 0`.
+struct ServerHostRunners: Equatable, Sendable {
+    let level: ServerHostLevel
+    let running: Int
+    let total: Int
+}
+
 /// The `host` part of one status document. A signal the server didn't send
-/// (`power` on a mac without a battery) is nil.
+/// (`power` on a mac without a battery, `runners` on a server without CI
+/// runners or from an older agent) is nil.
 struct ServerHost: Equatable, Sendable {
     /// The agent's overall verdict — what the menu-bar dot shows.
     let level: ServerHostLevel
     let power: ServerHostPower?
     let disk: ServerHostDisk?
+    let runners: ServerHostRunners?
+
+    init(level: ServerHostLevel, power: ServerHostPower?, disk: ServerHostDisk?,
+         runners: ServerHostRunners? = nil) {
+        self.level = level
+        self.power = power
+        self.disk = disk
+        self.runners = runners
+    }
 }
 
 /// The server host as the menu bar shows it. Same split as `OpenClawHealth`:
@@ -98,15 +116,19 @@ extension ServerHostHealth {
 }
 
 extension ServerHost {
-    /// Names the signal behind the overall level — the worse one, power on a
-    /// tie. When no signal we know accounts for the level (the agent judged
-    /// something this build doesn't read), only the level itself is named.
+    /// Names the signal behind the overall level — the worse one; on a tie
+    /// power, then disk, then the CI runners. When no signal we know accounts
+    /// for the level (the agent judged something this build doesn't read),
+    /// only the level itself is named.
     var shortLabel: String {
         if let power, power.level == level, level != .ok {
             return power.shortLabel
         }
         if let disk, disk.level == level, level != .ok {
             return level == .critical ? "디스크 거의 가득" : "디스크 여유 부족"
+        }
+        if let runners, runners.level == level, level != .ok {
+            return runners.shortLabel
         }
         switch level {
         case .ok:       return "정상"
@@ -150,6 +172,28 @@ extension ServerHostPower {
 extension ServerHostDisk {
     /// "디스크 여유 32GB".
     var lineText: String { "디스크 여유 \(ServerHostText.bytes(availableBytes))" }
+}
+
+extension ServerHostRunners {
+    /// What the counts say, whatever the level: "all stopped" and "some
+    /// stopped" are true of the figures alone. Nil when every runner is up —
+    /// a bad level next to full counts is one the app couldn't read, and
+    /// naming a stop there would contradict the "4/4" beside it.
+    var stopText: String? {
+        if running == 0 { return "전부 중단" }
+        if running < total { return "일부 중단" }
+        return nil
+    }
+
+    /// Status word for a runner level above `ok`: the stop when the counts
+    /// show one, otherwise only the level.
+    fileprivate var shortLabel: String {
+        if let stopText { return "CI 러너 \(stopText)" }
+        return level == .critical ? "CI 러너 위험" : "CI 러너 주의"
+    }
+
+    /// "CI 러너 3/4".
+    var lineText: String { "CI 러너 \(running)/\(total)" }
 }
 
 enum ServerHostText {

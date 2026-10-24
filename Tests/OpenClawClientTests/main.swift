@@ -381,6 +381,17 @@ do {
               disk: nil),
           "\(String(describing: unknownCharge?.host))")
 
+    let runners = roundTrip(HostRules.judge(
+        power: nil, disk: DiskReading(availableBytes: 32_604_813_672),
+        runners: RunnersReading(running: 3, total: 4)))
+    check("runners 왕복",
+          runners?.host == ServerHost(
+              level: .warning, power: nil,
+              disk: ServerHostDisk(level: .ok, availableBytes: 32_604_813_672),
+              runners: ServerHostRunners(level: .warning, running: 3, total: 4)),
+          "\(String(describing: runners?.host))")
+    check("runners null 왕복 → 러너 없음", noBattery?.host?.runners == nil)
+
     let none = roundTrip(nil)
     check("host null 왕복 → host 없음, openclaw 판정은 그대로",
           none != nil && none?.host == nil && none?.health == .ok(detail: "Telegram default"),
@@ -470,6 +481,42 @@ do {
               .host?.disk == ServerHostDisk(level: .critical, availableBytes: 0))
     check("정상 disk 는 그대로", status(host: "{\(disk)}")?.host
               == ServerHost(level: .ok, power: nil, disk: okDisk))
+
+    func runners(_ value: String, health: String = #""ok""#) -> ServerHost? {
+        status(host: #"{"health":\#(health),\#(disk),"runners":\#(value)}"#)?.host
+    }
+    check("정상 runners",
+          runners(#"{"health":"warning","running":3,"total":4}"#, health: #""warning""#)?.runners
+              == ServerHostRunners(level: .warning, running: 3, total: 4))
+    check("running 0 은 실제 값 (전부 중단)",
+          runners(#"{"health":"critical","running":0,"total":4}"#)?.runners
+              == ServerHostRunners(level: .critical, running: 0, total: 4))
+    for (label, value) in [("null", "null"), ("문자열", #""3/4""#), ("배열", "[3,4]"),
+                           ("running 없음", #"{"health":"ok","total":4}"#),
+                           ("total 없음", #"{"health":"ok","running":4}"#),
+                           ("running 음수", #"{"health":"ok","running":-1,"total":4}"#),
+                           ("running 소수", #"{"health":"ok","running":2.5,"total":4}"#),
+                           ("running 문자열", #"{"health":"ok","running":"4","total":4}"#),
+                           ("running bool", #"{"health":"ok","running":true,"total":1}"#),
+                           ("total 0", #"{"health":"ok","running":0,"total":0}"#),
+                           ("running > total", #"{"health":"ok","running":5,"total":4}"#),
+                           ("total 거대값", #"{"health":"ok","running":1,"total":1e30}"#)] {
+        let h = runners(value)
+        check("runners \(label) → 러너 없음, 나머지 신호는 그대로",
+              h != nil && h?.runners == nil && h?.disk == okDisk, "\(String(describing: h))")
+    }
+    for (label, health) in [("누락", nil), ("모르는 값", #""stalled""#), ("수", "3"),
+                            ("null", "null")] as [(String, String?)] {
+        let field = health.map { #""health":\#($0),"# } ?? ""
+        let h = runners(#"{\#(field)"running":4,"total":4}"#)
+        check("runners.health \(label) → warning (초록 아님), 개수는 그대로",
+              h?.runners == ServerHostRunners(level: .warning, running: 4, total: 4),
+              "\(String(describing: h?.runners))")
+    }
+    let noOverallRunners = status(
+        host: #"{\#(disk),"runners":{"health":"critical","running":0,"total":4}}"#)
+    check("host.health 없음 → 최악 신호에 러너 포함", noOverallRunners?.host?.level == .critical,
+          "\(String(describing: noOverallRunners?.host))")
 }
 
 print("▸ 서버 호스트 신선도 공유")
@@ -572,6 +619,35 @@ do {
           power(.warning, pluggedIn: nil, charging: nil, percent: nil).lineText == nil)
     check("디스크 줄", disk(.ok, bytes: 32_604_813_672).lineText == "디스크 여유 32GB")
 
+    func runners(_ level: ServerHostLevel, _ running: Int, of total: Int = 4) -> ServerHostRunners {
+        ServerHostRunners(level: level, running: running, total: total)
+    }
+    func label(_ level: ServerHostLevel, _ p: ServerHostPower?, _ d: ServerHostDisk?,
+               _ r: ServerHostRunners?) -> String {
+        ServerHostHealth.reported(ServerHost(level: level, power: p, disk: d, runners: r)).shortLabel
+    }
+    check("러너 warning → CI 러너 일부 중단",
+          label(.warning, power(.ok, pluggedIn: true), disk(.ok), runners(.warning, 3))
+              == "CI 러너 일부 중단")
+    check("러너 critical → CI 러너 전부 중단",
+          label(.critical, nil, disk(.ok), runners(.critical, 0)) == "CI 러너 전부 중단")
+    check("러너 모두 ok → 정상",
+          label(.ok, power(.ok, pluggedIn: true), disk(.ok), runners(.ok, 4)) == "정상")
+    check("같은 레벨 → 전원 > 러너",
+          label(.warning, power(.warning), disk(.ok), runners(.warning, 3)) == "어댑터 분리")
+    check("같은 레벨 → 디스크 > 러너",
+          label(.warning, nil, disk(.warning), runners(.warning, 3)) == "디스크 여유 부족")
+    check("더 심각한 쪽 → 러너",
+          label(.critical, power(.warning), disk(.warning), runners(.critical, 0))
+              == "CI 러너 전부 중단")
+    // The stop words follow the counts: a level the app folded to warning
+    // next to "4/4" must not claim a stop.
+    check("러너 warning 인데 4/4 → CI 러너 주의",
+          label(.warning, nil, nil, runners(.warning, 4)) == "CI 러너 주의")
+    check("러너 critical 인데 일부만 멈춤 → 개수대로 일부 중단",
+          label(.critical, nil, nil, runners(.critical, 2)) == "CI 러너 일부 중단")
+    check("러너 줄", runners(.warning, 3).lineText == "CI 러너 3/4")
+
     check("바이트: 10GB 이상은 정수 내림", ServerHostText.bytes(32_999_999_999) == "32GB")
     check("바이트: 10GB 정각 → 10GB", ServerHostText.bytes(10_000_000_000) == "10GB")
     check("바이트: 10GB 바로 아래 → 9.9GB (올림 없음)", ServerHostText.bytes(9_999_999_999) == "9.9GB",
@@ -608,6 +684,7 @@ do {
             switch $0 {
             case .power(let p): return "power:\(p.level)"
             case .disk(let d):  return "disk:\(d.level)"
+            case .runners(let r): return "runners:\(r.level)"
             }
         }
     }
@@ -754,6 +831,39 @@ do {
           levels(independent.observe(host(power: .critical, disk: .critical), now: at(360)))
               == ["power:critical", "disk:critical"])
 
+    func withRunners(_ base: ServerHost, _ level: ServerHostLevel?, running: Int = 3) -> ServerHost {
+        let r = level.map { ServerHostRunners(level: $0, running: running, total: 4) }
+        return ServerHost(level: max(base.level, level ?? .ok), power: base.power, disk: base.disk,
+                          runners: r)
+    }
+    var ci = ServerHostAlertWatch()
+    check("러너: 기준점은 이미 나빠도 알림 없음",
+          ci.observe(withRunners(host(power: .ok, disk: .ok), .warning), now: at(0)).isEmpty)
+    check("러너: 기준점(warning) 뒤 critical — 알림",
+          levels(ci.observe(withRunners(host(power: .ok, disk: .ok), .critical, running: 0),
+                            now: at(60))) == ["runners:critical"])
+    var ciIndependent = ServerHostAlertWatch()
+    _ = ciIndependent.observe(withRunners(host(power: .ok, disk: .ok), .ok), now: at(0))
+    _ = ciIndependent.observe(withRunners(host(power: .warning, disk: .ok), .ok), now: at(60))
+    check("러너: 전원 알림 직후의 러너 상승도 따로 알림",
+          levels(ciIndependent.observe(withRunners(host(power: .warning, disk: .ok), .warning),
+                                       now: at(120))) == ["runners:warning"])
+    _ = ciIndependent.observe(withRunners(host(power: .ok, disk: .ok), .ok), now: at(180))
+    check("러너: 쿨다운 안의 같은 레벨 재상승 — 알림 없음",
+          ciIndependent.observe(withRunners(host(power: .ok, disk: .ok), .warning),
+                                now: at(240)).isEmpty)
+    check("세 신호 동시 상승 — 전원·디스크·러너 순",
+          levels(ciIndependent.observe(withRunners(host(power: .critical, disk: .critical),
+                                                   .critical, running: 0), now: at(300)))
+              == ["power:critical", "disk:critical", "runners:critical"])
+    var ciLate = ServerHostAlertWatch()
+    _ = ciLate.observe(host(power: .ok, disk: .ok), now: at(0))
+    check("러너 없이 시작한 뒤 처음 나타난 러너가 나쁨 — 알림",
+          levels(ciLate.observe(withRunners(host(power: .ok, disk: .ok), .warning), now: at(60)))
+              == ["runners:warning"])
+    check("러너 신호가 사라짐 — 알림 없음",
+          ciLate.observe(host(power: .ok, disk: .ok), now: at(120)).isEmpty)
+
     var gaps = ServerHostAlertWatch()
     _ = gaps.observe(host(power: .warning, disk: .ok), now: at(0))
     check("host 사라짐 — 알림 없음", gaps.observe(nil, now: at(60)).isEmpty)
@@ -805,6 +915,21 @@ do {
     check("문구: 디스크 critical",
           alert(disk: .critical, bytes: 4_200_000_000).title == "서버 디스크 거의 가득"
               && alert(disk: .critical, bytes: 4_200_000_000).body == "여유 4.2GB")
+    func alert(runners level: ServerHostLevel, running: Int, total: Int = 4) -> ServerHostAlert {
+        .runners(ServerHostRunners(level: level, running: running, total: total))
+    }
+    check("문구: 러너 warning",
+          alert(runners: .warning, running: 3).title == "서버 CI 러너 일부 중단"
+              && alert(runners: .warning, running: 3).body == "4대 중 3대 동작",
+          "\(alert(runners: .warning, running: 3).title) / \(alert(runners: .warning, running: 3).body)")
+    check("문구: 러너 critical",
+          alert(runners: .critical, running: 0).title == "서버 CI 러너 전부 중단"
+              && alert(runners: .critical, running: 0).body == "4대 중 0대 동작")
+    check("문구: 러너 레벨은 나쁜데 개수는 전부 동작 → 원인 없이 레벨만",
+          alert(runners: .warning, running: 4).title == "서버 CI 러너 주의"
+              && alert(runners: .critical, running: 4).title == "서버 CI 러너 위험")
+    check("식별자 고정: 러너", alert(runners: .warning, running: 3).identifier == "server-host-runners"
+              && alert(runners: .critical, running: 0).identifier == "server-host-runners")
     check("식별자 고정 (신호별 교체)",
           alert(power: .warning, percent: 82).identifier == "server-host-power"
               && alert(power: .critical, percent: 18).identifier == "server-host-power"

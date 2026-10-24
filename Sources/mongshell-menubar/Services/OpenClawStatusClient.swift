@@ -154,7 +154,8 @@ struct OpenClawStatusClient: Sendable {
     ///  "host":{"health":"warning",
     ///          "power":{"health":"warning","pluggedIn":false,"charging":false,
     ///                   "batteryPercent":82},
-    ///          "disk":{"health":"ok","availableBytes":32604813672}}}
+    ///          "disk":{"health":"ok","availableBytes":32604813672},
+    ///          "runners":{"health":"ok","running":4,"total":4}}}
     /// ```
     /// Lenient like the usage parser (Decision 2): unknown keys are ignored and
     /// a newer `schema` is still attempted. The only hard requirement is a
@@ -217,11 +218,12 @@ struct OpenClawStatusClient: Sendable {
         guard let dict = any as? [String: Any] else { return nil }
         let power = hostPower(dict["power"])
         let disk = hostDisk(dict["disk"])
+        let runners = hostRunners(dict["runners"])
         // Without the agent's overall verdict, the worst signal stands in for
         // it; with neither there is nothing to show.
-        let worstSignal = [power?.level, disk?.level].compactMap { $0 }.max()
+        let worstSignal = [power?.level, disk?.level, runners?.level].compactMap { $0 }.max()
         guard let level = hostLevel(dict["health"]) ?? worstSignal else { return nil }
-        return ServerHost(level: level, power: power, disk: disk)
+        return ServerHost(level: level, power: power, disk: disk, runners: runners)
     }
 
     /// nil when there's no level at all — the key is missing or `null`. Any
@@ -261,6 +263,28 @@ struct OpenClawStatusClient: Sendable {
               bytes >= 0, bytes < Double(Int64.max) else { return nil }
         return ServerHostDisk(level: hostLevel(dict["health"]) ?? unjudgedLevel,
                               availableBytes: Int64(bytes))
+    }
+
+    /// The counts are the signal (#75): without a usable pair there are no
+    /// runners. A pair that can't be true — more running than installed, or
+    /// nothing installed (the agent sends `null` then) — is dropped rather
+    /// than shown.
+    private static func hostRunners(_ any: Any?) -> ServerHostRunners? {
+        guard let dict = any as? [String: Any],
+              let running = count(dict["running"]), let total = count(dict["total"]),
+              total > 0, running <= total else { return nil }
+        return ServerHostRunners(level: hostLevel(dict["health"]) ?? unjudgedLevel,
+                                 running: running, total: total)
+    }
+
+    /// Bounds a count far above any real runner fleet, so `Int(_:)` can't trap.
+    private static let maxCount = Double(Int32.max)
+
+    /// A whole, non-negative JSON number.
+    private static func count(_ any: Any?) -> Int? {
+        guard let value = number(any), value >= 0, value < maxCount,
+              value.rounded(.towardZero) == value else { return nil }
+        return Int(value)
     }
 
     private static let percentRange = 0.0...100.0

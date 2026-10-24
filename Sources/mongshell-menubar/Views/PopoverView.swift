@@ -81,7 +81,8 @@ struct PopoverView: View {
     private static let serverSectionBottomPadding: CGFloat = 16
 
     /// The server's own signals, under the service that runs on it. Rows the
-    /// server didn't send (no battery → no power row) leave no gap.
+    /// server didn't send (no battery → no power row, no CI runners → no
+    /// runner row) leave no gap.
     private func serverHostSection(_ host: ServerHost) -> some View {
         // Once the server has gone quiet the figures are only the last ones
         // known: greyed, and no row is pointed at as the cause.
@@ -107,7 +108,7 @@ struct PopoverView: View {
                     .foregroundStyle(Palette.textSecondary)
             }
 
-            if powerText != nil || host.disk != nil {
+            if powerText != nil || host.disk != nil || host.runners != nil {
                 VStack(alignment: .leading, spacing: 6) {
                     if let power = host.power, let powerText {
                         serverHostRow(glyph: "bolt.fill", text: powerText,
@@ -116,6 +117,10 @@ struct PopoverView: View {
                     if let disk = host.disk {
                         serverHostRow(glyph: "internaldrive.fill", text: disk.lineText,
                                       level: disk.level, stale: stale)
+                    }
+                    if let runners = host.runners {
+                        serverHostRow(glyph: "gearshape.2.fill", text: runners.lineText,
+                                      level: runners.level, stale: stale)
                     }
                 }
             }

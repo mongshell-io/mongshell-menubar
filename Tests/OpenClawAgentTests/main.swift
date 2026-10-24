@@ -4,8 +4,8 @@ import Foundation
 //
 // Each case pins a rule whose mutation would silently change what the menubar
 // clients see or make the agent restart the wrong thing: probe verdict order,
-// heal timing, the self-label exclusion, the host thresholds, and the
-// status-file wire format.
+// heal timing, the self-label exclusion, the host thresholds (CI runners
+// included), and the status-file wire format.
 //
 // Run with `./scripts/test.sh`, which compiles this against the real sources
 // (main.swift excluded — it's the agent's entry point).
@@ -379,6 +379,19 @@ do {
     check("5GB - 1바이트 → critical", disk(4_999_999_999) == .critical)
 }
 
+print("▸ 호스트 CI 러너 판정")
+do {
+    func runners(_ running: Int, of total: Int) -> HostLevel {
+        HostRules.level(for: RunnersReading(running: running, total: total))
+    }
+    check("4/4 → ok", runners(4, of: 4) == .ok)
+    check("3/4 → warning", runners(3, of: 4) == .warning)
+    check("1/4 → warning", runners(1, of: 4) == .warning)
+    check("0/4 → critical", runners(0, of: 4) == .critical)
+    check("1/1 → ok · 0/1 → critical (대수는 설치된 만큼)",
+          runners(1, of: 1) == .ok && runners(0, of: 1) == .critical)
+}
+
 print("▸ 호스트 종합")
 do {
     let onBattery = PowerReading(pluggedIn: false, charging: false, batteryPercent: 82)
@@ -414,6 +427,21 @@ do {
           HostSignalLevels(powerWorse) == HostSignalLevels(HostRules.judge(
               power: PowerReading(pluggedIn: false, charging: false, batteryPercent: 81),
               disk: DiskReading(availableBytes: 32_000_000_000))))
+    let allUp = RunnersReading(running: 4, total: 4)
+    let oneDown = RunnersReading(running: 3, total: 4)
+    let allDown = RunnersReading(running: 0, total: 4)
+    let runnersWorse = HostRules.judge(power: pluggedIn, disk: roomy, runners: allDown)
+    check("전원 ok + 디스크 ok + 러너 0/4 → critical",
+          runnersWorse?.level == .critical && runnersWorse?.runners?.level == .critical,
+          "\(String(describing: runnersWorse?.level))")
+    let runnersOnly = HostRules.judge(power: nil, disk: nil, runners: oneDown)
+    check("러너만으로 종합", runnersOnly?.level == .warning && runnersOnly?.disk == nil)
+    check("러너 없음(nil) → 러너는 종합에 안 들어감",
+          HostRules.judge(power: pluggedIn, disk: roomy, runners: nil)?.level == .ok
+              && HostRules.judge(power: pluggedIn, disk: roomy, runners: nil)?.runners == nil)
+    check("로그 키: 종합이 같아도 러너 레벨이 다르면 다른 키",
+          HostSignalLevels(HostRules.judge(power: onBattery, disk: roomy, runners: allUp))
+              != HostSignalLevels(HostRules.judge(power: onBattery, disk: roomy, runners: oneDown)))
     check("로그 키: 신호 없음(host nil)은 신호가 있는 것과 다른 키",
           HostSignalLevels(nil) != HostSignalLevels(powerOnly)
               && HostSignalLevels(nil) == HostSignalLevels(HostRules.judge(power: nil, disk: nil)))
@@ -526,6 +554,87 @@ do {
     check("여유 음수 → nil", HostProbe.interpretDisk(importantUsage: 0, available: -1) == nil)
 }
 
+print("▸ CI 러너 읽기 해석")
+do {
+    // Shape of a real `launchctl print system/com.github.actions-runner.org`
+    // on the server mac (trimmed): the service's own lines one tab in, nested
+    // blocks two tabs in — with their own `state =` lines.
+    let running = """
+        system/com.github.actions-runner.org = {
+        \tactive count = 1
+        \tpath = /Library/LaunchDaemons/com.github.actions-runner.org.plist
+        \ttype = LaunchDaemon
+        \tstate = running
+
+        \tprogram = /Users/ghrunner/actions-runner-org/runsvc.sh
+        \tpid = 8241
+        \tlast exit code = (never exited)
+
+        \tendpoints = {
+        \t\t"com.github.actions-runner.org" = {
+        \t\t\tport = 0
+        \t\t\tstate = active
+        \t\t}
+        \t}
+        }
+
+        """
+    func run(_ out: String, exit: Int32 = 0, timedOut: Bool = false) -> Probe.RunResult {
+        .init(stdout: out, termination: .exited(status: exit), timedOut: timedOut)
+    }
+    check("최상위 state = running → 동작", HostProbe.interpretRunner(run(running)) == true)
+
+    let stopped = running.replacingOccurrences(of: "\tstate = running", with: "\tstate = not running")
+    check("최상위 state = not running → 멈춤", HostProbe.interpretRunner(run(stopped)) == false)
+
+    // Only a nested block says "running" here — the service itself doesn't.
+    let nestedOnly = """
+        system/com.github.actions-runner.org = {
+        \tstate = waiting
+        \tendpoints = {
+        \t\tstate = running
+        \t\tstate = active
+        \t}
+        }
+
+        """
+    check("하위 블록의 state 는 무시", HostProbe.interpretRunner(run(nestedOnly)) == false)
+    let activeOnly = running.replacingOccurrences(of: "\tstate = running\n", with: "")
+    check("최상위 state 없음 + 하위 state = active → 멈춤",
+          HostProbe.interpretRunner(run(activeOnly)) == false)
+
+    let notLoaded = "Could not find service \"com.github.actions-runner.org-3\" in domain for system\n"
+    check("서비스가 로드 안 됨 (출력 + exit≠0) → 멈춤",
+          HostProbe.interpretRunner(run(notLoaded, exit: 113)) == false)
+    check("해석 못 하는 출력 → 멈춤 (동작으로 세지 않음)",
+          HostProbe.interpretRunner(run("launchctl: something new\n")) == false)
+
+    // The agent not hearing launchctl says nothing about the runner.
+    check("launchctl 실행 실패 → 관측 없음",
+          HostProbe.interpretRunner(.init(stdout: "", termination: .launchFailed(errno: ENOENT),
+                                          timedOut: false)) == nil)
+    check("시간 초과 → 관측 없음 (출력이 running 이어도)",
+          HostProbe.interpretRunner(run(running, timedOut: true)) == nil)
+    check("신호로 죽음 → 관측 없음",
+          HostProbe.interpretRunner(.init(stdout: running, termination: .signaled(SIGKILL),
+                                          timedOut: false)) == nil)
+    check("출력 없음 → 관측 없음", HostProbe.interpretRunner(run("  \n", exit: 0)) == nil)
+
+    let dir = root.appendingPathComponent("LaunchDaemons")
+    try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    for name in ["com.github.actions-runner.org-2.plist", "com.github.actions-runner.org.plist",
+                 "com.github.actions-runner.org-3.plist.bak", "com.example.other.plist",
+                 "com.github.actions-runner.org-4.plist"] {
+        FileManager.default.createFile(atPath: dir.appendingPathComponent(name).path, contents: Data())
+    }
+    let labels = HostProbe.runnerLabels(in: dir)
+    check("러너 레이블 = 접두 + .plist 만, 정렬",
+          labels == ["com.github.actions-runner.org", "com.github.actions-runner.org-2",
+                     "com.github.actions-runner.org-4"], "\(labels)")
+    check("디렉토리 없음 → 러너 0개",
+          HostProbe.runnerLabels(in: root.appendingPathComponent("nope")).isEmpty)
+}
+
 // MARK: - 상태 파일
 
 /// Every string value anywhere under a JSON value.
@@ -542,7 +651,8 @@ do {
     let heal = HealRecord(at: at.addingTimeInterval(-3762), ok: true, reason: "down")
     let host = HostRules.judge(
         power: PowerReading(pluggedIn: false, charging: false, batteryPercent: 82),
-        disk: DiskReading(availableBytes: 32_604_813_672))
+        disk: DiskReading(availableBytes: 32_604_813_672),
+        runners: RunnersReading(running: 4, total: 4))
     let status = AgentStatus(
         checkedAt: at, verdict: .ok(detail: "Telegram default"),
         intervalSeconds: 60, autoHeal: true, lastHeal: heal, host: host)
@@ -561,7 +671,7 @@ do {
           && lh?["ok"] as? Bool == true && lh?["reason"] as? String == "down", "\(lh ?? [:])")
 
     let hostJSON = json["host"] as? [String: Any]
-    check("host 키 집합", hostJSON.map { Set($0.keys) } == ["health", "power", "disk"],
+    check("host 키 집합", hostJSON.map { Set($0.keys) } == ["health", "power", "disk", "runners"],
           "\(hostJSON?.keys.sorted() ?? [])")
     check("host.health = 최악", hostJSON?["health"] as? String == "warning")
     let powerJSON = hostJSON?["power"] as? [String: Any]
@@ -574,23 +684,31 @@ do {
     check("host.disk 키·값", diskJSON.map { Set($0.keys) } == ["health", "availableBytes"]
           && diskJSON?["health"] as? String == "ok"
           && diskJSON?["availableBytes"] as? Int64 == 32_604_813_672, "\(diskJSON ?? [:])")
+    let runnersJSON = hostJSON?["runners"] as? [String: Any]
+    check("host.runners 키·값 (개수만, 레이블 없음)",
+          runnersJSON.map { Set($0.keys) } == ["health", "running", "total"]
+          && runnersJSON?["health"] as? String == "ok"
+          && runnersJSON?["running"] as? Int == 4 && runnersJSON?["total"] as? Int == 4,
+          "\(runnersJSON ?? [:])")
 
     // The document is public: nothing but the three level names may appear as
     // a string under `host`, whatever the combination of signals.
     let levels: Set<String> = ["ok", "warning", "critical"]
-    let combos: [(PowerReading?, DiskReading?)] = [
+    let combos: [(PowerReading?, DiskReading?, RunnersReading?)] = [
         (PowerReading(pluggedIn: true, charging: true, batteryPercent: 100),
-         DiskReading(availableBytes: 32_604_813_672)),
+         DiskReading(availableBytes: 32_604_813_672), RunnersReading(running: 4, total: 4)),
         (PowerReading(pluggedIn: false, charging: false, batteryPercent: 82),
-         DiskReading(availableBytes: 19_999_999_999)),
+         DiskReading(availableBytes: 19_999_999_999), RunnersReading(running: 3, total: 4)),
         (PowerReading(pluggedIn: false, charging: false, batteryPercent: nil),
-         DiskReading(availableBytes: 4_999_999_999)),
-        (PowerReading(pluggedIn: false, charging: false, batteryPercent: 20), nil),
-        (nil, DiskReading(availableBytes: 0)),
+         DiskReading(availableBytes: 4_999_999_999), RunnersReading(running: 0, total: 4)),
+        (PowerReading(pluggedIn: false, charging: false, batteryPercent: 20), nil, nil),
+        (nil, DiskReading(availableBytes: 0), nil),
+        (nil, nil, RunnersReading(running: 1, total: 4)),
     ]
-    let hostStrings = combos.flatMap { power, disk -> [String] in
+    let hostStrings = combos.flatMap { power, disk, runners -> [String] in
         let doc = AgentStatus(checkedAt: at, verdict: .down, intervalSeconds: 60, autoHeal: true,
-                              lastHeal: nil, host: HostRules.judge(power: power, disk: disk))
+                              lastHeal: nil,
+                              host: HostRules.judge(power: power, disk: disk, runners: runners))
         let parsed = try! JSONSerialization.jsonObject(with: StatusFile.encode(doc)) as! [String: Any]
         return strings(in: parsed["host"] ?? NSNull())
     }
@@ -604,8 +722,9 @@ do {
         host: HostRules.judge(power: nil, disk: DiskReading(availableBytes: 32_604_813_672)))
     let noBatteryHost = (try! JSONSerialization.jsonObject(with: StatusFile.encode(noBattery))
         as! [String: Any])["host"] as? [String: Any]
-    check("배터리 없음 → power 는 null 로 유지",
-          noBatteryHost?["power"] is NSNull && noBatteryHost?["disk"] is [String: Any],
+    check("배터리 없음 → power 는 null, 러너 없음 → runners 는 null 로 유지",
+          noBatteryHost?["power"] is NSNull && noBatteryHost?["disk"] is [String: Any]
+              && noBatteryHost?["runners"] is NSNull,
           "\(noBatteryHost?.keys.sorted() ?? [])")
     let noPercent = AgentStatus(
         checkedAt: at, verdict: .down, intervalSeconds: 60, autoHeal: true, lastHeal: nil,

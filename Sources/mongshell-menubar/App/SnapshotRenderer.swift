@@ -56,6 +56,9 @@ enum SnapshotRenderer {
             .snapshotOK(now: now, host: .snapshotDiskCritical), now: now)
         write(PopoverPreview(), to: base, "popover_host_disk_critical", scale: 2)
         OpenClawModel.shared.presentForSnapshot(
+            .snapshotOK(now: now, host: .snapshotRunnersPartial), now: now)
+        write(PopoverPreview(), to: base, "popover_host_runners_partial", scale: 2)
+        OpenClawModel.shared.presentForSnapshot(
             .snapshotUnreachable(now: now, host: .snapshotOnBattery), now: now)
         write(PopoverPreview(), to: base, "popover_host_unreachable", scale: 2)
         OpenClawModel.shared.presentForSnapshot(.snapshotUnreachable(now: now), now: now)
@@ -254,12 +257,21 @@ private extension OpenClawReading {
 
 /// Canned server host signals for the reference images.
 private extension ServerHost {
-    /// A laptop-as-server that lost its adapter.
+    /// A laptop-as-server that lost its adapter; its CI runners are all up.
     static let snapshotOnBattery = ServerHost(
         level: .warning,
         power: ServerHostPower(level: .warning, pluggedIn: false, charging: false,
                                batteryPercent: 82),
-        disk: ServerHostDisk(level: .ok, availableBytes: 32_604_813_672))
+        disk: ServerHostDisk(level: .ok, availableBytes: 32_604_813_672),
+        runners: ServerHostRunners(level: .ok, running: 4, total: 4))
+
+    /// Plugged in with room to spare, but one of four CI runners has stopped.
+    static let snapshotRunnersPartial = ServerHost(
+        level: .warning,
+        power: ServerHostPower(level: .ok, pluggedIn: true, charging: false,
+                               batteryPercent: 100),
+        disk: ServerHostDisk(level: .ok, availableBytes: 32_604_813_672),
+        runners: ServerHostRunners(level: .warning, running: 3, total: 4))
 
     /// A server without a battery, its disk nearly full.
     static let snapshotDiskCritical = ServerHost(
