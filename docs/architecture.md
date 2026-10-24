@@ -80,10 +80,10 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
 
 ```
 [서버 맥] mongshell-openclaw-agent  ──(LaunchAgent, 기본 60초 주기)
-   └─ Probe → posix_spawn: `openclaw channels status --probe`  (새 프로세스 그룹, 8초 초과 시 그룹 SIGTERM → 1초 → SIGKILL, 출력 읽기는 최대 10초)
-        └─ 파싱 → ok / degraded / down  (공개 detail 은 허용 문자 필터 통과분만)
+   └─ Probe → posix_spawn: `openclaw channels status --probe`  (새 프로세스 그룹, 25초 초과 시 그룹 SIGTERM → 1초 → SIGKILL, 출력 읽기는 최대 27초)
+        └─ 파싱 → ok / degraded / down  (공개 detail 은 허용 문자 필터 통과분만). 시간 초과는 따로 판정해 down + detail `응답 지연 · 25초 초과` 로 싣는다
         └─ 실행 실패·빈 출력 → 관측 실패: 게시·복구 카운트 없이 주기만큼 대기 후 종료(exit 75) → KeepAlive 재기동. 복구 직후 재확인이면 복구 전 판정으로 한 번 쓰고 종료 — 쿨다운 보존
-   └─ 자동복구: 2회 연속 실패 + 쿨다운 600초 → launchctl kickstart -k <게이트웨이 레이블>
+   └─ 자동복구: 2회 연속 실패(시간 초과만 이어졌으면 4회, 복구 직후 재확인의 실패는 시간 초과로 셈) + 쿨다운 600초 → launchctl kickstart -k <게이트웨이 레이블>  (Decision #79)
    └─ HostProbe → IOKit 전원 정보 + 홈 볼륨 여유 공간 + CI 러너 (LaunchDaemon plist 개수, 레이블별 launchctl print)  (읽기만)
         └─ HostRules → 신호별·종합 ok / warning / critical  (읽을 신호가 없으면 host = null)
    └─ status.json 원자적 쓰기 (0644)

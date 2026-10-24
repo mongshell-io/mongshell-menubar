@@ -10,10 +10,10 @@ import Foundation
 
 struct Options {
     static let defaultInterval = 60
-    /// A probe takes up to 10s (8s timeout + kill and read grace) and a heal
-    /// adds 3s + a re-probe; below this the loop would spend most of its time
-    /// probing.
-    static let minimumInterval = 15
+    /// A probe takes up to 27s (25s timeout + kill and read grace) and a heal
+    /// adds a kickstart, 3s and a re-probe; below this the loop would spend
+    /// most of its time probing.
+    static let minimumInterval = 30
     /// A day. Clients derive their "server unreachable" threshold from
     /// 3×interval, so an unbounded value would mean a dead agent is never
     /// noticed (and the product could overflow).
@@ -201,10 +201,10 @@ while true {
                 case .observed(let v):
                     verdict = v
                     checkedAt = Date()
-                    // Counted like any probe (as the app's post-heal refresh
-                    // is); the cooldown just set keeps it from triggering
-                    // another heal.
-                    tracker.record(verdict)
+                    // Counted, but a failure only weakly (see
+                    // `recordAfterHeal`); the cooldown just set keeps it from
+                    // triggering another heal.
+                    tracker.recordAfterHeal(verdict)
                 case .unobserved(let reason):
                     // The heal must still reach the file: the next process
                     // takes its cooldown from `lastHeal` there. Published with

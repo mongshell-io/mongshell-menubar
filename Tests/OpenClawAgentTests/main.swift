@@ -58,7 +58,7 @@ do {
     check("running → ok + 채널 이름", v7 == .ok(detail: "Telegram default"), "\(String(describing: v7))")
 
     let v8 = verdict("Gateway reachable.\n- Telegram default: running\n", timedOut: true)
-    check("타임아웃 → down (출력이 정상이어도)", v8 == .down, "\(String(describing: v8))")
+    check("타임아웃 → timedOut (출력이 정상이어도)", v8 == .timedOut, "\(String(describing: v8))")
 
     let v9 = verdict("Gateway reachable.\n", exit: 0)
     check("채널 없음 + exit 0 + reachable → ok(채널 없음)", v9 == .ok(detail: "채널 없음"), "\(String(describing: v9))")
@@ -67,7 +67,7 @@ do {
     let v12 = verdict("openclaw: failed to load config\n", exit: 1)
     check("해석 불가 문구 + exit≠0 → down (관측됨)", v12 == .down, "\(String(describing: v12))")
     let v13 = verdict("", exit: 0, timedOut: true)
-    check("출력 없는 타임아웃 → down (관측 실패 아님)", v13 == .down, "\(String(describing: v13))")
+    check("출력 없는 타임아웃 → timedOut (관측 실패 아님)", v13 == .timedOut, "\(String(describing: v13))")
 }
 
 // MARK: - 관측 실패
@@ -314,6 +314,37 @@ do {
     var rr = restored
     rr.record(.down); rr.record(.down)
     check("재시작 시 이어받은 lastHeal 로 쿨다운 유지", !rr.isHealDue(now: t0.addingTimeInterval(60)))
+
+    // Issue #79: a loaded host times the CLI out while the gateway is fine.
+    var slow = HealTracker()
+    for _ in 1..<HealTracker.timeoutsBeforeHeal { slow.record(.timedOut) }
+    check("시간 초과만 3회 → 복구 안 함", !slow.isHealDue(now: t0))
+    slow.record(.timedOut)
+    check("시간 초과만 4회 → 복구", slow.isHealDue(now: t0))
+
+    var mixed = HealTracker()
+    mixed.record(.timedOut); mixed.record(.down)
+    check("시간 초과 + down → 2회 규칙으로 복구", mixed.isHealDue(now: t0))
+
+    var reset = HealTracker()
+    reset.record(.down); reset.record(.ok(detail: "정상"))
+    reset.record(.timedOut); reset.record(.timedOut)
+    check("ok 뒤에는 이전 down 이 남지 않음", !reset.isHealDue(now: t0))
+
+    var healed = HealTracker()
+    healed.record(.down); healed.record(.down)
+    healed.markHealed(at: t0)
+    healed.record(.timedOut); healed.record(.timedOut)
+    check("복구 뒤에는 이전 down 이 남지 않음",
+          !healed.isHealDue(now: t0.addingTimeInterval(HealTracker.cooldown)))
+
+    var afterHeal = HealTracker()
+    afterHeal.record(.down); afterHeal.record(.down)
+    afterHeal.markHealed(at: t0)
+    afterHeal.recordAfterHeal(.down)
+    afterHeal.record(.timedOut)
+    check("복구 직후 재확인의 down 은 약하게 셈 — 쿨다운 뒤 시간 초과 1회로 재복구 안 함",
+          !afterHeal.isHealDue(now: t0.addingTimeInterval(HealTracker.cooldown)))
 }
 
 // MARK: - 게이트웨이 레이블 탐색

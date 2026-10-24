@@ -177,7 +177,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 | 옵션 | 뜻 |
 |---|---|
 | (없음) | 첫 설치: 60초 주기, 자동복구 켬. 재실행: 지난번 설치 옵션 그대로 |
-| `--interval N` | probe 주기(초). **15~86400**, 6자리 이하 정수 |
+| `--interval N` | probe 주기(초). **30~86400**, 6자리 이하 정수 |
 | `--auto-heal` | 게이트웨이 자동복구 켜기 (`--no-auto-heal` 로 꺼 둔 것을 되돌릴 때) |
 | `--no-auto-heal` | 게이트웨이 자동복구 끄기 (상태 보고만) |
 | `--rotate-token` | URL 토큰 재발급 — 옛 URL 은 즉시 무효 ([4. 토큰 교체](#토큰-교체)) |
@@ -197,7 +197,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 ▶ 게이트웨이 launchd 레이블 탐색
   → ai.openclaw.gateway        ← 게이트웨이 레이블이 맞는지 꼭 확인
 ▶ LaunchAgent 등록
-▶ 첫 상태 파일 대기 (최대 40s)
+▶ 첫 상태 파일 대기 (최대 90s)
   → ~/Library/Application Support/mongshell-openclaw-agent/status.json
 ▶ tailscale funnel 설정
   파일을 서빙하는 funnel 설정은 관리자 권한이 필요해 sudo 로 실행합니다 (비밀번호를 물을 수 있습니다).
@@ -466,7 +466,7 @@ funnel 경로 → LaunchAgent → 데이터 폴더(토큰·설치 옵션 포함)
 | `openclaw 바이너리가 없습니다 (/opt/homebrew/bin, /usr/local/bin 확인).` | 두 경로 어디에도 실행 파일 없음 (npm 전역 경로 등) | 두 경로 중 하나에 openclaw 가 있어야 한다. 에이전트도 같은 두 경로만 본다 |
 | `swift 가 없습니다…` | Command Line Tools 없음 | `xcode-select --install` |
 | `openssl 이 없습니다.` | 기본 `/usr/bin/openssl` 이 PATH 에 없음 | `ls -l /usr/bin/openssl`, PATH 확인 |
-| `--interval 에는 6자리 이하 정수(초)가 필요합니다` / `--interval 은 15~86400 초여야 합니다: …` / `알 수 없는 인자: …` | 옵션 오류 | `server/install.sh --help` |
+| `--interval 에는 6자리 이하 정수(초)가 필요합니다` / `--interval 은 30~86400 초여야 합니다: …` / `알 수 없는 인자: …` | 옵션 오류 | `server/install.sh --help` |
 | `경고: 저장된 주기가 올바르지 않아 무시합니다 (…): interval=…` / `경고: 저장된 자동복구 값이 올바르지 않아 무시합니다 (…): auto_heal=…` | 데이터 폴더의 `options` 파일 값이 깨짐 | 깨진 항목은 버려지고 기본값(60초 / 켬)으로 설치되며, 설치 끝에 그 적용값으로 파일이 다시 쓰인다. 다른 값을 원하면 `--interval N` / `--no-auto-heal` 로 명시해 재실행한다 |
 | `경고: 저장된 설치 옵션을 읽을 수 없어 기본값을 씁니다: …` | `options` 파일 읽기 권한 없음 | 두 항목 모두 기본값으로 설치된다. `ls -l` 로 권한 확인. 다른 값을 원하면 옵션을 명시해 재실행한다 |
 
@@ -493,7 +493,7 @@ funnel 경로 → LaunchAgent → 데이터 폴더(토큰·설치 옵션 포함)
 | `생성한 plist 가 올바르지 않습니다: …` | plist 생성 오류 | `plutil -lint ~/Library/LaunchAgents/com.mongshell.openclaw-agent.plist` 결과와 함께 보고 |
 | `경고: 설치 옵션을 저장하지 못했습니다 — 다음 재실행은 옵션을 다시 줘야 합니다: …` | 데이터 폴더 쓰기 실패 | 에이전트는 이번 옵션으로 돈다. `ls -la ~/Library/Application\ Support/mongshell-openclaw-agent/` 로 권한 확인 |
 | `launchctl bootstrap 실패…` | 등록 실패 | 메시지의 `launchctl bootstrap gui/<uid> …` 를 직접 실행해 에러 확인. 해당 사용자가 서버 맥 화면에 로그인해 있지 않으면 `gui/<uid>` 도메인이 없어 실패한다 — 로그인 상태([D](#d-상시-가동))에서 재실행 |
-| `상태 파일이 생기지 않았습니다. 로그 확인: …` | 에이전트가 40초 안에 첫 파일을 못 씀 | `tail -n 50 ~/Library/Logs/mongshell-openclaw-agent.log`, `launchctl print gui/$(id -u)/com.mongshell.openclaw-agent` 의 `last exit code` |
+| `상태 파일이 생기지 않았습니다. 로그 확인: …` | 에이전트가 90초 안에 첫 파일을 못 씀 | `tail -n 50 ~/Library/Logs/mongshell-openclaw-agent.log`, `launchctl print gui/$(id -u)/com.mongshell.openclaw-agent` 의 `last exit code` |
 | `토큰 형식이 올바르지 않습니다 (32자리 hex 가 아님)…` | 새 토큰 발급(`openssl rand -hex 16`)이 기대한 값을 내지 못함 | 메시지의 토큰 파일을 지우고 재실행. 반복되면 `openssl rand -hex 16` 을 직접 실행해 출력 확인 |
 | `sudo 인증 실패…` | sudo 가 비밀번호를 받지 못함 (터미널 없이 실행·비밀번호 오류), 관리자 계정이 아님 | 터미널에서 직접 재실행. 이 시점에 에이전트는 이미 설치돼 돌고 있으므로 재실행은 안전하다 |
 | `tailscale funnel 설정 실패…` | HTTPS 인증서·funnel nodeAttr 미설정 등 — 바로 위 tailscale 출력이 원인을 말한다 | [C](#c-tailscale-관리-콘솔) 재확인 후 재실행. 에이전트는 이미 설치돼 돌고 있다 |
@@ -527,7 +527,8 @@ funnel 경로 → LaunchAgent → 데이터 폴더(토큰·설치 옵션 포함)
 | ⚪ `상태 파일에 확인 시각이 없습니다` | JSON 에 해석 가능한 `checkedAt` 없음 | `cat ~/Library/Application\ Support/mongshell-openclaw-agent/status.json` |
 | ⚪ `서버 에이전트가 갱신을 멈췄습니다` | 응답은 오는데 `checkedAt` 이 오래됨 — 에이전트가 멈춤 | `launchctl print …` 로 실행 여부, 로그의 `상태 파일 쓰기 실패`·`probe 결과를 받지 못함` 여부. 서버 맥 로그아웃·잠자기도 원인 |
 | ⚪ `확인 중…` | URL 적용 후 아직 첫 응답 전 | 확인 간격만큼 기다린다 |
-| 🔴 `게이트웨이 다운` (detail 없음) | 서버가 down 보고 — probe 시간 초과·연결 거부·출력 해석 불가 | 서버 맥에서 `openclaw channels status --probe` |
+| 🔴 `게이트웨이 다운` (detail 없음) | 서버가 down 보고 — 연결 거부·출력 해석 불가 | 서버 맥에서 `openclaw channels status --probe` |
+| 🔴 `게이트웨이 다운 — 응답 지연 · 25초 초과` | probe(`openclaw` CLI 기동 + 응답)가 25초 안에 끝나지 않음. 게이트웨이가 멈췄거나 서버 맥 부하가 높아 CLI 가 늦게 뜬 것 | 서버 맥 `uptime` 의 load average. 자동복구는 시간 초과만 4회 연속일 때 재시작한다 (중간에 다른 down·채널 이상이 끼면 2회) |
 | 🔴 `게이트웨이 다운 — openclaw 바이너리 없음` | 에이전트가 `/opt/homebrew/bin`·`/usr/local/bin` 어디에서도 openclaw 를 찾지 못함 | `ls -l /opt/homebrew/bin/openclaw /usr/local/bin/openclaw`. 재설치·경로 이동 후엔 다음 probe 에서 풀린다 |
 | 🟡 `채널 이상 — …` | 채널 일부 멈춤/오류 | 자동복구가 켜져 있으면 2회 연속 실패 뒤 재시작을 시도한다 (쿨다운 600초) |
 | 메뉴바에 신호등이 없음 | `Claude만` 선택 또는 URL 미적용 | [3](#3-각-맥북-설정) 의 메뉴바 표시 |
@@ -561,8 +562,8 @@ cat ~/Library/Application\ Support/mongshell-openclaw-agent/status.json
 2026-09-29T03:12:47Z 호스트: warning (전원 warning, 디스크 ok, 러너 ok)   ← 전원·디스크·러너 중 하나라도 레벨이 바뀔 때만 (기동 직후 한 번 포함)
 2026-09-29T03:12:47Z 호스트: critical (전원 없음, 디스크 critical, 러너 없음)   ← 배터리·러너 없는 서버
 2026-09-29T03:12:47Z 호스트: 읽을 신호 없음                               ← 전원·디스크·러너 모두 못 읽음 (host = null)
-2026-09-29T04:01:10Z 복구 시도 — ai.openclaw.gateway kickstart 성공 (원인: down)   ← 자동복구 (성공|실패)
-2026-09-29T04:00:08Z probe 시간 초과 — 8초 안에 끝나지 않아 프로세스 그룹을 종료    ← 연속된 시간 초과의 첫 번째만
+2026-09-29T04:01:10Z 복구 시도 — ai.openclaw.gateway kickstart 성공 (원인: down)   ← 자동복구 (성공|실패). 시간 초과가 원인이면 `down (응답 지연 · 25초 초과)`
+2026-09-29T04:00:08Z probe 시간 초과 — 25초 안에 끝나지 않아 프로세스 그룹을 종료    ← 연속된 시간 초과의 첫 번째만
 2026-09-29T04:20:00Z probe 결과를 받지 못함 — probe 출력 없음 (exit 0). 게시·복구 없이 60초 뒤 재시작   ← 관측 실패 (아래)
 2026-09-29T04:05:00Z 상태 파일 쓰기 실패 — …                              ← 디스크·권한 문제
 ```

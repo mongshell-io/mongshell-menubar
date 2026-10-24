@@ -95,6 +95,17 @@ do {
     check("down + detail 도 빨강·같은 라벨",
           missing?.dotColor == OpenClawHealth.down(detail: "").dotColor
               && missing?.shortLabel == OpenClawHealth.down(detail: "").shortLabel)
+
+    // A timed-out probe is `down` on the wire too; its detail is what tells a
+    // loaded host from a gateway that refused (issue #79).
+    let slowData = try! StatusFile.encode(AgentStatus(
+        checkedAt: now, verdict: .timedOut, intervalSeconds: 60, autoHeal: true, lastHeal: nil,
+        host: nil))
+    let slow = (try? OpenClawStatusClient.parse(data: slowData))?.health
+    check("down + detail 왕복 (시간 초과)",
+          slow == .down(detail: "응답 지연 · \(Int(Probe.probeTimeout))초 초과")
+              && slow?.settingsLabel == "게이트웨이 다운 — 응답 지연 · \(Int(Probe.probeTimeout))초 초과",
+          "\(String(describing: slow))")
 }
 
 // MARK: - 관대한 디코딩
