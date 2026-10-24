@@ -76,6 +76,9 @@ resolve "interval=\$(touch $WORK/pwned)\n" "" "" >/dev/null
 check "파일 내용을 실행하지 않음" "absent" "$([[ -e "$WORK/pwned" ]] && echo present || echo absent)"
 
 echo "▸ 에이전트 버전 (git describe)"
+# The developer's own git config (commit/tag signing, editors) must not reach
+# these throwaway repos.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 REPO="$WORK/repo"
 git init -q "$REPO"
 commit() { git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "$1"; }

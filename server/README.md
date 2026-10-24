@@ -1,6 +1,6 @@
 # 서버 에이전트 (mongshell-openclaw-agent) — 설치·운영 런북
 
-openclaw 게이트웨이가 24시간 도는 **서버 맥**에 설치하는 감시 에이전트의 설치·운영 절차. 에이전트는 게이트웨이와 함께 서버 맥 자체의 신호(전원·디스크 여유·CI 러너)도 판정해 싣는다. 새 서버 맥에서 **위에서 아래로 그대로 따라 하면** 설치부터 맥북 연결까지 끝나도록 썼다. 설계 사양(데이터 흐름·판정 규칙·보안 경계)은 [docs/architecture.md § 3. openclaw 상태](../docs/architecture.md#3-openclaw-상태-선택-경로), 결정 배경은 [Decision #25 · #31 · #75](../docs/architecture-decisions.md) 이 권위다. 이 문서는 절차만 다룬다.
+openclaw 게이트웨이가 24시간 도는 **서버 맥**에 설치하는 감시 에이전트의 설치·운영 절차. 에이전트는 게이트웨이와 함께 서버 맥 자체의 신호(전원·디스크 여유·CI 러너)도 판정해 싣는다. 새 서버 맥에서 **위에서 아래로 그대로 따라 하면** 설치부터 맥북 연결까지 끝나도록 썼다. 설계 사양(데이터 흐름·판정 규칙·보안 경계)은 [docs/architecture.md § 3. openclaw 상태](../docs/architecture.md#3-openclaw-상태-선택-경로), 결정 배경은 [Decision #25 · #31 · #75 · #79 · #81](../docs/architecture-decisions.md) 이 권위다. 이 문서는 절차만 다룬다.
 
 > **실기 검증은 일부만.** 2026-09-29 첫 설치(macOS 27, tailscale 1.102.4)에서 `install.sh` 는 funnel 설정 직전까지 통과했고, funnel 설정은 같은 명령을 sudo 로 손으로 실행해 확인했다. 그 결과로 `install.sh` 가 sudo 를 쓰게 고쳤지만, **고친 스크립트를 처음부터 끝까지 돌린 확인은 아직 없다.** 토큰 교체·제거(`--rotate-token`, `uninstall.sh`)와 데몬 재시작 뒤 동작도 확인하지 못했다. 가정별 확인 여부는 [6. 첫 설치 때 확인할 것](#6-첫-설치-때-확인할-것-실기-미검증-가정) 에 있다. 막히면 그 절의 **보고용 정보 수집** 명령으로 상태를 모은다.
 
@@ -561,6 +561,7 @@ cat ~/Library/Application\ Support/mongshell-openclaw-agent/status.json
 ```
 2026-09-29T03:12:45Z 시작 — version=v1.2.0+3 status-file=… interval=60s autoHeal=true   ← 에이전트 기동. version 은 install.sh 가 git 에서 정한 값 (없으면 `없음`)
 2026-09-29T03:12:45Z 경고: --gateway-label 이 자기 레이블(…)이라 무시하고 자동 탐색합니다
+2026-09-29T03:12:45Z 경고: --build-version 값이 형식에 맞지 않아 싣지 않습니다 (N자)   ← 버전이 [0-9A-Za-z.+-] 1~32자가 아님. agentVersion 은 null
 2026-09-29T03:12:47Z 상태: ok (Telegram default)                          ← 판정이 바뀔 때만
 2026-09-29T03:12:47Z 호스트: warning (전원 warning, 디스크 ok, 러너 ok)   ← 전원·디스크·러너 중 하나라도 레벨이 바뀔 때만 (기동 직후 한 번 포함)
 2026-09-29T03:12:47Z 호스트: critical (전원 없음, 디스크 critical, 러너 없음)   ← 배터리·러너 없는 서버
