@@ -170,22 +170,35 @@ fi
 
 # ── 4. 빌드·배치 ───────────────────────────────────────────────────────────
 # swift build 는 터미널이 아니면 진행을 거의 찍지 않고, 조용한 시간의 대부분은
-# "Building for production..." 이전(매니페스트·SDK 캐시)이다. 그래서 출력은 파일로
+# "Building for production..." 이전(Package.swift 컴파일·SDK stat 캐시)이다. 그래서 출력은 파일로
 # 받고, 경과 시간·추정 단계·지난번 소요 시간을 직접 보인다. 실패하면 로그 끝을 보인다.
+# 빌드 프로세스와 그 자손(swift-frontend 등)을 함께 내린다 — swift-build 만 죽이면
+# 돌던 컴파일러가 고아로 남아 CPU 를 쓴다.
+stop_build() {
+  [[ -n "$BUILD_PID" ]] || return 0
+  # shellcheck disable=SC2046  # pid 목록을 단어로 나눠 넘긴다.
+  kill $(ps -Ao pid=,ppid=,comm= | process_tree "$BUILD_PID" | awk '{ print $1 }') 2>/dev/null || true
+  BUILD_PID=""
+}
+
+BUILD_PID=""
 build_agent() {
   local log last="" started elapsed line logged=-"$BUILD_PROGRESS_LOG_EVERY" status=0
   log="$(mktemp -t "$PRODUCT-build")"
   last="$(cat "$LAST_BUILD_FILE" 2>/dev/null || true)"
-  [[ "$last" =~ ^[0-9]{1,6}$ ]] || last=""
+  # 앞자리 0 은 받지 않는다 — 셸 산술이 8진수로 읽는다. 숫자 외의 값을 산술에 넘기면
+  # 명령이 실행될 수 있으므로 이 검사는 format_duration 앞에 반드시 있어야 한다.
+  [[ "$last" =~ ^(0|[1-9][0-9]{0,5})$ ]] || last=""
 
   swift build -c release --product "$PRODUCT" --package-path "$ROOT" >"$log" 2>&1 &
-  local pid=$!
-  # Ctrl-C 가 빌드를 남겨 두지 않게 한다.
-  trap 'kill "$pid" 2>/dev/null; exit 130' INT TERM
+  BUILD_PID=$!
+  # Ctrl-C 나 중간 오류(set -e)로 끝나도 빌드를 남겨 두지 않는다.
+  trap stop_build EXIT
+  trap 'exit 130' INT TERM
   started="$(date +%s)"
-  while kill -0 "$pid" 2>/dev/null; do
+  while kill -0 "$BUILD_PID" 2>/dev/null; do
     elapsed=$(( $(date +%s) - started ))
-    line="  빌드 중… $(format_duration "$elapsed") · $(ps -Ao pid=,ppid=,comm= | build_phase "$pid")"
+    line="  빌드 중… $(format_duration "$elapsed") · $(ps -Ao pid=,ppid=,comm= | process_tree "$BUILD_PID" | build_phase)"
     [[ -n "$last" ]] && line+=" (지난번 $(format_duration "$last"))"
     if [[ -t 1 ]]; then
       printf '\r\033[K%s' "$line"
@@ -195,8 +208,9 @@ build_agent() {
     fi
     sleep 2
   done
-  wait "$pid" || status=$?
-  trap - INT TERM
+  wait "$BUILD_PID" || status=$?
+  BUILD_PID=""
+  trap - EXIT INT TERM
   [[ -t 1 ]] && printf '\r\033[K'
   elapsed=$(( $(date +%s) - started ))
 

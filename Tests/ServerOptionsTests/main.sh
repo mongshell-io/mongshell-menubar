@@ -100,23 +100,27 @@ echo "▸ 빌드 진행 표시"
 check "45초" "45초" "$(format_duration 45)"
 check "60초 → 1분 0초" "1분 0초" "$(format_duration 60)"
 check "331초 → 5분 31초" "5분 31초" "$(format_duration 331)"
+check "앞자리 0 은 10진수 (089 → 1분 29초)" "1분 29초" "$(format_duration 089)"
 
 # pid ppid comm — 100 is the build; 300 is someone else's compiler.
 PS_TREE="100 1 /usr/bin/swift
 101 100 /Library/Developer/CommandLineTools/usr/bin/swift-build
 102 101 /Library/Developer/CommandLineTools/usr/bin/clang-stat-cache
 300 1 /Library/Developer/CommandLineTools/usr/bin/swift-frontend"
-check "자손에 clang-stat-cache → SDK 캐시 생성" "SDK 캐시 생성" "$(build_phase 100 <<<"$PS_TREE")"
-check "남의 swift-frontend 는 세지 않음" "SDK 캐시 생성" "$(build_phase 100 <<<"$PS_TREE")"
+check "자손에 clang-stat-cache → SDK 캐시 생성" "SDK 캐시 생성" "$(process_tree 100 <<<"$PS_TREE" | build_phase)"
+check "남의 swift-frontend 는 세지 않음" "SDK 캐시 생성" "$(process_tree 100 <<<"$PS_TREE" | build_phase)"
 check "손자의 swift-frontend → 컴파일" "컴파일" \
-  "$(build_phase 100 <<<"$PS_TREE
-103 101 /Library/Developer/CommandLineTools/usr/bin/swift-frontend")"
+  "$(process_tree 100 <<<"$PS_TREE
+103 101 /Library/Developer/CommandLineTools/usr/bin/swift-frontend" | build_phase)"
 check "ld 가 있으면 링크가 앞섬" "링크" \
-  "$(build_phase 100 <<<"$PS_TREE
+  "$(process_tree 100 <<<"$PS_TREE
 103 101 /Library/Developer/CommandLineTools/usr/bin/swift-frontend
-104 102 /usr/bin/ld")"
-check "도구 없음 → 준비" "준비" "$(build_phase 100 <<<"100 1 /usr/bin/swift")"
-check "빌드가 이미 끝남 → 준비" "준비" "$(build_phase 999 <<<"$PS_TREE")"
+104 102 /usr/bin/ld" | build_phase)"
+check "도구 없음 → 준비" "준비" "$(process_tree 100 <<<"100 1 /usr/bin/swift" | build_phase)"
+check "빌드가 이미 끝남 → 준비" "준비" "$(process_tree 999 <<<"$PS_TREE" | build_phase)"
+check "프로세스 트리: 루트와 자손만, 경로 없이" "100 swift,101 swift-build,102 clang-stat-cache" \
+  "$(process_tree 100 <<<"$PS_TREE" | paste -sd, -)"
+check "프로세스 트리: 루트가 없으면 빈 값" "" "$(process_tree 999 <<<"$PS_TREE")"
 
 echo ""
 if [[ ${#FAILURES[@]} -eq 0 ]]; then

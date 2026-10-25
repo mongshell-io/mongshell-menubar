@@ -193,7 +193,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 ▶ 공개 포트 8443 점검
 ▶ 에이전트 빌드 (release)
   버전 v1.2.0+12               ← git 에서 정한 에이전트 버전 (Decision #81)
-  빌드 중… 2분 10초 · 컴파일 (지난번 5분 31초)   ← 2초마다 같은 줄을 갱신. 처음 설치면 "지난번" 이 없다
+  빌드 중… 2분 10초 · 컴파일 (지난번 5분 31초)   ← 2초마다 같은 줄을 갱신. 처음 설치·제거 후 재설치면 "지난번" 이 없다
   빌드 완료 — 5분 28초
   → ~/Library/Application Support/mongshell-openclaw-agent/mongshell-openclaw-agent
 ▶ 게이트웨이 launchd 레이블 탐색
@@ -217,7 +217,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 위 상태 URL 을 메뉴바 앱 설정의 **서버** 섹션(상태 URL 입력칸)에 붙여넣으세요.
 ```
 
-빌드는 서버 맥에서 **수 분** 걸릴 수 있다 (부하가 높으면 더 걸린다). 진행 줄의 단계는 그 순간 떠 있는 빌드 도구 이름으로 추정한 것이다 — `준비` 는 매니페스트 컴파일 등, `SDK 캐시 생성` 은 `clang-stat-cache`, `컴파일` 은 `swift-frontend`, `링크` 는 `ld`. 터미널이 아닌 곳(로그 파일로 보낸 출력)에서는 30초마다 한 줄씩 쌓인다. swift build 자체의 출력은 실패할 때만 보인다.
+빌드는 서버 맥에서 **수 분** 걸릴 수 있다 (부하가 높으면 더 걸린다). 진행 줄의 단계는 그 순간 떠 있는 빌드 도구 이름으로 추정한 것이다 — `SDK 캐시 생성` 은 `clang-stat-cache`, `컴파일` 은 `swift-frontend`(빌드 초반의 `Package.swift` 컴파일도 여기로 보인다), `링크` 는 `ld`(`ld64`·`ld-prime` 포함), 셋 다 없으면 `준비`. 빌드 중 `Ctrl-C` 로 멈추면 컴파일러까지 함께 내린다. 터미널이 아닌 곳(로그 파일로 보낸 출력)에서는 30초마다 한 줄씩 쌓인다. swift build 자체의 출력은 실패할 때만 보인다.
 
 안 되면: `오류:` 로 시작하는 마지막 메시지를 [5-1](#5-1-installsh--uninstallsh-메시지별) 에서 찾는다. `경고:` 는 설치를 멈추지 않는다.
 
@@ -238,7 +238,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 
 | 경로 | 내용 |
 |---|---|
-| `~/Library/Application Support/mongshell-openclaw-agent/` | 바이너리, `status.json`(0644), `token`(0600), `options`(설치 옵션, `key=value`) |
+| `~/Library/Application Support/mongshell-openclaw-agent/` | 바이너리, `status.json`(0644), `token`(0600), `options`(설치 옵션, `key=value`), `last-build-seconds`(마지막으로 성공한 빌드의 소요 초 — 다음 빌드 진행 줄의 "지난번") |
 | `~/Library/LaunchAgents/com.mongshell.openclaw-agent.plist` | LaunchAgent (RunAtLoad·KeepAlive) |
 | `~/Library/Logs/mongshell-openclaw-agent.log` | 시작·상태 변화·호스트 신호(전원·디스크·CI 러너) 레벨 변화·복구 시도·쓰기 실패·자기 레이블 경고 시에만 한 줄씩 기록 ([5-3](#5-3-서버-맥-진단-명령)) |
 | tailscaled 의 serve 설정 | 포트 8443, 경로 `/<토큰>` → `status.json` (funnel, `--bg` 로 저장 — 데몬 재시작 뒤 유지되는지는 [6](#6-첫-설치-때-확인할-것-실기-미검증-가정) 가정 4) |
@@ -498,6 +498,7 @@ funnel 경로 → LaunchAgent → 데이터 폴더(토큰·설치 옵션 포함)
 | `빌드 산출물을 찾지 못했습니다: …` | 빌드 경로 불일치 | 위 명령 재현 후 보고 |
 | `경고: 게이트웨이 plist 를 찾지 못해 기본값 ai.openclaw.gateway 을 씁니다.` | `~/Library/LaunchAgents` 에 `claw` plist 없음 | 게이트웨이가 다른 사용자/시스템 도메인에 있으면 자동복구가 실패한다. [1](#1-준비물-체크리스트) 조건 확인 |
 | `생성한 plist 가 올바르지 않습니다: …` | plist 생성 오류 | `plutil -lint ~/Library/LaunchAgents/com.mongshell.openclaw-agent.plist` 결과와 함께 보고 |
+| `경고: 빌드 소요 시간을 저장하지 못했습니다: …` | 데이터 폴더 쓰기 실패 | 설치는 계속된다. 다음 빌드에 "지난번" 이 안 보일 뿐이다. 아래 행과 같은 권한 확인 |
 | `경고: 설치 옵션을 저장하지 못했습니다 — 다음 재실행은 옵션을 다시 줘야 합니다: …` | 데이터 폴더 쓰기 실패 | 에이전트는 이번 옵션으로 돈다. `ls -la ~/Library/Application\ Support/mongshell-openclaw-agent/` 로 권한 확인 |
 | `launchctl bootstrap 실패…` | 등록 실패 | 메시지의 `launchctl bootstrap gui/<uid> …` 를 직접 실행해 에러 확인. 해당 사용자가 서버 맥 화면에 로그인해 있지 않으면 `gui/<uid>` 도메인이 없어 실패한다 — 로그인 상태([D](#d-상시-가동))에서 재실행 |
 | `상태 파일이 생기지 않았습니다. 로그 확인: …` | 에이전트가 90초 안에 첫 파일을 못 씀 | `tail -n 50 ~/Library/Logs/mongshell-openclaw-agent.log`, `launchctl print gui/$(id -u)/com.mongshell.openclaw-agent` 의 `last exit code` |
