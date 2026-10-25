@@ -15,7 +15,8 @@ import Foundation
 // stop at the cap; the status code maps onto the error the model branches
 // on (401/403 → re-auth, 429 → back off with Retry-After, a refused 3xx →
 // an HTTP error); only a 200 body is read and the real shape sits far under
-// the response cap; and the `Meter`
+// the response cap; a 429 holds both the poll and the manual refresh until
+// the backoff or Retry-After (capped) runs out; and the `Meter`
 // shows the mode's number with the risk color (or monochrome when color
 // coding is off).
 //
@@ -377,6 +378,38 @@ do {
     check("color coding off → mono, not a risk color", mono.color == Palette.mono)
     check("color coding off with 10% used → still mono",
           Meter(usedPercent: 10, showRemaining: false, colorCoding: false).color == Palette.mono)
+}
+
+// MARK: rate-limit window — poll and manual refresh wait it out (#86)
+
+do {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    check("no backoff → the user's interval", UsageRetryPolicy.pollWait(base: 180, backoff: 0) == 180)
+    check("backoff doubles per 429", UsageRetryPolicy.pollWait(base: 180, backoff: 2) == 720)
+    check("backoff caps at an hour", UsageRetryPolicy.pollWait(base: 180, backoff: 4) == 2880
+          && UsageRetryPolicy.pollWait(base: 600, backoff: 4) == 3600)
+    check("no Retry-After → retry at the backoff wait",
+          UsageRetryPolicy.retryAt(now: now, base: 180, backoff: 1, retryAfter: nil) == now.addingTimeInterval(360))
+    check("Retry-After longer than backoff → it wins",
+          UsageRetryPolicy.retryAt(now: now, base: 180, backoff: 1, retryAfter: 900) == now.addingTimeInterval(900))
+    check("Retry-After shorter than backoff → backoff kept",
+          UsageRetryPolicy.retryAt(now: now, base: 180, backoff: 1, retryAfter: 5) == now.addingTimeInterval(360))
+    check("hostile Retry-After → capped at an hour",
+          UsageRetryPolicy.retryAt(now: now, base: 180, backoff: 1, retryAfter: 1e12) == now.addingTimeInterval(3600))
+    check("negative Retry-After → backoff kept",
+          UsageRetryPolicy.retryAt(now: now, base: 180, backoff: 1, retryAfter: -50) == now.addingTimeInterval(360))
+
+    let retryAt = now.addingTimeInterval(300)
+    check("inside the window → manual refresh blocked until retryAt",
+          UsageRetryPolicy.manualRefreshBlocked(until: .rateLimited(retryAt: retryAt), now: now) == retryAt)
+    check("window over → manual refresh open",
+          UsageRetryPolicy.manualRefreshBlocked(until: .rateLimited(retryAt: retryAt), now: retryAt) == nil)
+    check("not rate limited → manual refresh open",
+          UsageRetryPolicy.manualRefreshBlocked(until: .error("x"), now: now) == nil
+          && UsageRetryPolicy.manualRefreshBlocked(until: .loaded(.oauthLogin), now: now) == nil)
+    check("minutes left round up, never under one",
+          TimeText.minutesLeft(until: now.addingTimeInterval(61), now: now) == 2
+          && TimeText.minutesLeft(until: now, now: now) == 1)
 }
 
 // MARK: result

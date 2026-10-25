@@ -109,6 +109,35 @@ enum LoadState: Equatable {
     case sessionExpired
     case loading
     case loaded(DataSource)
-    case rateLimited(retryAfter: TimeInterval?)
+    /// `retryAt` is when the poll loop asks again; nothing — poll or the
+    /// popover's manual refresh — reaches the endpoint before it (#86).
+    case rateLimited(retryAt: Date)
     case error(String)
+}
+
+/// When the usage endpoint may be asked again. The endpoint is unofficial
+/// (Decision 2), so asking inside a rate limit risks stretching it — the
+/// poll loop and the manual refresh read the same window from here.
+enum UsageRetryPolicy {
+    /// Longest the loop waits on its own, and the cap on a server's
+    /// Retry-After so a hostile value can't park polling for days.
+    static let maxWait = 3600
+
+    /// The poll loop's next wait: the user's interval, doubled per 429 in a row.
+    static func pollWait(base: Int, backoff: Int) -> Int {
+        backoff > 0 ? min(base * (1 << backoff), maxWait) : base
+    }
+
+    /// When to ask again after a 429: the backoff wait, or the server's
+    /// Retry-After when that is longer.
+    static func retryAt(now: Date, base: Int, backoff: Int, retryAfter: TimeInterval?) -> Date {
+        let serverWait = min(max(retryAfter ?? 0, 0), TimeInterval(maxWait))
+        return now.addingTimeInterval(max(TimeInterval(pollWait(base: base, backoff: backoff)), serverWait))
+    }
+
+    /// nil when a manual refresh may go out now; otherwise when it may.
+    static func manualRefreshBlocked(until state: LoadState, now: Date) -> Date? {
+        guard case .rateLimited(let retryAt) = state, now < retryAt else { return nil }
+        return retryAt
+    }
 }
