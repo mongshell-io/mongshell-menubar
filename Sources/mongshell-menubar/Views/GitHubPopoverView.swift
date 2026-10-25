@@ -123,7 +123,7 @@ struct GitHubPopoverView: View {
                     .controlSize(.small)
             }
         case .rateLimited(let retryAt):
-            PopoverBanner(text: "API 한도 초과 — \(minutesUntil(retryAt))분 후 자동 재시도",
+            PopoverBanner(text: "API 한도 초과 — \(TimeText.minutesLeft(until: retryAt, now: model.frozenNow ?? Date()))분 후 자동 재시도",
                           tint: Palette.amber)
         case .unauthorized:
             PopoverBanner(text: "토큰이 거부되었어요 (401) — 권한 확인 필요", tint: Palette.red) {
@@ -139,12 +139,6 @@ struct GitHubPopoverView: View {
     private var retryButton: some View {
         Button("재시도") { model.refreshNow() }
             .controlSize(.small)
-    }
-
-    /// Whole minutes left, never under one — "0분 후" would read as "now".
-    private func minutesUntil(_ date: Date) -> Int {
-        let now = model.frozenNow ?? Date()
-        return max(1, Int((date.timeIntervalSince(now) / 60).rounded(.up)))
     }
 
     // MARK: PR sections

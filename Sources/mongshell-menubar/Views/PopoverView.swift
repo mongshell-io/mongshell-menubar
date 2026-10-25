@@ -218,7 +218,12 @@ struct PopoverView: View {
 
     private var overflowMenu: some View {
         Menu {
-            Button("새로고침") { model.refreshNow() }
+            if let until = model.manualRefreshBlockedUntil {
+                Button("새로고침 — \(TimeText.minutesLeft(until: until))분 후 가능") {}
+                    .disabled(true)
+            } else {
+                Button("새로고침") { model.refreshNow() }
+            }
             Button("설정…") { onOpenSettings() }
             if case .loaded(.oauthLogin) = model.loadState {
                 Button("로그아웃") { model.signOut() }
@@ -248,9 +253,12 @@ struct PopoverView: View {
                    tint: Palette.amber) { signInButton }
         case .loading:
             banner(text: "불러오는 중…", tint: Palette.textSecondary) { EmptyView() }
-        case .rateLimited:
-            banner(text: "요청이 제한되었습니다 (잠시 후 자동 재시도)",
-                   tint: Palette.amber) { EmptyView() }
+        case .rateLimited(let retryAt):
+            // Nothing is published until `retryAt`, so the minutes tick here.
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                banner(text: "요청이 제한되었습니다 — \(TimeText.minutesLeft(until: retryAt, now: context.date))분 후 자동 재시도",
+                       tint: Palette.amber) { EmptyView() }
+            }
         case .error(let msg):
             banner(text: msg, tint: Palette.red) {
                 Button("재시도") { model.refreshNow() }

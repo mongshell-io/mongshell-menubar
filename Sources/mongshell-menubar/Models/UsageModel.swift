@@ -47,15 +47,27 @@ final class UsageModel: ObservableObject {
         pollTask = Task { [weak self] in await self?.pollLoop() }
     }
 
+    /// The popover's "새로고침" and "재시도". Does nothing inside a rate
+    /// limit — the poll loop asks again once it is over (#86).
     func refreshNow() {
+        guard manualRefreshBlockedUntil == nil else { return }
         Task { await refreshOnce() }
     }
+
+    /// When the manual refresh opens again, or nil when it is open now.
+    var manualRefreshBlockedUntil: Date? {
+        UsageRetryPolicy.manualRefreshBlocked(until: loadState, now: Date())
+    }
+
+    private var pollBase: Int { max(Config.minPollInterval, Preferences.shared.pollIntervalSeconds) }
 
     private func pollLoop() async {
         while !Task.isCancelled {
             await refreshOnce()
-            let base = max(Config.minPollInterval, Preferences.shared.pollIntervalSeconds)
-            let wait = backoff > 0 ? min(base * (1 << backoff), 3600) : base
+            var wait = TimeInterval(UsageRetryPolicy.pollWait(base: pollBase, backoff: backoff))
+            if case .rateLimited(let retryAt) = loadState {
+                wait = max(wait, retryAt.timeIntervalSinceNow)
+            }
             try? await Task.sleep(for: .seconds(wait))
         }
     }
@@ -133,7 +145,8 @@ final class UsageModel: ObservableObject {
             markSignedOut()
         } catch APIError.rateLimited(let retry) {
             backoff = min(backoff + 1, 4)
-            loadState = .rateLimited(retryAfter: retry)
+            loadState = .rateLimited(retryAt: UsageRetryPolicy.retryAt(
+                now: Date(), base: pollBase, backoff: backoff, retryAfter: retry))
         } catch {
             loadState = .error("사용량을 불러오지 못했습니다")
         }
