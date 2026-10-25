@@ -15,6 +15,10 @@ final class UsageModel: ObservableObject {
     /// flight replace — the settings' account row read only `.loaded` and
     /// showed "로그아웃됨" through those (#90).
     @Published private(set) var accountSource: DataSource?
+    /// The access token the last 401 ended on. A stale CLI token is retried
+    /// every poll; naming it as the account for the length of each doomed
+    /// fetch made the settings row flicker back to "사용 중".
+    private var rejectedAccessToken: String?
 
     private let api = UsageAPIClient()
     private let auth = AuthService()
@@ -107,7 +111,7 @@ final class UsageModel: ObservableObject {
             return
         }
         var token = initialToken
-        accountSource = source
+        accountSource = token.accessToken == rejectedAccessToken ? nil : source
         if case .signedOut = loadState { loadState = .loading }
 
         // Refresh our own expired token up front.
@@ -148,6 +152,7 @@ final class UsageModel: ObservableObject {
                     break
                 }
             }
+            rejectedAccessToken = token.accessToken
             markSignedOut()
         } catch APIError.rateLimited(let retry) {
             backoff = min(backoff + 1, 4)
@@ -163,6 +168,8 @@ final class UsageModel: ObservableObject {
     private func markLoaded(_ snap: UsageSnapshot, source: DataSource) {
         snapshot = snap
         loadState = .loaded(source)
+        accountSource = source
+        rejectedAccessToken = nil
         backoff = 0
         sessionExpiredUnresolved = false
         logUnknownLimitsIfChanged(snap)
