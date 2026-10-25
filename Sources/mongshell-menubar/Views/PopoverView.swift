@@ -225,7 +225,7 @@ struct PopoverView: View {
                 Button("새로고침") { model.refreshNow() }
             }
             Button("설정…") { onOpenSettings() }
-            if case .loaded(.oauthLogin) = model.loadState {
+            if model.accountSource == .oauthLogin {
                 Button("로그아웃") { model.signOut() }
             }
             Divider()

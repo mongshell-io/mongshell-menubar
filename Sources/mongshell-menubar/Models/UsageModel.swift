@@ -10,6 +10,15 @@ final class UsageModel: ObservableObject {
 
     @Published private(set) var snapshot: UsageSnapshot = .sample
     @Published private(set) var loadState: LoadState = .signedOut
+    /// Whose token the app is polling with, nil when it has none that works.
+    /// Kept apart from `loadState`, which a 429, an error or a fetch in
+    /// flight replace — the settings' account row read only `.loaded` and
+    /// showed "로그아웃됨" through those (#90).
+    @Published private(set) var accountSource: DataSource?
+    /// The access token the last 401 ended on. A stale CLI token is retried
+    /// every poll; naming it as the account for the length of each doomed
+    /// fetch made the settings row flicker back to "사용 중".
+    private var rejectedAccessToken: String?
 
     private let api = UsageAPIClient()
     private let auth = AuthService()
@@ -102,6 +111,7 @@ final class UsageModel: ObservableObject {
             return
         }
         var token = initialToken
+        accountSource = token.accessToken == rejectedAccessToken ? nil : source
         if case .signedOut = loadState { loadState = .loading }
 
         // Refresh our own expired token up front.
@@ -142,6 +152,7 @@ final class UsageModel: ObservableObject {
                     break
                 }
             }
+            rejectedAccessToken = token.accessToken
             markSignedOut()
         } catch APIError.rateLimited(let retry) {
             backoff = min(backoff + 1, 4)
@@ -157,6 +168,8 @@ final class UsageModel: ObservableObject {
     private func markLoaded(_ snap: UsageSnapshot, source: DataSource) {
         snapshot = snap
         loadState = .loaded(source)
+        accountSource = source
+        rejectedAccessToken = nil
         backoff = 0
         sessionExpiredUnresolved = false
         logUnknownLimitsIfChanged(snap)
@@ -180,6 +193,7 @@ final class UsageModel: ObservableObject {
         pollTask = nil
         snapshot = snap
         loadState = state
+        if case .loaded(let source) = state { accountSource = source } else { accountSource = nil }
     }
 
     private enum OwnTokenRenewal {
@@ -210,6 +224,7 @@ final class UsageModel: ObservableObject {
         AuthDebugLog.write("own token discarded (invalid_grant) \(AuthDebugLog.session(token))")
         CredentialStore.clearOwnToken()
         snapshot = .sample
+        accountSource = nil
         sessionExpiredUnresolved = true
         loadState = .sessionExpired
         notifySessionExpired()
@@ -231,6 +246,7 @@ final class UsageModel: ObservableObject {
     /// token at all, or a CLI token that 401s) until the user acts. Only
     /// restores the state — the notification was sent once in `expireSession`.
     private func markSignedOut() {
+        accountSource = nil
         loadState = sessionExpiredUnresolved ? .sessionExpired : .signedOut
     }
 
@@ -250,6 +266,7 @@ final class UsageModel: ObservableObject {
     func signOut() {
         CredentialStore.clearOwnToken()
         sessionExpiredUnresolved = false
+        accountSource = nil
         loadState = .signedOut
         snapshot = .sample
     }

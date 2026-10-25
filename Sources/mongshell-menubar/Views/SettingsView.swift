@@ -87,11 +87,11 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var accountRow: some View {
-        switch model.loadState {
-        case .loaded(.oauthLogin):
+        switch model.accountSource {
+        case .oauthLogin:
             LabeledContent("상태", value: "로그인됨 (OAuth)")
             Button("로그아웃") { model.signOut() }
-        case .loaded(.claudeCodeCLI):
+        case .claudeCodeCLI:
             LabeledContent("상태", value: "Claude Code 계정 사용 중")
             Button("이 앱 계정으로 로그인") { Task { await model.signIn() } }
         default:
