@@ -348,7 +348,7 @@
 
 ## Decision #68: 로컬 빌드는 팀 ID 가 있는 Apple Development 인증서로 서명한다
 
-- **도입**: 미정 (#68)
+- **도입**: v1.3.0 (#68)
 - **컨텍스트**: 재빌드한 앱을 처음 띄울 때마다 키체인 접근 프롬프트가 다시 떴고, 거부하면 토큰을 못 읽어 로그인을 다시 요구했다. Decision 3 은 이것을 ad-hoc 서명의 대가로 받아들였고, `make_app.sh` 는 자기 서명 인증서(`mongshell-menubar Dev`)로 서명하면 designated requirement 가 `certificate leaf` 로 고정되어 해결된다고 보았다. 그러나 키체인은 ACL 과 별도로 항목의 **파티션 목록**을 검사하고, 파티션 ID 는 서명에 팀 ID 가 있으면 `teamid:`, 없으면 `cdhash:` 다. 자기 서명 인증서에는 팀 ID 가 없어 빌드마다 새 `cdhash:` 가 되고, ACL 이 맞아도 프롬프트가 다시 떴다. 2026-10-21 에 비밀값 없이 ACL 을 덤프해 보니 `gh:github.com` 항목의 파티션 목록에 `cdhash:` 가 15개 쌓여 있었고, `com.mongshell.menubar.tokens` 는 ACL 앱이 인증서 요구사항 하나뿐인데 파티션에 `cdhash:` 가 3개였다.
 - **결정**: `make_app.sh` 는 서명 신원을 이 순서로 고른다 — 명시한 `SIGN_ID` → 키체인의 유효한 `Apple Development:` 신원(이름이 아니라 SHA-1 로 지정) → 자기 서명 `mongshell-menubar Dev` → ad-hoc. 인증서 서명에는 `release.sh` 처럼 hardened runtime(`--options runtime`)을 켠다. README 는 자기 서명 인증서 대신 Apple Development 인증서 발급을 안내하고, 그 개인 키가 `codesign` 에 이미 열려 있어 무엇이 넓어지는지 적는다.
 - **이유**: 대안은 셋이었다. (a) 자기 서명 인증서 유지 — 위 증거대로 파티션 검사에서 걸려 문제를 풀지 못한다. (b) Data Protection 키체인 + access group — 엔타이틀먼트와 프로비저닝이 필요하고, 다른 앱의 항목(Claude Code·gh CLI)은 여전히 기존 키체인에 있어 그 프롬프트는 남는다. (c) Apple Development 인증서 — 무료 Apple ID 로 Xcode 에서 발급되고 팀 ID 가 찍혀 파티션 ID 가 `teamid:` 로 빌드와 무관해진다. 발급에만 Xcode 가 필요하고 빌드는 계속 Command Line Tools 로 되므로 Decision 3·#11-1 의 "Xcode 없이 빌드" 전제를 깨지 않는다.
@@ -365,7 +365,7 @@
 
 ## Decision #75: 상태 문서에 서버 CI 러너 신호를 추가
 
-- **도입**: 미정 (#75)
+- **도입**: v1.3.0 (#75)
 - **컨텍스트**: gambau·sellcaddie·k2sell 의 CI 는 서버 맥의 조직 공용 self-hosted 러너 4개(LaunchDaemon `com.github.actions-runner.org`, `…org-2`, `-3`, `-4`)에서 돈다. 러너가 죽어도 조용하다 — 프로세스가 죽으면 `KeepAlive` 가 다시 띄우지만, 그렇지 못한 상태면 잡이 대기열에 쌓였다가 24시간 뒤에야 실패하고, 지금은 "PR CI 가 시작을 안 한다" 로만 알아챈다. 14일 넘게 연결되지 않은 러너는 GitHub 이 등록을 지워, 맥을 다시 켜도 설치 스크립트를 다시 돌려야 한다.
 - **결정**: #31 의 `host` 에 `runners` 신호를 더한다. 에이전트가 `/Library/LaunchDaemons/com.github.actions-runner.*.plist` 개수를 `total` 로, 그 레이블 중 `launchctl print system/<레이블>` 의 최상위 `state = running` 인 수를 `running` 으로 세고, `host.runners = { health, running, total }` 을 싣는다. 판정은 #31 과 같이 `HostRules` 한 곳에 있고 종합 `host.health` 에 합쳐진다. 앱은 관대하게 읽어 서버 점의 종합 판정·팝오버 서버 섹션의 `CI 러너 3/4` 줄·신호별 알림에 반영한다. `schema` 는 1 그대로다 (키 추가 — #31 과 같은 이유).
 - **판정 규칙** (에이전트 `HostRules`):
@@ -406,7 +406,7 @@
 
 ## Decision #79: probe 시간 초과는 따로 판정하고, 시간 초과만으로는 늦게 재시작한다
 
-- **도입**: 미정 (#79)
+- **도입**: v1.3.0 (#79)
 - **컨텍스트**: 2026-10-24 서버 맥 load average 23~47(Chrome 수집 배치 + CI 러너 4개)에서 에이전트가 하루 7번 probe 시간 초과로 down 을 판정했고, 그중 두 번은 연속 2회 규칙으로 살아 있는 게이트웨이를 kickstart 해 진행 중이던 작업을 끊었다. 같은 순간 게이트웨이는 `channels.status` 에 720ms 로 답했다 — 8초는 `openclaw` CLI(node) 콜드 스타트까지 포함한 시간이라, 부하가 높으면 CLI 를 띄우는 것만으로 넘는다.
 - **결정**:
   - `Probe.probeTimeout` 8초 → 25초. 주기 하한(`--interval`, 에이전트·`server/lib.sh`)은 15초 → 30초 — probe 한 번이 최대 27초라서.
@@ -424,7 +424,7 @@
 
 ## Decision #81: 서버 에이전트 버전을 git 에서 찍어 상태 문서와 팝오버에 싣는다
 
-- **도입**: 미정 (#81)
+- **도입**: v1.3.0 (#81)
 - **컨텍스트**: 에이전트에는 버전이 어디에도 없었다 — 바이너리·로그·`status.json` 모두. 서버 맥은 `git pull && server/install.sh` 로 main 을 그대로 빌드하므로, 지금 어떤 빌드가 떠 있는지, `git pull` 만 하고 `install.sh` 를 돌리지 않았는지를 맥북에서 알 수 없었다. #79 처럼 판정 규칙을 바꾼 뒤에는 그 변경이 실제로 서버에 올라갔는지가 곧 궁금해진다.
 - **결정**:
   - `install.sh` 가 빌드할 소스에서 `git describe --tags --match 'v[0-9]*' --long` 으로 버전을 정한다. 릴리스 tag 위면 `v1.2.0`, 그 뒤로 커밋이 N개면 `v1.2.0+N`. 그 값을 LaunchAgent 인자 `--build-version` 으로 넘긴다.
