@@ -63,6 +63,12 @@ enum TimeText {
         return "\(hours / 24)일 전"
     }
 
+    /// Whole minutes until `date`, never under one — "0분 후" would read as
+    /// "now". For the rate-limit banners' "N분 후 자동 재시도".
+    static func minutesLeft(until date: Date, now: Date = Date()) -> Int {
+        max(1, Int((date.timeIntervalSince(now) / 60).rounded(.up)))
+    }
+
     /// Check duration: "48s" / "1m 12s" / "1h 05m" (mockup § D). Minutes and
     /// seconds are zero-padded once a larger unit leads, so columns of chips
     /// line up. Negative input is clamped to "0s".
