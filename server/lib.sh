@@ -130,3 +130,44 @@ agent_version() {
     printf '%s+%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
   fi
 }
+
+# ── 빌드 진행 표시 (install.sh) ───────────────────────────────────────────
+# $1=초 (10진수로 읽는다 — 앞자리 0 이 8진수로 읽히지 않게). "45초" / "5분 31초".
+format_duration() {
+  local s=$((10#$1))
+  if (( s < 60 )); then
+    printf '%s초\n' "$s"
+  else
+    printf '%s분 %s초\n' "$(( s / 60 ))" "$(( s % 60 ))"
+  fi
+}
+
+# $1=루트 pid, stdin=`ps -Ao pid=,ppid=,comm=`. 루트와 그 자손을 "pid 실행파일이름"
+# 으로 한 줄씩 출력한다 (경로는 뗀다). 루트가 이미 없으면 아무것도 출력하지 않는다.
+process_tree() {
+  awk -v root="$1" '
+    { pid[NR] = $1; ppid[NR] = $2; name = $3; sub(".*/", "", name); comm[NR] = name }
+    END {
+      mine[root] = 1
+      do {
+        grew = 0
+        for (i = 1; i <= NR; i++)
+          if ((ppid[i] in mine) && !(pid[i] in mine)) { mine[pid[i]] = 1; grew = 1 }
+      } while (grew)
+      for (i = 1; i <= NR; i++) if (pid[i] in mine) print pid[i], comm[i]
+    }'
+}
+
+# stdin=`process_tree` 출력. 지금 떠 있는 빌드 도구로 단계를 추정해 출력한다 —
+# 링크 > 컴파일 > SDK 캐시 생성 순으로 앞선 것을 고르고, 해당 없으면 "준비".
+# 표시 전용 추정이다 (매니페스트 컴파일도 swift-frontend 라 "컴파일" 로 보인다).
+build_phase() {
+  awk '
+    $2 == "ld" || $2 == "ld64" || $2 == "ld-prime" { if (rank < 3) rank = 3; next }
+    $2 == "swift-frontend"                         { if (rank < 2) rank = 2; next }
+    $2 == "clang-stat-cache"                       { if (rank < 1) rank = 1 }
+    END {
+      split("SDK 캐시 생성,컴파일,링크", label, ",")
+      print (rank ? label[rank] : "준비")
+    }'
+}

@@ -28,6 +28,10 @@ DOMAIN="gui/$(id -u)"
 # 부하가 높으면 둘 다 끝까지 갈 수 있으니 여유 있게.
 STATUS_WAIT_SECONDS=90
 CURL_ATTEMPTS=6
+# 성공한 마지막 빌드의 소요 시간(초) — 다음 빌드의 진행 표시에 함께 보인다.
+LAST_BUILD_FILE="$DATA_DIR/last-build-seconds"
+# 터미널이 아닐 때(로그로 보낼 때) 진행 줄을 쌓는 간격(초).
+BUILD_PROGRESS_LOG_EVERY=30
 
 # 이 스크립트가 발급하는 형식(openssl rand -hex 16).
 TOKEN_PATTERN='^[0-9a-f]{32}$'
@@ -165,6 +169,62 @@ $(sed 's/^/  /' <<<"$FOREIGN")
 fi
 
 # ── 4. 빌드·배치 ───────────────────────────────────────────────────────────
+# swift build 는 터미널이 아니면 진행을 거의 찍지 않고, 조용한 시간의 대부분은
+# "Building for production..." 이전(Package.swift 컴파일·SDK stat 캐시)이다. 그래서 출력은 파일로
+# 받고, 경과 시간·추정 단계·지난번 소요 시간을 직접 보인다. 실패하면 로그 끝을 보인다.
+# 빌드 프로세스와 그 자손(swift-frontend 등)을 함께 내린다 — swift-build 만 죽이면
+# 돌던 컴파일러가 고아로 남아 CPU 를 쓴다.
+stop_build() {
+  [[ -n "$BUILD_PID" ]] || return 0
+  # shellcheck disable=SC2046  # pid 목록을 단어로 나눠 넘긴다.
+  kill $(ps -Ao pid=,ppid=,comm= | process_tree "$BUILD_PID" | awk '{ print $1 }') 2>/dev/null || true
+  BUILD_PID=""
+}
+
+BUILD_PID=""
+build_agent() {
+  local log last="" started elapsed line logged=-"$BUILD_PROGRESS_LOG_EVERY" status=0
+  log="$(mktemp -t "$PRODUCT-build")"
+  last="$(cat "$LAST_BUILD_FILE" 2>/dev/null || true)"
+  # 앞자리 0 은 받지 않는다 — 셸 산술이 8진수로 읽는다. 숫자 외의 값을 산술에 넘기면
+  # 명령이 실행될 수 있으므로 이 검사는 format_duration 앞에 반드시 있어야 한다.
+  [[ "$last" =~ ^(0|[1-9][0-9]{0,5})$ ]] || last=""
+
+  swift build -c release --product "$PRODUCT" --package-path "$ROOT" >"$log" 2>&1 &
+  BUILD_PID=$!
+  # Ctrl-C 나 중간 오류(set -e)로 끝나도 빌드를 남겨 두지 않는다.
+  trap stop_build EXIT
+  trap 'exit 130' INT TERM
+  started="$(date +%s)"
+  while kill -0 "$BUILD_PID" 2>/dev/null; do
+    elapsed=$(( $(date +%s) - started ))
+    line="  빌드 중… $(format_duration "$elapsed") · $(ps -Ao pid=,ppid=,comm= | process_tree "$BUILD_PID" | build_phase)"
+    [[ -n "$last" ]] && line+=" (지난번 $(format_duration "$last"))"
+    if [[ -t 1 ]]; then
+      printf '\r\033[K%s' "$line"
+    elif (( elapsed - logged >= BUILD_PROGRESS_LOG_EVERY )); then
+      printf '%s\n' "$line"
+      logged=$elapsed
+    fi
+    sleep 2
+  done
+  wait "$BUILD_PID" || status=$?
+  BUILD_PID=""
+  trap - EXIT INT TERM
+  [[ -t 1 ]] && printf '\r\033[K'
+  elapsed=$(( $(date +%s) - started ))
+
+  if (( status != 0 )); then
+    tail -n 60 "$log" >&2
+    die "에이전트 빌드 실패 (exit $status). 전체 로그: $log"
+  fi
+  echo "  빌드 완료 — $(format_duration "$elapsed")"
+  rm -f "$log"
+  mkdir -p "$DATA_DIR"
+  printf '%s\n' "$elapsed" >"$LAST_BUILD_FILE" \
+    || warn "빌드 소요 시간을 저장하지 못했습니다: $LAST_BUILD_FILE"
+}
+
 step "에이전트 빌드 (release)"
 AGENT_VERSION="$(agent_version "$ROOT")"
 if [[ -n "$AGENT_VERSION" ]]; then
@@ -172,7 +232,7 @@ if [[ -n "$AGENT_VERSION" ]]; then
 else
   warn "git 에서 버전을 정하지 못했습니다 (v* tag 없음?) — 버전 없이 설치합니다"
 fi
-swift build -c release --product "$PRODUCT" --package-path "$ROOT"
+build_agent
 BUILT="$(swift build -c release --package-path "$ROOT" --show-bin-path)/$PRODUCT"
 [[ -x "$BUILT" ]] || die "빌드 산출물을 찾지 못했습니다: $BUILT"
 
