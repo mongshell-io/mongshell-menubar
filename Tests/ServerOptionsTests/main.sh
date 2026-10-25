@@ -96,6 +96,28 @@ git -C "$REPO" tag v1.3.0-rc-1
 check "하이픈 든 tag 이름" "v1.3.0-rc-1" "$(agent_version "$REPO")"
 check "repo 아님 → 빈 값" "" "$(agent_version "$WORK/nowhere")"
 
+echo "▸ 빌드 진행 표시"
+check "45초" "45초" "$(format_duration 45)"
+check "60초 → 1분 0초" "1분 0초" "$(format_duration 60)"
+check "331초 → 5분 31초" "5분 31초" "$(format_duration 331)"
+
+# pid ppid comm — 100 is the build; 300 is someone else's compiler.
+PS_TREE="100 1 /usr/bin/swift
+101 100 /Library/Developer/CommandLineTools/usr/bin/swift-build
+102 101 /Library/Developer/CommandLineTools/usr/bin/clang-stat-cache
+300 1 /Library/Developer/CommandLineTools/usr/bin/swift-frontend"
+check "자손에 clang-stat-cache → SDK 캐시 생성" "SDK 캐시 생성" "$(build_phase 100 <<<"$PS_TREE")"
+check "남의 swift-frontend 는 세지 않음" "SDK 캐시 생성" "$(build_phase 100 <<<"$PS_TREE")"
+check "손자의 swift-frontend → 컴파일" "컴파일" \
+  "$(build_phase 100 <<<"$PS_TREE
+103 101 /Library/Developer/CommandLineTools/usr/bin/swift-frontend")"
+check "ld 가 있으면 링크가 앞섬" "링크" \
+  "$(build_phase 100 <<<"$PS_TREE
+103 101 /Library/Developer/CommandLineTools/usr/bin/swift-frontend
+104 102 /usr/bin/ld")"
+check "도구 없음 → 준비" "준비" "$(build_phase 100 <<<"100 1 /usr/bin/swift")"
+check "빌드가 이미 끝남 → 준비" "준비" "$(build_phase 999 <<<"$PS_TREE")"
+
 echo ""
 if [[ ${#FAILURES[@]} -eq 0 ]]; then
   echo "✓ $CASES cases passed"

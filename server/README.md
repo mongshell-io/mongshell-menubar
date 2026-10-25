@@ -192,7 +192,9 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
   새 토큰 발급                 ← 재실행이면 "기존 토큰 재사용"
 ▶ 공개 포트 8443 점검
 ▶ 에이전트 빌드 (release)
-  (swift build 출력)
+  버전 v1.2.0+12               ← git 에서 정한 에이전트 버전 (Decision #81)
+  빌드 중… 2분 10초 · 컴파일 (지난번 5분 31초)   ← 2초마다 같은 줄을 갱신. 처음 설치면 "지난번" 이 없다
+  빌드 완료 — 5분 28초
   → ~/Library/Application Support/mongshell-openclaw-agent/mongshell-openclaw-agent
 ▶ 게이트웨이 launchd 레이블 탐색
   → ai.openclaw.gateway        ← 게이트웨이 레이블이 맞는지 꼭 확인
@@ -214,6 +216,8 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 
 위 상태 URL 을 메뉴바 앱 설정의 **서버** 섹션(상태 URL 입력칸)에 붙여넣으세요.
 ```
+
+빌드는 서버 맥에서 **수 분** 걸릴 수 있다 (부하가 높으면 더 걸린다). 진행 줄의 단계는 그 순간 떠 있는 빌드 도구 이름으로 추정한 것이다 — `준비` 는 매니페스트 컴파일 등, `SDK 캐시 생성` 은 `clang-stat-cache`, `컴파일` 은 `swift-frontend`, `링크` 는 `ld`. 터미널이 아닌 곳(로그 파일로 보낸 출력)에서는 30초마다 한 줄씩 쌓인다. swift build 자체의 출력은 실패할 때만 보인다.
 
 안 되면: `오류:` 로 시작하는 마지막 메시지를 [5-1](#5-1-installsh--uninstallsh-메시지별) 에서 찾는다. `경고:` 는 설치를 멈추지 않는다.
 
@@ -490,7 +494,7 @@ funnel 경로 → LaunchAgent → 데이터 폴더(토큰·설치 옵션 포함)
 
 | 메시지 | 원인 | 해결 |
 |---|---|---|
-| (swift 컴파일 에러로 종료) | Swift 버전 낮음, 소스 문제 | `swift --version` 이 6 이상인지. repo 루트에서 `swift build -c release --product mongshell-openclaw-agent` 로 재현 |
+| `에이전트 빌드 실패 (exit N). 전체 로그: …` (바로 위에 swift build 출력 끝 60줄) | Swift 버전 낮음, 소스 문제 | `swift --version` 이 6 이상인지. repo 루트에서 `swift build -c release --product mongshell-openclaw-agent` 로 재현 |
 | `빌드 산출물을 찾지 못했습니다: …` | 빌드 경로 불일치 | 위 명령 재현 후 보고 |
 | `경고: 게이트웨이 plist 를 찾지 못해 기본값 ai.openclaw.gateway 을 씁니다.` | `~/Library/LaunchAgents` 에 `claw` plist 없음 | 게이트웨이가 다른 사용자/시스템 도메인에 있으면 자동복구가 실패한다. [1](#1-준비물-체크리스트) 조건 확인 |
 | `생성한 plist 가 올바르지 않습니다: …` | plist 생성 오류 | `plutil -lint ~/Library/LaunchAgents/com.mongshell.openclaw-agent.plist` 결과와 함께 보고 |

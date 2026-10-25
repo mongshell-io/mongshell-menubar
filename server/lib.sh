@@ -130,3 +130,39 @@ agent_version() {
     printf '%s+%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
   fi
 }
+
+# ── 빌드 진행 표시 (install.sh) ───────────────────────────────────────────
+# $1=초. "45초" / "5분 31초".
+format_duration() {
+  if (( $1 < 60 )); then
+    printf '%s초\n' "$1"
+  else
+    printf '%s분 %s초\n' "$(( $1 / 60 ))" "$(( $1 % 60 ))"
+  fi
+}
+
+# $1=빌드 프로세스 pid, stdin=`ps -Ao pid=,ppid=,comm=`. 그 pid 와 자손 중 지금
+# 떠 있는 실행 파일 이름으로 빌드 단계를 추정해 출력한다 — 링크 > 컴파일 >
+# SDK 캐시 생성 순으로 앞선 것을 고르고, 해당 없으면 "준비". 표시 전용 추정이다.
+build_phase() {
+  awk -v root="$1" '
+    { pid[NR] = $1; ppid[NR] = $2; name = $3; sub(".*/", "", name); comm[NR] = name }
+    END {
+      mine[root] = 1
+      do {
+        grew = 0
+        for (i = 1; i <= NR; i++)
+          if ((ppid[i] in mine) && !(pid[i] in mine)) { mine[pid[i]] = 1; grew = 1 }
+      } while (grew)
+      rank = 0
+      for (i = 1; i <= NR; i++) {
+        if (!(pid[i] in mine)) continue
+        c = comm[i]
+        if ((c == "ld" || c == "ld64" || c == "ld-prime") && rank < 3) rank = 3
+        else if (c == "swift-frontend" && rank < 2) rank = 2
+        else if (c == "clang-stat-cache" && rank < 1) rank = 1
+      }
+      split("SDK 캐시 생성,컴파일,링크", label, ",")
+      print (rank ? label[rank] : "준비")
+    }'
+}
