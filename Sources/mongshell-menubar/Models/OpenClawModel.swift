@@ -22,7 +22,7 @@ final class OpenClawModel: ObservableObject {
     /// The server host's own dot. `.absent` whenever there is nothing to show
     /// — no URL, or a server that sends no `host`.
     @Published private(set) var hostHealth: ServerHostHealth = .absent
-    /// Everything known across polls; `lastSuccess` feeds the "서버 확인" time
+    /// Everything known across polls; `lastSuccess` feeds the "오픈클로 서버 확인" time
     /// and the read-only auto-heal row.
     @Published private(set) var reading = OpenClawReading()
 
@@ -34,10 +34,10 @@ final class OpenClawModel: ObservableObject {
         return TimeText.checkedClock(reading.lastCheckedAt, stale: stale)
     }
 
-    /// "에이전트 v1.2.0+3" from the last good document, nil when it sent none.
-    /// Shown beside the server section's title.
-    var agentVersionText: String? {
-        reading.lastSuccess?.agentVersion.map { "에이전트 \($0)" }
+    /// The agent's build ("v1.2.0+3") from the last good document, nil when
+    /// it sent none. Shown beside the server section's title.
+    var agentVersion: String? {
+        reading.lastSuccess?.agentVersion
     }
 
     private let client = OpenClawStatusClient()
