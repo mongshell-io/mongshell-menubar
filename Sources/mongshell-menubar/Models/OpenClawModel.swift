@@ -22,7 +22,7 @@ final class OpenClawModel: ObservableObject {
     /// The server host's own dot. `.absent` whenever there is nothing to show
     /// — no URL, or a server that sends no `host`.
     @Published private(set) var hostHealth: ServerHostHealth = .absent
-    /// Everything known across polls; `lastSuccess` feeds the "서버 확인" time
+    /// Everything known across polls; `lastSuccess` feeds the "오픈클로 서버 확인" time
     /// and the read-only auto-heal row.
     @Published private(set) var reading = OpenClawReading()
 
