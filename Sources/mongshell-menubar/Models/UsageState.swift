@@ -109,8 +109,9 @@ enum LoadState: Equatable {
     case sessionExpired
     case loading
     case loaded(DataSource)
-    /// `retryAt` is when the poll loop asks again; nothing — poll or the
-    /// popover's manual refresh — reaches the endpoint before it (#86).
+    /// `retryAt` is when the poll loop asks again; neither the poll nor the
+    /// popover's manual refresh asks before it (#86). A fresh sign-in still
+    /// checks its new token once.
     case rateLimited(retryAt: Date)
     case error(String)
 }

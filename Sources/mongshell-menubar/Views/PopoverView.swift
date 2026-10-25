@@ -254,8 +254,11 @@ struct PopoverView: View {
         case .loading:
             banner(text: "불러오는 중…", tint: Palette.textSecondary) { EmptyView() }
         case .rateLimited(let retryAt):
-            banner(text: "요청이 제한되었습니다 — \(TimeText.minutesLeft(until: retryAt))분 후 자동 재시도",
-                   tint: Palette.amber) { EmptyView() }
+            // Nothing is published until `retryAt`, so the minutes tick here.
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                banner(text: "요청이 제한되었습니다 — \(TimeText.minutesLeft(until: retryAt, now: context.date))분 후 자동 재시도",
+                       tint: Palette.amber) { EmptyView() }
+            }
         case .error(let msg):
             banner(text: msg, tint: Palette.red) {
                 Button("재시도") { model.refreshNow() }
