@@ -67,6 +67,10 @@ struct PopoverView: View {
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            if openClaw.hostHealth.host == nil {
+                openClawCheckedRow
+            }
         }
         .padding(.horizontal, 18)
         .padding(.top, 15)
@@ -132,6 +136,8 @@ struct PopoverView: View {
                     }
                 }
             }
+
+            openClawCheckedRow
         }
         .padding(.horizontal, 18)
         .padding(.top, 15)
@@ -152,6 +158,25 @@ struct PopoverView: View {
                 .font(.system(size: 13))
                 .monospacedDigit()
                 .foregroundStyle(stale ? Palette.textTertiary : Palette.textPrimary)
+        }
+    }
+
+    /// When the openclaw status document was last read, and a way to read it
+    /// again — at the foot of the last section that document fills (the
+    /// server section, or the openclaw one when the server sent no host), so
+    /// it isn't mistaken for the Claude usage clock in the footer. Read-only
+    /// by design (Decision #25): restarts happen on the server.
+    private var openClawCheckedRow: some View {
+        HStack(spacing: 8) {
+            Text(openClaw.checkedClockText.map { "오픈클로 서버 확인 \($0)" } ?? "오픈클로 서버 확인 기록 없음")
+                .font(.system(size: 11))
+                .monospacedDigit()
+                .foregroundStyle(Palette.textTertiary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Button("새로고침") { openClaw.refreshNow() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
         }
     }
 
@@ -357,54 +382,17 @@ struct PopoverView: View {
 
     // MARK: Footer
 
-    @ViewBuilder
     private var footer: some View {
-        if prefs.showsOpenClaw {
-            openClawFooter
-        } else {
-            HStack {
-                if let credits = snap.creditsText {
-                    Text(credits)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Palette.textSecondary)
-                }
-                Spacer()
-                Text(TimeText.updatedClock(snap.lastUpdated))
+        HStack {
+            if let credits = snap.creditsText {
+                Text(credits)
                     .font(.system(size: 12))
-                    .foregroundStyle(Palette.textTertiary)
+                    .foregroundStyle(Palette.textSecondary)
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 11)
-        }
-    }
-
-    /// With openclaw on there are two clocks — the usage read and the status
-    /// document read — so they share one footer, stacked, with one button
-    /// that refreshes both. Read-only by design (Decision #25): restarts
-    /// happen on the server.
-    private var openClawFooter: some View {
-        let usageClock = snap.lastUpdated == .distantPast
-            ? nil : TimeText.checkedClock(snap.lastUpdated, stale: false)
-        return HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                if let credits = snap.creditsText {
-                    Text(credits)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Palette.textSecondary)
-                }
-                Text(usageClock.map { "사용량 갱신 \($0)" } ?? "사용량 갱신 기록 없음")
-                Text(openClaw.checkedClockText.map { "서버 확인 \($0)" } ?? "서버 확인 기록 없음")
-            }
-            .font(.system(size: 11))
-            .monospacedDigit()
-            .foregroundStyle(Palette.textTertiary)
-            Spacer(minLength: 8)
-            Button("새로고침") {
-                model.refreshNowUnlessRateLimited()
-                openClaw.refreshNow()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            Spacer()
+            Text(TimeText.updatedClock(snap.lastUpdated))
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.textTertiary)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 11)
