@@ -29,7 +29,6 @@ struct PopoverView: View {
                     hairline
                     serverHostSection(host)
                 }
-                serverCheckedRow
             }
             hairline
             footer
@@ -71,14 +70,13 @@ struct PopoverView: View {
         }
         .padding(.horizontal, 18)
         .padding(.top, 15)
-        .padding(.bottom, openClaw.hostHealth.host == nil ? 0 : Self.serverSectionBottomPadding)
+        .padding(.bottom, Self.sectionBottomPadding)
     }
 
     // MARK: Server host (Decision #31)
 
-    /// Space under a server section that another section follows. The last
-    /// one is followed by `serverCheckedRow` instead, which brings its own.
-    private static let serverSectionBottomPadding: CGFloat = 16
+    /// Space under the openclaw and server sections, above the next hairline.
+    private static let sectionBottomPadding: CGFloat = 16
 
     /// The server's own signals, under the service that runs on it. Rows the
     /// server didn't send (no battery → no power row, no CI runners → no
@@ -97,6 +95,16 @@ struct PopoverView: View {
                 Text("서버")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Palette.textSecondary)
+                // The agent's build (Decision #81), beside what it describes.
+                // Gives way first when the verdict on the right is long.
+                if let version = openClaw.agentVersionText {
+                    Text(version)
+                        .font(.system(size: 11))
+                        .monospacedDigit()
+                        .foregroundStyle(Palette.textTertiary)
+                        .lineLimit(1)
+                        .layoutPriority(-1)
+                }
                 Spacer(minLength: 8)
                 if let dotColor = openClaw.hostHealth.dotColor {
                     Circle()
@@ -127,6 +135,7 @@ struct PopoverView: View {
         }
         .padding(.horizontal, 18)
         .padding(.top, 15)
+        .padding(.bottom, Self.sectionBottomPadding)
     }
 
     /// One figure. The glyph takes the signal's level color when that signal
@@ -144,34 +153,6 @@ struct PopoverView: View {
                 .monospacedDigit()
                 .foregroundStyle(stale ? Palette.textTertiary : Palette.textPrimary)
         }
-    }
-
-    /// When the status document was last read, and a way to read it again.
-    /// Both server sections come from that one document, so this sits once,
-    /// under the last of them. Read-only by design (Decision #25): restarts
-    /// happen on the server.
-    /// The agent's version (Decision #81) sits under the time, not beside it:
-    /// a stale time plus a version would crowd the button.
-    private var serverCheckedRow: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(openClaw.checkedClockText.map { "서버 확인 \($0)" } ?? "서버 확인 기록 없음")
-                if let version = openClaw.agentVersionText {
-                    Text(version)
-                        .lineLimit(1)
-                }
-            }
-            .font(.system(size: 11))
-            .monospacedDigit()
-            .foregroundStyle(Palette.textTertiary)
-            Spacer(minLength: 8)
-            Button("새로고침") { openClaw.refreshNow() }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-        }
-        .padding(.horizontal, 18)
-        .padding(.top, 12)
-        .padding(.bottom, 16)
     }
 
     private var hairline: some View {
@@ -376,17 +357,54 @@ struct PopoverView: View {
 
     // MARK: Footer
 
+    @ViewBuilder
     private var footer: some View {
-        HStack {
-            if let credits = snap.creditsText {
-                Text(credits)
+        if prefs.showsOpenClaw {
+            openClawFooter
+        } else {
+            HStack {
+                if let credits = snap.creditsText {
+                    Text(credits)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.textSecondary)
+                }
+                Spacer()
+                Text(TimeText.updatedClock(snap.lastUpdated))
                     .font(.system(size: 12))
-                    .foregroundStyle(Palette.textSecondary)
+                    .foregroundStyle(Palette.textTertiary)
             }
-            Spacer()
-            Text(TimeText.updatedClock(snap.lastUpdated))
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.textTertiary)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 11)
+        }
+    }
+
+    /// With openclaw on there are two clocks — the usage read and the status
+    /// document read — so they share one footer, stacked, with one button
+    /// that refreshes both. Read-only by design (Decision #25): restarts
+    /// happen on the server.
+    private var openClawFooter: some View {
+        let usageClock = snap.lastUpdated == .distantPast
+            ? nil : TimeText.checkedClock(snap.lastUpdated, stale: false)
+        return HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                if let credits = snap.creditsText {
+                    Text(credits)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.textSecondary)
+                }
+                Text(usageClock.map { "사용량 갱신 \($0)" } ?? "사용량 갱신 기록 없음")
+                Text(openClaw.checkedClockText.map { "서버 확인 \($0)" } ?? "서버 확인 기록 없음")
+            }
+            .font(.system(size: 11))
+            .monospacedDigit()
+            .foregroundStyle(Palette.textTertiary)
+            Spacer(minLength: 8)
+            Button("새로고침") {
+                model.refreshNow()
+                openClaw.refreshNow()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 11)

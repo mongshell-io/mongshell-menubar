@@ -35,6 +35,7 @@ final class OpenClawModel: ObservableObject {
     }
 
     /// "에이전트 v1.2.0+3" from the last good document, nil when it sent none.
+    /// Shown beside the server section's title.
     var agentVersionText: String? {
         reading.lastSuccess?.agentVersion.map { "에이전트 \($0)" }
     }
