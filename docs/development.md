@@ -86,6 +86,8 @@ swift build && MONGSHELL_SNAPSHOT=/tmp/mongshell_snaps ./.build/debug/mongshell-
 | `popover` | 팝오버 — openclaw 정상, 서버 섹션 없음 |
 | `popover_host_on_battery` | 팝오버 — 서버 섹션, 어댑터가 빠진 서버 (전원 warning) |
 | `popover_host_disk_critical` | 팝오버 — 서버 섹션, 배터리 없는 서버의 디스크 critical (전원 줄 없음) |
+| `popover_host_runners_partial` | 팝오버 — 서버 섹션, CI 러너 일부만 동작 (러너 warning) |
+| `popover_host_credits` | 팝오버 — 로그인된 상태에서 크레딧이 남아 openclaw footer 가 크레딧 줄 + 두 시각 + 새로고침으로 세 줄이 된 상태 |
 | `popover_host_unreachable` | 팝오버 — 두절, 서버 섹션에 마지막 값이 흐리게 남음 |
 | `popover_openclaw_unreachable` / `popover_openclaw_down` | 팝오버 — openclaw 두절 / 게이트웨이 다운 |
 | `popover_extra_limit` | 팝오버 — 로그인된 상태(샘플 배너 없음)에서 7일 한도 아래에 앱이 모르는 `kind` 의 한도(설정 화면의 제한 초기화/보너스) 한 줄이 위험도 색 막대와 초기화 캡션으로 붙은 상태. `popover` 에는 없다 |
@@ -97,7 +99,7 @@ swift build && MONGSHELL_SNAPSHOT=/tmp/mongshell_snaps ./.build/debug/mongshell-
 | `github_popover_merge_failed` | GitHub 팝오버 — 내 PR 의 머지 가능 행에서 GitHub 가 squash 머지를 거절해 행 아래 빨간 사유 한 줄이 붙은 상태 (Decision #49). `github_popover` 에는 같은 행에 평상시 버튼이 보인다 |
 | `settings_github` | 설정창 GitHub 섹션 (켜진 상태) |
 
-`popover_openclaw_down` 을 뺀 openclaw 팝오버 스냅샷(`popover`·`popover_host_*`·`popover_openclaw_unreachable`)은 "서버 확인" 아래에 `에이전트 v1.2.0+3` 줄을 그린다 (Decision #81). `popover_openclaw_down` 은 버전을 보내지 않는 에이전트라 그 줄이 없다.
+서버 섹션이 있는 스냅샷(`popover_host_*`)은 제목 옆에 `에이전트 v1.2.0+3` 을 그린다 (Decision #81). openclaw 팝오버 스냅샷의 footer 는 "사용량 갱신"·"서버 확인" 두 줄과 새로고침 버튼이다.
 
 ## Claude Code 설정 편집 테스트
 

@@ -58,6 +58,11 @@ enum SnapshotRenderer {
         OpenClawModel.shared.presentForSnapshot(
             .snapshotOK(now: now, host: .snapshotRunnersPartial), now: now)
         write(PopoverPreview(), to: base, "popover_host_runners_partial", scale: 2)
+        UsageModel.shared.presentForSnapshot(.snapshotCredits, state: .loaded(.oauthLogin))
+        OpenClawModel.shared.presentForSnapshot(
+            .snapshotOK(now: now, host: .snapshotOnBattery), now: now)
+        write(PopoverPreview(), to: base, "popover_host_credits", scale: 2)
+        UsageModel.shared.presentForSnapshot(.sample, state: .signedOut)
         OpenClawModel.shared.presentForSnapshot(
             .snapshotUnreachable(now: now, host: .snapshotOnBattery), now: now)
         write(PopoverPreview(), to: base, "popover_host_unreachable", scale: 2)
@@ -542,6 +547,14 @@ private struct GitHubSectionPreview: View {
 }
 
 private extension UsageSnapshot {
+    /// The sample with prepaid credits left — the openclaw footer then stacks
+    /// the credits line above its two clocks.
+    static var snapshotCredits: UsageSnapshot {
+        var snapshot = UsageSnapshot.sample
+        snapshot.creditsText = "크레딧 $12.40 남음"
+        return snapshot
+    }
+
     /// The sample plus one limit of a kind the app does not know — what a
     /// reset/bonus from the settings page would look like. Kept out of
     /// `.sample` itself: the signed-out popover must not show a fake bonus.
