@@ -51,6 +51,15 @@ final class UsageModel: ObservableObject {
         Task { await refreshOnce() }
     }
 
+    /// `refreshNow()`, except while the endpoint has us rate-limited. For a
+    /// button whose purpose may be something else (the openclaw footer's
+    /// refresh, which also re-reads the server), so pressing it for the
+    /// server never pokes the unofficial endpoint during a limit.
+    func refreshNowUnlessRateLimited() {
+        if case .rateLimited = loadState { return }
+        refreshNow()
+    }
+
     private func pollLoop() async {
         while !Task.isCancelled {
             await refreshOnce()

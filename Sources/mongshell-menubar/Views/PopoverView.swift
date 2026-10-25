@@ -400,7 +400,7 @@ struct PopoverView: View {
             .foregroundStyle(Palette.textTertiary)
             Spacer(minLength: 8)
             Button("새로고침") {
-                model.refreshNow()
+                model.refreshNowUnlessRateLimited()
                 openClaw.refreshNow()
             }
             .buttonStyle(.bordered)
