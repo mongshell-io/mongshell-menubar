@@ -96,18 +96,16 @@ struct PopoverView: View {
                 Image(systemName: "server.rack")
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.textSecondary)
-                Text("서버")
+                Text("오픈클로 서버")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Palette.textSecondary)
-                // The agent's build (Decision #81), beside what it describes.
-                // Gives way first when the verdict on the right is long.
-                if let version = openClaw.agentVersionText {
+                // The agent's build (Decision #81), beside the server it runs on.
+                if let version = openClaw.agentVersion {
                     Text(version)
                         .font(.system(size: 11))
                         .monospacedDigit()
                         .foregroundStyle(Palette.textTertiary)
                         .lineLimit(1)
-                        .layoutPriority(-1)
                 }
                 Spacer(minLength: 8)
                 if let dotColor = openClaw.hostHealth.dotColor {

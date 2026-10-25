@@ -98,7 +98,7 @@ swift build && MONGSHELL_SNAPSHOT=/tmp/mongshell_snaps ./.build/debug/mongshell-
 | `github_popover_merge_failed` | GitHub 팝오버 — 내 PR 의 머지 가능 행에서 GitHub 가 squash 머지를 거절해 행 아래 빨간 사유 한 줄이 붙은 상태 (Decision #49). `github_popover` 에는 같은 행에 평상시 버튼이 보인다 |
 | `settings_github` | 설정창 GitHub 섹션 (켜진 상태) |
 
-서버 섹션이 있는 스냅샷(`popover_host_*`)은 제목 옆에 `에이전트 v1.2.0+3` 을 그린다 (Decision #81). openclaw 팝오버 스냅샷은 openclaw 가 채우는 마지막 섹션(서버 섹션, 없으면 openclaw 섹션) 맨 아래에 "오픈클로 서버 확인 …" 과 새로고침을 그린다.
+서버 섹션이 있는 스냅샷(`popover_host_*`)은 제목 `오픈클로 서버` 옆에 `v1.2.0+3` 을 그린다 (Decision #81). openclaw 팝오버 스냅샷은 openclaw 가 채우는 마지막 섹션(서버 섹션, 없으면 openclaw 섹션) 맨 아래에 `오픈클로 서버 확인 …` 과 새로고침을 그린다.
 
 ## Claude Code 설정 편집 테스트
 

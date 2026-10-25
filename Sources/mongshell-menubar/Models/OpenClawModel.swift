@@ -34,10 +34,10 @@ final class OpenClawModel: ObservableObject {
         return TimeText.checkedClock(reading.lastCheckedAt, stale: stale)
     }
 
-    /// "에이전트 v1.2.0+3" from the last good document, nil when it sent none.
-    /// Shown beside the server section's title.
-    var agentVersionText: String? {
-        reading.lastSuccess?.agentVersion.map { "에이전트 \($0)" }
+    /// The agent's build ("v1.2.0+3") from the last good document, nil when
+    /// it sent none. Shown beside the server section's title.
+    var agentVersion: String? {
+        reading.lastSuccess?.agentVersion
     }
 
     private let client = OpenClawStatusClient()
