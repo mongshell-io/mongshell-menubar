@@ -97,7 +97,7 @@ App Store/Standalone 판 앱이 아니라 **brew formula** 를 쓴다 — `insta
   ```
   성공: `앱 판 없음`.
 
-- [ ] **설치·데몬 시작·operator·로그인** — operator 를 로그인과 함께 준다. operator 를 주면 `tailscale status`·`tailscale serve status` 를 sudo 없이 쓸 수 있다. 파일을 서빙하는 funnel 설정은 실기에서 operator 로도 거부돼(원인 미확인) `install.sh` 가 그 명령을 sudo 로 실행한다 ([E](#e-serverinstallsh-실행)). 경로 해제가 sudo 없이 되는지는 아직 확인하지 못했다 ([6](#6-첫-설치-때-확인할-것-실기-미검증-가정) 가정 6).
+- [ ] **설치·데몬 시작·operator·로그인** — operator 를 로그인과 함께 준다. operator 를 주면 `tailscale status`·`tailscale serve status` 를 sudo 없이 쓸 수 있다. 파일을 서빙하는 funnel 설정은 실기에서 operator 로도 거부돼(원인 미확인) `install.sh` 가 그 명령을 sudo 로 실행한다 ([E](#e-serverinstallsh-실행)). 경로 해제(`--rotate-token`·`uninstall.sh`)는 sudo 없이 먼저 시도하고 거부되면 sudo 로 다시 시도한다 — sudo 없이 되는지는 아직 확인하지 못했다 ([6](#6-첫-설치-때-확인할-것-실기-미검증-가정) 가정 6).
   ```bash
   brew install tailscale
   sudo brew services start tailscale   # tailscaled 를 root 데몬으로 상시 실행
@@ -486,7 +486,7 @@ funnel 경로 → LaunchAgent → 데이터 폴더(토큰·설치 옵션 포함)
 | `'tailscale serve status --json' 을 읽지 못해 포트 8443 가 비어 있는지 확인할 수 없습니다.` | serve 설정 조회 실패 | `tailscale serve status --json; echo $?` 로 원인 확인 |
 | `포트 8443 에 이 설치가 만들지 않은 serve 핸들러가 있습니다…` (목록 뒤따름) | 8443 에 다른 경로·TCP 포워딩이 있음. 토큰 파일을 잃은 옛 설치의 경로도 여기 걸린다 | `tailscale serve status` 로 확인. 8443 을 다른 용도로 쓰지 않는다면 `tailscale funnel --https=8443 off` 로 포트째 내리고 재실행. `tailscale serve reset` 은 443 등 **모든** 포트 설정을 지우므로 피한다 |
 | `tailscale serve 설정을 읽지 못해 옛 공개 경로 해제 여부를 확인할 수 없습니다…` | (`--rotate-token`·uninstall) 설정 조회 실패 | 위와 같음 |
-| `옛 공개 경로 해제 실패…` | `funnel … --set-path=/<옛토큰> off` 실패 | 메시지의 명령으로 직접 끈 뒤 재실행 |
+| `옛 공개 경로 해제 실패 (sudo 로도 실패)…` | `funnel … --set-path=/<옛토큰> off` 가 sudo 없이도, sudo 로도 실패 (sudo 인증 실패 포함) | 메시지의 명령(`sudo tailscale funnel …`)으로 직접 끈 뒤 재실행 |
 | `해제 후 tailscale serve 설정을 다시 읽지 못했습니다…` | 해제 후 재조회 실패 | `tailscale funnel status` 로 옛 경로가 사라졌는지 직접 확인 |
 | `해제 명령은 성공했지만 옛 공개 경로가 남아 있습니다…` | `off` 가 경로를 안 지움 ([6](#6-첫-설치-때-확인할-것-실기-미검증-가정) 가정 6) | 메시지의 명령으로 끈 뒤 재실행, 반복되면 보고 |
 
@@ -592,7 +592,7 @@ cat ~/Library/Application\ Support/mongshell-openclaw-agent/status.json
 | 3 | funnel 대상에 파일 경로를 주면 그 파일 하나를 `--set-path` 경로에 서빙한다 (`install.sh` §7) | 확인 (외부망 기기에서도) | 외부망에서 상태 URL 이 JSON 을 돌려주는지 ([F](#f-동작-확인)) | 404·빈 응답·디렉터리 목록 |
 | 4 | `--bg` 는 설정을 tailscaled 에 영구 저장한다 (`install.sh` §7) | 미확인 | `sudo brew services restart tailscale` 후 `tailscale funnel status` 와 외부망 URL 재확인 | 데몬 재시작·재부팅 뒤 ⚪ `주소 또는 토큰이 맞지 않습니다` 또는 연결 불가 |
 | 5 | `--yes` 는 버전에 따라 없을 수 있어 help 에 있을 때만 붙인다 (`install.sh` §7) | 미확인 | `tailscale funnel --help 2>&1 \| grep -E -- '--?yes'` | 없으면 `▶ tailscale funnel 설정` 에서 확인 프롬프트·브라우저 안내가 뜨고 멈춘 것처럼 보일 수 있다 — 화면 안내를 따른다 |
-| 6 | `funnel --https=8443 --set-path=/<토큰> off` 가 그 경로 하나만 해제하고, operator 를 준 사용자가 sudo 없이 실행할 수 있다 (`install.sh`·`uninstall.sh`) | 미확인 | `--rotate-token` 한 번 실행 → `tailscale funnel status` 에 새 경로만 있고, 외부망에서 옛 URL 이 404 | `옛 공개 경로 해제 실패` (권한 거부면 메시지의 명령 앞에 `sudo` 를 붙여 끈 뒤 재실행), `해제 명령은 성공했지만 옛 공개 경로가 남아 있습니다` (스크립트가 잡음), 또는 다른 경로까지 사라짐 |
+| 6 | `funnel --https=8443 --set-path=/<토큰> off` 가 그 경로 하나만 해제하고, operator 를 준 사용자가 sudo 없이 실행할 수 있다 (`install.sh`·`uninstall.sh`. 거부되면 스크립트가 sudo 로 재시도한다) | 미확인 | `--rotate-token` 한 번 실행 → `tailscale funnel status` 에 새 경로만 있고, 외부망에서 옛 URL 이 404. 출력에 `sudo 없이 해제하지 못해 sudo 로 다시 시도합니다` 가 보이면 sudo 없이는 거부되는 것 | `옛 공개 경로 해제 실패 (sudo 로도 실패)` (메시지의 `sudo` 명령으로 끈 뒤 재실행), `해제 명령은 성공했지만 옛 공개 경로가 남아 있습니다` (스크립트가 잡음), 또는 다른 경로까지 사라짐 |
 | 7 | 토큰 경로만 걸려 있으면 루트 `/` 는 404 다 (`install.sh` §8) | 확인 (서버 맥 자신에서만) | 외부망에서 `https://<DNS 이름>:8443/` | 설치 끝에서 `토큰 없는 … 가 NNN 를 돌려줍니다` 로 중단 |
 | 8 | (추정) 설치 스크립트의 URL 자가 확인은 서버 맥 자신에서 하므로 MagicDNS 가 tailnet 주소로 풀려 **Funnel(인터넷 경로)을 거치지 않았을 수 있다** | 자가 확인이 어느 경로를 탔는지는 미확인. 외부망 기기에서는 상태 URL 이 열렸다 | 반드시 외부망 기기로 [F](#f-동작-확인) | `→ 응답 확인` 이 나와도 외부에서는 안 열림 |
 | 9 | root 인 tailscaled 가 `~/Library/Application Support` 아래 파일을 권한 프롬프트 없이 읽는다 (`install.sh` DATA_DIR 주석) | 확인 (외부망 기기에서도) | 외부망 URL 이 JSON 을 돌려주는지 | `status.json` 은 갱신되는데 URL 이 오류(5xx·404)를 돌려줌 |

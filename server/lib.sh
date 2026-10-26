@@ -15,6 +15,9 @@ FUNNEL_PORT=8443
 SERVE_EMPTY_PATTERN='^no serve config'
 # 해석 실패 시 에러에 보여줄 원문 길이(바이트).
 SERVE_EXCERPT_BYTES=200
+# 절대 경로로 부른다 — PATH 앞쪽(/opt/homebrew/bin 등)은 사용자 쓰기 가능이다.
+# 환경변수로 받지 않고 여기서 고정한다 (테스트만 source 뒤에 바꾼다).
+SUDO=/usr/bin/sudo
 
 # $1=tailscale CLI, $2="<DNS 이름>:<포트>"
 # 그 포트에 걸린 serve/funnel 핸들러를 한 줄에 하나씩 출력한다 — 웹 경로는 "/…",
@@ -60,14 +63,20 @@ JS
 # 경로가 걸려 있으면 funnel 에서 내리고, 설정을 다시 읽어 실제로 사라졌는지 확인한다.
 # 어느 단계든 실패하면 옛 URL 이 계속 공개돼 있을 수 있으므로 die 한다.
 # 원래 없던 경로면 할 일이 없다.
+# 경로는 install.sh 가 root 로 걸었다. off 가 sudo 없이 되는지는 실기 미확인이라,
+# 거부되면 root 로 한 번 더 시도한다 — 여는 쪽만 되고 닫는 쪽이 막히는 일이 없게.
 unpublish_path() {
   local cli="$1" host_port="$2" path="$3" handlers
-  local manual="tailscale funnel --https=${host_port##*:} --set-path=<경로> off"
+  local off_args=(funnel --https="${host_port##*:}" --set-path="$path" off)
+  local manual="sudo tailscale funnel --https=${host_port##*:} --set-path=<경로> off"
   handlers="$(serve_handlers "$cli" "$host_port")" \
     || die "tailscale serve 설정을 읽지 못해 옛 공개 경로 해제 여부를 확인할 수 없습니다. 'tailscale serve status' 를 확인하세요."
   grep -qxF -- "$path" <<<"$handlers" || return 0
-  "$cli" funnel --https="${host_port##*:}" --set-path="$path" off \
-    || die "옛 공개 경로 해제 실패. 'tailscale funnel status' 로 확인하고 '$manual' 로 끈 뒤 다시 실행하세요."
+  if ! "$cli" "${off_args[@]}"; then
+    echo "  sudo 없이 해제하지 못해 sudo 로 다시 시도합니다 (비밀번호를 물을 수 있습니다)."
+    "$SUDO" "$cli" "${off_args[@]}" \
+      || die "옛 공개 경로 해제 실패 (sudo 로도 실패). 'tailscale funnel status' 로 확인하고 '$manual' 로 끈 뒤 다시 실행하세요."
+  fi
   handlers="$(serve_handlers "$cli" "$host_port")" \
     || die "해제 후 tailscale serve 설정을 다시 읽지 못했습니다. 'tailscale funnel status' 로 옛 경로가 꺼졌는지 확인하세요."
   if grep -qxF -- "$path" <<<"$handlers"; then

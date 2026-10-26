@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Tests for server/install.sh's option rules (server/lib.sh): validation, the
 # saved `options` file, and precedence (command line > saved > default); the
-# constants bash shares with the agent; and the funnel port check
-# (`serve_handlers`) against a stand-in tailscale CLI.
+# constants bash shares with the agent; the funnel port check
+# (`serve_handlers`) and the old-path removal (`unpublish_path`) against a
+# stand-in tailscale CLI.
 #
 # Each case pins a rule whose mutation would silently change what a re-run
 # installs — the trap being `git pull && server/install.sh` reverting options.
@@ -176,6 +177,48 @@ check "--bg 없이 띄운 포그라운드 세션도 센다" "0|/fg" \
   "$(handlers '{"Foreground":{"s1":{"Web":{"srv.example.ts.net:8443":{"Handlers":{"/fg":{}}}}}}}')"
 check "배경·포그라운드 둘 다" "0|/abc,/fg" \
   "$(handlers '{"Web":{"srv.example.ts.net:8443":{"Handlers":{"/abc":{}}}},"Foreground":{"s1":{"Web":{"srv.example.ts.net:8443":{"Handlers":{"/fg":{}}}}}}}')"
+
+echo "▸ 옛 공개 경로 해제 unpublish_path (#156)"
+# install.sh 는 경로를 root 로 건다. A stand-in CLI keeps the serve config in
+# $FAKE_STATE and refuses 'off' from a non-root caller when FAKE_DENY_USER is
+# set (or from root too with FAKE_DENY_ROOT); a stand-in sudo marks the call as
+# root. Every 'off' lands in $FAKE_LOG as "user" or "root".
+FAKE_TS2="$WORK/tailscale2"
+cat >"$FAKE_TS2" <<'SH'
+#!/bin/bash
+case "$1" in
+  serve) cat "$FAKE_STATE" ;;
+  funnel)
+    who="${FAKE_ROOT:+root}"; who="${who:-user}"
+    echo "$who" >>"$FAKE_LOG"
+    [[ "$who" == user && -n "${FAKE_DENY_USER:-}" ]] && { echo "access denied" >&2; exit 1; }
+    [[ "$who" == root && -n "${FAKE_DENY_ROOT:-}" ]] && exit 1
+    echo '{}' >"$FAKE_STATE" ;;
+esac
+SH
+FAKE_SUDO="$WORK/sudo"
+cat >"$FAKE_SUDO" <<'SH'
+#!/bin/bash
+FAKE_ROOT=1 exec "$@"
+SH
+chmod +x "$FAKE_TS2" "$FAKE_SUDO"
+SUDO="$FAKE_SUDO"
+export FAKE_STATE="$WORK/serve.json" FAKE_LOG="$WORK/funnel.log"
+unpublish() { # → "<rc>|<off callers joined by ,>"; stderr → $WORK/unpublish.err
+  local rc
+  printf '%s' '{"Web":{"srv.example.ts.net:8443":{"Handlers":{"/abc":{}}}}}' >"$FAKE_STATE"
+  : >"$FAKE_LOG"
+  ( unpublish_path "$FAKE_TS2" "$HP" "/abc" ) >/dev/null 2>"$WORK/unpublish.err"; rc=$?
+  printf '%s|%s' "$rc" "$(paste -sd, - <"$FAKE_LOG")"
+}
+check "sudo 없이 해제되면 sudo 를 쓰지 않는다" "0|user" "$(unpublish)"
+check "sudo 없이 거부되면 root 로 재시도해 해제" "0|user,root" "$(FAKE_DENY_USER=1 unpublish)"
+check "둘 다 거부되면 중단" "1|user,root" "$(FAKE_DENY_USER=1 FAKE_DENY_ROOT=1 unpublish)"
+check "중단 안내의 수동 명령에 sudo" "1" \
+  "$(grep -c "'sudo tailscale funnel --https=8443 --set-path=<경로> off'" "$WORK/unpublish.err")"
+printf '%s' '{}' >"$FAKE_STATE"; : >"$FAKE_LOG"
+( unpublish_path "$FAKE_TS2" "$HP" "/abc" ) >/dev/null 2>&1
+check "걸려 있지 않은 경로는 off 를 부르지 않는다" "0|" "$?|$(paste -sd, - <"$FAKE_LOG")"
 
 echo ""
 if [[ ${#FAILURES[@]} -eq 0 ]]; then
