@@ -80,6 +80,8 @@ struct GitHubSettingsSection: View {
             LabeledContent("토큰", value: "PAT 사용 중 — 거부됨 (401)")
         case .pat(rejected: false):
             LabeledContent("토큰", value: "PAT 사용 중")
+        case .patSaveFailed(let status):
+            LabeledContent("토큰", value: "PAT 저장 실패 (\(status))")
         case .ghAccount(let account, rejected: true):
             LabeledContent("토큰", value: "gh CLI 계정 \(account) — 거부됨 (401)")
         case .ghAccount(let account, rejected: false):
