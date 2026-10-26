@@ -486,7 +486,7 @@
 - **결정**: 모델이 바깥과 닿는 지점 — `CredentialStore` 의 읽기·저장·삭제·Claude Code 토큰 읽기, `AuthService` 의 로그인·갱신, `UsageAPIClient.fetch`, `Notifier`, 모델이 읽는 설정 둘 — 을 `UsageModel.Boundaries` 클로저 묶음 하나로 받는다. 실앱 값 `.live` 와 `shared` 는 `UsageModelLive.swift` 에 따로 두고, `scripts/test.sh` 의 `usage-model-tests` 가 실제 `UsageModel.swift` 를 가짜 경계와 함께 컴파일한다. 가짜 Keychain 은 `KeychainQueue` 처럼 부른 순서대로 효과를 내고(답은 그때 정해진다) 답만 붙잡아 두며, 테스트가 그 답을 붙잡은 채 다른 동작을 끝까지 돌린 뒤 놓아 줘 끼어들기를 결정적으로 재현한다.
 - **이유**: Decision #11-1 의 "사본이 아니라 배포되는 코드 그대로" 와 양립한다 — 컴파일되는 것은 배포되는 모델 파일 그 자체이고, 바뀌는 것은 그 파일이 부르는 바깥뿐이다. 가짜로 대신하는 경계는 원래 테스트 번들에 넣을 수 없던 것(실제 Keychain·네트워크·AppKit·알림 센터)이라 잃는 검증이 없다. 대안은 둘이었다. (a) 프로토콜 계층(`CredentialStoring` 등)과 DI — 구현이 하나뿐인 경계마다 프로토콜을 세우는 선추상화이고(docs/code-standards.md § 국소성), 1인 운영에 갈아낄 구현이 생길 계획도 없다. (b) 모델 흐름을 순수 타입으로 더 떼어 내기 — await 사이 순서는 모델의 await 자리 자체라 떼어 낼 수 없다.
 - **결과**:
-  - 시나리오마다 그것을 지키는 가드를 지우면 실패한다 (세대 확인 7곳, 취소 기억의 해제 확인, `lapseIsNews` 를 `expired` 보다 먼저 읽기·이미 알린 토큰 기억, `refreshInFlight` 와 후속 루프). 시나리오 목록은 [docs/development.md § 테스트](development.md#테스트) 가 권위다.
+  - 시나리오마다 그것을 지키는 가드를 지우면 실패한다 (각 세대 확인 `generation == loginGeneration`, 취소 기억의 해제 확인, `lapseIsNews` 를 `expired` 보다 먼저 읽기·이미 알린 토큰 기억, `refreshInFlight` 와 후속 루프). 시나리오 목록은 [docs/development.md § 테스트](development.md#테스트) 가 권위다.
   - `UsageRefreshPolicy.declined` 의 `sameLogin` 은 `sameAllowance` 에 포함돼 지웠다 — 로그인 세대를 올리는 곳은 모두 `declineLifts` 도 올리며, 그 불변식을 이 테스트가 고정한다.
   - `Boundaries` 의 Keychain 클로저는 `CredentialStore` 진입점처럼 `nonisolated(nonsending)` 이다. 가짜는 메인에서 돌아 이 수식어가 빠져도 보지 못하므로 `scripts/test.sh` 의 grep 게이트가 확인한다.
   - `refreshOnce()` 는 테스트가 refresh 하나를 끝까지 기다리도록 `private` 이 아니다.
