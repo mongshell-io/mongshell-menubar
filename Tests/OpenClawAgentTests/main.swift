@@ -170,7 +170,8 @@ do {
 // MARK: - 실측 출력 (#157)
 
 // `openclaw channels status --probe` as captured on the server mac. Tokens
-// are masked and the home path anonymised; the text is otherwise verbatim.
+// and the bot handle are masked and the home path anonymised; the text is
+// otherwise verbatim.
 // The rules must keep reading these the same way — change them only on a
 // new capture.
 print("▸ 실측 probe 출력")
@@ -182,7 +183,7 @@ do {
         Checking channel status (probe)…
         Gateway reachable.
         - Slack default: enabled, configured, running, connected, bot:config, app:config, works
-        - Telegram default: enabled, configured, running, connected, transport:just now, mode:polling, bot:＠mongshell_mac_bot, token:***, works
+        - Telegram default: enabled, configured, running, connected, transport:just now, mode:polling, bot:＠example_bot, token:***, works
 
         """ + tip
     let n = observation(normal, exit: 0)
@@ -225,7 +226,7 @@ do {
         Gateway reachable.
         Gateway event loop degraded for 10s (p99 789ms) reasons=cpu eventLoopDelayMaxMs=789 eventLoopUtilization=0.813 cpuCoreRatio=1.679
         - Slack default: enabled, configured, running, bot:config, app:config, works
-        - Telegram default: enabled, configured, running, mode:polling, bot:＠mongshell_mac_bot, token:***, works
+        - Telegram default: enabled, configured, running, mode:polling, bot:＠example_bot, token:***, works
 
         """ + tip
     let sg = observation(starting, exit: 0)
