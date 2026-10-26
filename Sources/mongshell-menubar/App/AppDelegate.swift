@@ -19,9 +19,10 @@ final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
 
     /// NSHostingView invalidates its intrinsic size whenever what SwiftUI
     /// draws changes size, whichever model or preference caused it — so the
-    /// status item follows the content without a list of inputs (#116). It
-    /// also invalidates on every frame of an animation that keeps the size,
-    /// so only an actual width change is reported.
+    /// status item follows the content without a list of inputs (#116). An
+    /// invalidation does not mean the size changed — an animation, for one,
+    /// invalidates on every frame (#120 measured it) — so only an actual
+    /// width change is reported.
     override func invalidateIntrinsicContentSize() {
         super.invalidateIntrinsicContentSize()
         guard !sizeChangePending else { return }
