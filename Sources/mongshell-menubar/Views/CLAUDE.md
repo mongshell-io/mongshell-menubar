@@ -39,6 +39,8 @@ private var pulsing: Bool {
 
 `App/AppDelegate.swift` 가 AppKit 호스트(`NSStatusItem`/`NSPopover`/설정 윈도우)를 소유한다. 팝오버의 생명주기·상호배타(hover ↔ 클릭)는 뷰가 아니라 AppDelegate 의 책임이다. 옵트인 두 번째 영역(GitHub, Decision #45)도 같다 — 두 영역은 AppDelegate 가 자식 호스팅 뷰 2개로 나누고, 영역별 hover·클릭 판정과 팝오버 앵커는 거기서 정한다. 뷰는 자기 영역만 그린다.
 
+status item 의 폭도 AppDelegate 가 잡는다. 메뉴바 뷰(두 영역 모두)의 내용 크기가 바뀌면 호스팅 뷰가 알려 주므로(`PassthroughHostingView.onIntrinsicSizeChange`, #116), 메뉴바 폭을 바꾸는 입력을 새로 더해도 `AppDelegate` 에 따로 등록하지 않는다.
+
 ## 표면은 셋뿐이다
 
 | 표면 | 뷰 | 제약 |
@@ -57,7 +59,7 @@ private var pulsing: Bool {
 - 스택은 그것이 대신하는 단일 표시보다 넓으면 안 된다 (PHILOSOPHY § Admission Criteria 4).
 - 치수는 `MenuBarIconView.swift` 의 `StackedIndicator` 가 권위다. 글리프 열 폭을 고정해 두 점이 세로로 정렬된다.
 - 서버 점은 openclaw 표시 옆에만 그린다 — openclaw 점 없이 서버 점만 그리는 경로는 없다.
-- 단일 표시와 스택은 폭이 달라, 서버 점이 생기거나 사라지면 `AppDelegate` 가 status item 크기를 다시 잡는다.
+- 단일 표시와 스택은 폭이 다르다 — status item 폭은 호스팅 뷰의 크기 변화로 따라간다 (위 AppDelegate 단락, #116).
 
 ## 디자인 토큰
 
