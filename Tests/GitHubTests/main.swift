@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // Tests for the GitHub PR region (Decision #45): the pure judgements the
 // menu bar, hover and popover are made of — badge priority, the menu-bar
@@ -1619,6 +1620,24 @@ do {
 
     let spaced = GitHubAPIClient.mergeMessage("Pull\u{00A0}\u{00A0}Request\u{2003}is\u{3000}\u{3000}blocked")
     check("머지 메시지의 NBSP·U+2003·U+3000 연속 → 공백 하나", spaced == "Pull Request is blocked", spaced)
+}
+
+// MARK: #153 헤더 시계는 차단 해제 시각에도 다시 그린다
+
+print("▸ 헤더 시계 스케줄 (#153)")
+do {
+    func entries(_ schedule: HeaderClockSchedule, from start: Date, limit: Int = 10) -> [TimeInterval] {
+        Array(schedule.entries(from: start, mode: .normal).prefix(limit)).map { $0.timeIntervalSince(start) }
+    }
+    let held = entries(HeaderClockSchedule(until: now.addingTimeInterval(150)), from: now)
+    check("차단 중 → 매분, 마지막은 해제 시각", held == [0, 60, 120, 150], "\(held)")
+    check("항목은 단조 증가", zip(held, held.dropFirst()).allSatisfy { $0 < $1 }, "\(held)")
+    let exact = entries(HeaderClockSchedule(until: now.addingTimeInterval(120)), from: now)
+    check("해제 시각이 분 경계 → 중복 항목 없음", exact == [0, 60, 120], "\(exact)")
+    let idle = entries(HeaderClockSchedule(until: nil), from: now)
+    check("차단 아님 → 시작 항목 하나뿐", idle == [0], "\(idle)")
+    let over = entries(HeaderClockSchedule(until: now.addingTimeInterval(-5)), from: now)
+    check("이미 지난 해제 시각 → 시작 항목 하나뿐", over == [0], "\(over)")
 }
 
 print("")

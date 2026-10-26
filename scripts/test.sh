@@ -138,7 +138,8 @@ echo "▶ running auth tests"
 # its pure gh-value decoding; nothing here touches the Keychain. The click
 # split between the two status-item regions (#58) rides along here, and so
 # does `GitHubPresentation` — the connection badge, banner and token row the
-# popover and settings read (#117).
+# popover and settings read (#117). `PopoverHeader` rides along for the
+# header clock both popovers run on (#153).
 echo "▶ compiling github tests"
 swiftc -o "$OUT/github-tests" \
   "$APP/App/RegionClickRouting.swift" \
@@ -156,6 +157,7 @@ swiftc -o "$OUT/github-tests" \
   "$APP/Services/KeychainQueue.swift" \
   "$APP/Services/ResponseDate.swift" \
   "$APP/Services/TimeText.swift" \
+  "$APP/Views/PopoverHeader.swift" \
   "$ROOT/Tests/GitHubTests/main.swift"
 
 echo "▶ running github tests"

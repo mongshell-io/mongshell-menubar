@@ -193,12 +193,12 @@ struct PopoverView: View {
     /// The ⋯ menu's items are rebuilt from the header's body, so the minute
     /// clock wraps the whole header rather than the item — and ticks only
     /// while the manual refresh is blocked, since nothing else in it moves by
-    /// the minute. It shares the rate-limit banner's period so the two numbers
-    /// agree. Always the same TimelineView, so the open menu survives a limit
+    /// the minute, plus once when the block lifts. It shares the rate-limit
+    /// banner's period so the two numbers agree. Always the same TimelineView, so the open menu survives a limit
     /// starting or ending (#153).
     private var header: some View {
-        let blocked = model.presentation.manualRefreshBlockedUntil != nil
-        return TimelineView(HeaderClockSchedule(ticking: blocked)) { context in
+        let until = model.presentation.manualRefreshBlockedUntil
+        return TimelineView(HeaderClockSchedule(until: until)) { context in
             header(now: context.date)
         }
     }
