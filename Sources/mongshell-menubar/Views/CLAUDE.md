@@ -46,6 +46,8 @@ private var pulsing: Bool {
 | hover 요약 | `HoverSummaryView`, `GitHubHoverSummaryView` | 즉시 표시가 존재 이유다 — 지연을 만드는 애니메이션·비동기 로드 금지. hover 는 갱신을 일으키지 않는다 |
 | 클릭 팝오버 / 설정창 | `PopoverView`, `SettingsView`, `ClaudeSettingsSection`, `OpenClawSettingsSection`, `GitHubPopoverView`, `GitHubSettingsSection` | 정확한 숫자와 상세는 여기로 미룬다 |
 
+두 팝오버의 머리말(제목·연결 배지·⋯ 메뉴)과 배너는 `PopoverHeader`·`PopoverBanner` 를 함께 쓴다. ⋯ 메뉴의 "설정…"·"종료" 는 `PopoverHeader` 가 고정하고, 영역은 자기 항목만 넣는다 — 따로 구현하다 GitHub 메뉴에서 종료가 빠진 적이 있다(#74).
+
 메뉴바에 무언가를 더하려는 변경은 [docs/PHILOSOPHY.md](../../../docs/PHILOSOPHY.md) § Design Principles 1 을 먼저 통과해야 한다. Claude 사용량 외의 신호라면 같은 문서의 § Admission Criteria 도 통과해야 한다.
 
 ### 메뉴바 두 줄 스택
