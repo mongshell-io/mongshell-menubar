@@ -83,9 +83,9 @@ let weeklyReset = iso("2026-10-26T15:00:00+00:00")
 
 do {
     let snap = try UsageAPIClient.parse(response())
-    check("session → fiveHourPercent", snap.fiveHourPercent == 4, "\(snap.fiveHourPercent)")
+    check("session → fiveHourPercent", snap.fiveHourPercent == 4, String(describing: snap.fiveHourPercent))
     check("session → fiveHourResetAt", snap.fiveHourResetAt == sessionReset, "\(String(describing: snap.fiveHourResetAt))")
-    check("weekly_all → weeklyAllPercent", snap.weeklyAllPercent == 23, "\(snap.weeklyAllPercent)")
+    check("weekly_all → weeklyAllPercent", snap.weeklyAllPercent == 23, String(describing: snap.weeklyAllPercent))
     check("weekly_all → weeklyResetAt", snap.weeklyResetAt == weeklyReset, "\(String(describing: snap.weeklyResetAt))")
     check("weekly_scoped → one model row", snap.models.count == 1, "\(snap.models)")
     check("weekly_scoped → pretty name + percent",
@@ -167,12 +167,62 @@ do {
     {"five_hour": {"utilization": 64, "resets_at": "2026-10-21T06:10:00+00:00"},
      "seven_day": {"utilization": 23, "resets_at": "2026-10-26T15:00:00+00:00"}}
     """))
-    check("flat fallback → five_hour read", snap.fiveHourPercent == 64, "\(snap.fiveHourPercent)")
-    check("flat fallback → seven_day read", snap.weeklyAllPercent == 23, "\(snap.weeklyAllPercent)")
+    check("flat fallback → five_hour read", snap.fiveHourPercent == 64, String(describing: snap.fiveHourPercent))
+    check("flat fallback → seven_day read", snap.weeklyAllPercent == 23, String(describing: snap.weeklyAllPercent))
     check("flat fallback → no extra limits", snap.extraLimits.isEmpty, "\(snap.extraLimits)")
     check("flat fallback → no unknown buckets", snap.unknownTopLevel.isEmpty, "\(snap.unknownTopLevel)")
 } catch {
     check("flat response parses", false, "\(error)")
+}
+
+// MARK: (c2) a 5-hour/weekly limit the response no longer names is unread, not 0% (#130)
+
+do {
+    let renamed = try UsageAPIClient.parse(body("""
+    {"limits": [
+      {"kind":"session_v2","percent":64,"resets_at":"2026-10-21T06:10:00+00:00"},
+      {"kind":"weekly_all","percent":23,"resets_at":"2026-10-26T15:00:00+00:00"}]}
+    """))
+    check("renamed session kind → 5-hour unread, not 0%", renamed.fiveHourPercent == nil,
+          String(describing: renamed.fiveHourPercent))
+    check("renamed session kind → weekly still read", renamed.weeklyAllPercent == 23,
+          String(describing: renamed.weeklyAllPercent))
+    check("renamed session kind → snapshot reports an unread limit", renamed.hasUnreadLimit)
+
+    let noWeekly = try UsageAPIClient.parse(body("""
+    {"limits": [{"kind":"session","percent":64,"resets_at":"2026-10-21T06:10:00+00:00"}]}
+    """))
+    check("weekly_all missing → weekly unread, not 0%", noWeekly.weeklyAllPercent == nil,
+          String(describing: noWeekly.weeklyAllPercent))
+    check("weekly_all missing → 5-hour still read", noWeekly.fiveHourPercent == 64)
+
+    let noPercent = try UsageAPIClient.parse(body("""
+    {"limits": [{"kind":"session","resets_at":"2026-10-21T06:10:00+00:00"},
+                {"kind":"weekly_all","percent":"23%"}]}
+    """))
+    check("session row without a number → unread, not 0%",
+          noPercent.fiveHourPercent == nil && noPercent.weeklyAllPercent == nil,
+          "\(String(describing: noPercent.fiveHourPercent)) \(String(describing: noPercent.weeklyAllPercent))")
+
+    let empty = try UsageAPIClient.parse(body("{}"))
+    check("nothing recognisable → both unread", empty.fiveHourPercent == nil && empty.weeklyAllPercent == nil)
+
+    // The flat objects mirror session/weekly_all, so a renamed row falls
+    // back to its own window's flat object before giving up.
+    let mirrored = try UsageAPIClient.parse(body("""
+    {"five_hour": {"utilization": 41, "resets_at": "2026-10-21T06:10:00+00:00"},
+     "limits": [
+      {"kind":"session_v2","percent":64},
+      {"kind":"weekly_all","percent":23}]}
+    """))
+    check("renamed session kind with five_hour present → five_hour read",
+          mirrored.fiveHourPercent == 41 && mirrored.fiveHourResetAt == iso("2026-10-21T06:10:00+00:00"),
+          String(describing: mirrored.fiveHourPercent))
+    check("weekly_all row wins over the flat seven_day", mirrored.weeklyAllPercent == 23)
+
+    check("real response shape → nothing unread", !(try UsageAPIClient.parse(response())).hasUnreadLimit)
+} catch {
+    check("unread-limit responses parse", false, "\(error)")
 }
 
 // MARK: (d) unknown top-level objects are noted, null keys are not
@@ -698,8 +748,8 @@ do {
 do {
     let now = Date(timeIntervalSince1970: 1_790_000_000)
     let retryAt = now.addingTimeInterval(600)
-    func p(_ state: LoadState, _ source: DataSource?) -> UsagePresentation {
-        UsagePresentation(loadState: state, accountSource: source, now: now)
+    func p(_ state: LoadState, _ source: DataSource?, limitsUnread: Bool = false) -> UsagePresentation {
+        UsagePresentation(loadState: state, accountSource: source, limitsUnread: limitsUnread, now: now)
     }
 
     // #90 — the own login keeps "로그아웃" and never gets a login button
@@ -738,6 +788,17 @@ do {
     check("badges: limited / failed / syncing",
           p(.rateLimited(retryAt: retryAt), nil).badge == .limited
           && p(.error("x"), nil).badge == .failed && p(.loading, nil).badge == .syncing)
+
+    // #130 — a limit the response did not carry is explained, not shown as 0%.
+    check("loaded with an unread limit → the format banner, no button, still connected",
+          p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true).banner == .unreadLimits
+          && p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true).bannerAction == UsagePresentation.BannerAction.none
+          && p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true).badge == .connected)
+    check("unread limit outranks the CLI-account notice",
+          p(.loaded(.claudeCodeCLI), .claudeCodeCLI, limitsUnread: true).banner == .unreadLimits)
+    check("unread limit does not hide an error or a rate limit",
+          p(.error("x"), .oauthLogin, limitsUnread: true).banner == .failed("x")
+          && p(.rateLimited(retryAt: retryAt), .oauthLogin, limitsUnread: true).banner == .rateLimited(retryAt: retryAt))
 }
 
 // MARK: result

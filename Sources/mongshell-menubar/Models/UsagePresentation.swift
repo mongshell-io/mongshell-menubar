@@ -19,6 +19,9 @@ struct UsagePresentation: Equatable {
         case rateLimited(retryAt: Date)
         case failed(String)
         case cliAccount
+        /// Loaded, but the 5-hour or weekly limit was missing from the
+        /// response — its gauge is grey, not 0% (#130).
+        case unreadLimits
     }
 
     enum BannerAction: Equatable {
@@ -41,7 +44,8 @@ struct UsagePresentation: Equatable {
         switch banner {
         case .signedOut, .sessionExpired: return .signIn
         case .failed: return .retry
-        case .none, .loading, .rateLimited, .cliAccount: return .none
+        // Asking again would read the same shape; the next poll does anyway.
+        case .none, .loading, .rateLimited, .cliAccount, .unreadLimits: return .none
         }
     }
 
@@ -49,7 +53,10 @@ struct UsagePresentation: Equatable {
     /// the connection is doing — a 429, an error or a fetch in flight (#90).
     var offersSignOut: Bool { account == .ownLogin }
 
-    init(loadState: LoadState, accountSource: DataSource?, now: Date) {
+    /// `limitsUnread` is `UsageSnapshot.hasUnreadLimit` of the snapshot on
+    /// screen. It outranks the CLI-account notice — a gauge with no value is
+    /// what needs explaining — but not the states that have their own banner.
+    init(loadState: LoadState, accountSource: DataSource?, limitsUnread: Bool, now: Date) {
         switch loadState {
         case .loaded:                     badge = .connected
         case .loading:                    badge = .syncing
@@ -63,6 +70,7 @@ struct UsagePresentation: Equatable {
         case .loading:                    banner = .loading
         case .rateLimited(let retryAt):   banner = .rateLimited(retryAt: retryAt)
         case .error(let message):         banner = .failed(message)
+        case .loaded where limitsUnread:  banner = .unreadLimits
         case .loaded(.claudeCodeCLI):     banner = .cliAccount
         case .loaded:                     banner = .none
         }

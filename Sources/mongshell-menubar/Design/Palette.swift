@@ -10,6 +10,14 @@ enum Palette {
     static let amber = Color(hex: 0xD1962F)
     static let red   = Color(hex: 0xCF3B2C)
     static let mono  = Color(hex: 0x2B2B30)
+    /// A limit the response did not let us read (#130): grey, on both the
+    /// light popover and — as the adaptive secondary — the menu bar. Never a
+    /// risk color, and the same with color coding off: there is no value.
+    static let usageUnknown        = Color(hex: 0xC7C7CC)
+    static let menuBarUsageUnknown = Color.secondary
+    /// Dash and gap length of the unknown ring, in line widths — dashed so a
+    /// full grey ring is not read as 100% (or, empty, as 0%).
+    static let usageUnknownDash: CGFloat = 1.6
 
     // Popover text
     static let textPrimary   = Color(hex: 0x1D1D1F)
@@ -90,6 +98,15 @@ struct Meter {
     /// Color always reflects risk (how much is consumed), regardless of mode —
     /// or the mono fallback when color coding is off.
     var color: Color { Palette.statusColor(for: usedPercent, colorCoding: colorCoding) }
+}
+
+extension Palette {
+    /// The stroke of a ring with no value: dashes `usageUnknownDash` line
+    /// widths long, the same gap between them.
+    static func usageUnknownStroke(lineWidth: CGFloat) -> StrokeStyle {
+        let dash = lineWidth * usageUnknownDash
+        return StrokeStyle(lineWidth: lineWidth, dash: [dash, dash])
+    }
 }
 
 extension Color {

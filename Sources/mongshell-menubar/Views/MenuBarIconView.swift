@@ -9,8 +9,8 @@ struct MenuBarIconView: View {
     @ObservedObject var prefs: Preferences
     @ObservedObject var openClaw: OpenClawModel
 
-    private var fiveHourUsed: Int { model.snapshot.fiveHourPercent }
-    private var weeklyUsed: Int { model.snapshot.weeklyAllPercent }
+    private var fiveHourUsed: Int? { model.snapshot.fiveHourPercent }
+    private var weeklyUsed: Int? { model.snapshot.weeklyAllPercent }
 
     private var dots: OpenClawDots { OpenClawDots(prefs: prefs, openClaw: openClaw) }
 
@@ -28,8 +28,9 @@ struct MenuBarIconView: View {
 /// The bar's visual content, parameterized so the live menu bar and the
 /// offscreen snapshot renderer share one layout.
 struct MenuBarContent: View {
-    let fiveHourUsed: Int
-    let weeklyUsed: Int
+    /// nil = the response did not let us read it: a dashed grey ring.
+    let fiveHourUsed: Int?
+    let weeklyUsed: Int?
     let showRemaining: Bool
     let colorCoding: Bool
     let showPercent: Bool
@@ -87,11 +88,17 @@ struct MenuBarContent: View {
 
     /// A tiny ring gauge for one window (no number). Fill follows the display
     /// mode (consumed vs remaining); color always tracks risk (consumed).
-    private func ring(_ used: Int) -> some View {
-        let display = Meter(usedPercent: used, showRemaining: showRemaining, colorCoding: colorCoding).displayPercent
-        let color = colorCoding ? Palette.statusColor(for: used, colorCoding: true) : Color.primary
-        return MenuRing(percent: display, color: color)
-            .frame(width: 13, height: 13)
+    @ViewBuilder private func ring(_ used: Int?) -> some View {
+        if let used {
+            let display = Meter(usedPercent: used, showRemaining: showRemaining, colorCoding: colorCoding).displayPercent
+            let color = colorCoding ? Palette.statusColor(for: used, colorCoding: true) : Color.primary
+            MenuRing(percent: display, color: color)
+                .frame(width: 13, height: 13)
+        } else {
+            Circle()
+                .stroke(Palette.menuBarUsageUnknown, style: Palette.usageUnknownStroke(lineWidth: MenuRing.lineWidth))
+                .frame(width: 13, height: 13)
+        }
     }
 
     /// openclaw "아이콘 + 신호등": a paw glyph followed by the health-colored dot,
@@ -159,16 +166,18 @@ private enum StackedIndicator {
 
 /// A minimal ring gauge sized for the menu bar (top-start, clockwise fill).
 private struct MenuRing: View {
+    static let lineWidth: CGFloat = 2.2
+
     let percent: Int
     let color: Color
 
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.secondary.opacity(0.30), lineWidth: 2.2)
+                .stroke(Color.secondary.opacity(0.30), lineWidth: Self.lineWidth)
             Circle()
                 .trim(from: 0, to: max(0, min(1, CGFloat(percent) / 100)))
-                .stroke(color, style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                .stroke(color, style: StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         }
     }

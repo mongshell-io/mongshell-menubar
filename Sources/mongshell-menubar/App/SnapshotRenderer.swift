@@ -61,6 +61,12 @@ enum SnapshotRenderer {
             UsageModel.shared.presentForSnapshot(.sample, state: state)
             write(PopoverPreview(), to: base, "popover_usage_\(name)", scale: 2)
         }
+        // A response whose 5-hour row went missing: grey ring and the format
+        // banner, the weekly limit still read (#130).
+        var unread = UsageSnapshot.sample
+        unread.fiveHourPercent = nil
+        UsageModel.shared.presentForSnapshot(unread, state: .loaded(.oauthLogin))
+        write(PopoverPreview(), to: base, "popover_usage_unread_limits", scale: 2)
         UsageModel.shared.presentForSnapshot(.sample, state: .signedOut)
         OpenClawModel.shared.presentForSnapshot(
             .snapshotOK(now: now, host: .snapshotOnBattery), now: now)
@@ -297,17 +303,19 @@ private extension ServerHost {
 
 /// Menu-bar mock: Claude mark + `5h · 7d` text at three usage-level pairs, each
 /// with a different openclaw dot (ok / server unreachable / gateway down) so the
-/// grey-vs-red distinction is visible side by side.
+/// grey-vs-red distinction is visible side by side; last, an unread 5-hour
+/// limit (dashed grey ring, #130) next to a read weekly one.
 private struct MenuBarStrip: View {
     let scheme: ColorScheme
-    private let items: [(five: Int, weekly: Int, openClaw: OpenClawHealth)] = [
-        (12, 34, .ok(detail: "")),
-        (62, 45, .unreachable(detail: "")),
-        (95, 91, .down(detail: "")),
+    private let items: [(id: Int, five: Int?, weekly: Int?, openClaw: OpenClawHealth)] = [
+        (0, 12, 34, .ok(detail: "")),
+        (1, 62, 45, .unreachable(detail: "")),
+        (2, 95, 91, .down(detail: "")),
+        (3, nil, 34, .ok(detail: "")),
     ]
     var body: some View {
         HStack(spacing: 26) {
-            ForEach(items, id: \.five) { item in
+            ForEach(items, id: \.id) { item in
                 MenuBarContent(fiveHourUsed: item.five, weeklyUsed: item.weekly,
                                showRemaining: false, colorCoding: true,
                                showPercent: true,

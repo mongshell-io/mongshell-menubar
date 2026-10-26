@@ -49,15 +49,17 @@ struct UnknownBucket: Equatable {
 /// Note: the usage endpoint carries no peak/off-peak-pricing info, so this
 /// model deliberately omits it rather than fabricating an "Off-peak" label.
 struct UsageSnapshot: Equatable {
-    /// 5-hour rolling window usage, 0…100.
-    var fiveHourPercent: Int
+    /// 5-hour rolling window usage, 0…100. nil when the response carried no
+    /// readable value for it (a renamed `kind`, say) — never folded to 0, which
+    /// would draw a reassuring green ring over a limit nobody read (#130).
+    var fiveHourPercent: Int?
     /// Human text like "3시간 8분 후 초기화".
     var fiveHourResetText: String
     /// Raw reset instant of the 5-hour window — the menu bar formats this itself.
     var fiveHourResetAt: Date?
 
-    /// Weekly all-models usage, 0…100.
-    var weeklyAllPercent: Int
+    /// Weekly all-models usage, 0…100; nil when unread, as above.
+    var weeklyAllPercent: Int?
     /// e.g. "일요일 21:59 초기화".
     var weeklyResetText: String
     /// Raw reset instant of the weekly window.
@@ -74,6 +76,9 @@ struct UsageSnapshot: Equatable {
     var creditsText: String?
 
     var lastUpdated: Date
+
+    /// The 5-hour or the weekly limit could not be read from the response.
+    var hasUnreadLimit: Bool { fiveHourPercent == nil || weeklyAllPercent == nil }
 
     static let sample = UsageSnapshot(
         fiveHourPercent: 19,

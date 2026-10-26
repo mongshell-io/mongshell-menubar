@@ -71,7 +71,8 @@ final class UsageModel: ObservableObject {
 
     /// What the usage surfaces show and offer right now (#104).
     var presentation: UsagePresentation {
-        UsagePresentation(loadState: loadState, accountSource: accountSource, now: Date())
+        UsagePresentation(loadState: loadState, accountSource: accountSource,
+                          limitsUnread: snapshot.hasUnreadLimit, now: Date())
     }
 
     private var pollBase: Int { max(Config.minPollInterval, Preferences.shared.pollIntervalSeconds) }
@@ -199,7 +200,9 @@ final class UsageModel: ObservableObject {
         case .show(let snap):
             session.loaded(snap, source: source)
             logUnknownLimitsIfChanged(snap)
-            maybeNotify(percent: snap.fiveHourPercent)
+            // An unread 5-hour limit is not "under 25%": skipping it keeps the
+            // watch from re-arming and repeating a level already sent (#130).
+            if let five = snap.fiveHourPercent { maybeNotify(percent: five) }
         case .signOut:
             session.rejected(accessToken: token.accessToken)
         case .expireSession:

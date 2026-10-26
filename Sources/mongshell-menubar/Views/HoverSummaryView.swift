@@ -27,17 +27,21 @@ struct HoverSummaryView: View {
     /// One row: label · right-aligned percent · reset. Display number follows
     /// the consumed/remaining mode via `Meter`, the single source of truth
     /// shared with the gauges/popover; color-free text keeps this minimal.
-    private func row(window: String, used: Int, reset: String) -> some View {
-        let display = Meter(usedPercent: used, showRemaining: prefs.showRemaining,
-                            colorCoding: prefs.colorCoding).displayPercent
+    /// `used` nil = the response did not let us read it: a grey dash, not 0%.
+    private func row(window: String, used: Int?, reset: String) -> some View {
+        let display = used.map {
+            Meter(usedPercent: $0, showRemaining: prefs.showRemaining,
+                  colorCoding: prefs.colorCoding).displayPercent
+        }
         return GridRow {
             Text("\(window) \(modeLabel)")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
                 .gridColumnAlignment(.leading)
-            Text("\(display)%")
+            Text(display.map { "\($0)%" } ?? "—")
                 .font(.system(size: 12, weight: .semibold))
                 .monospacedDigit()
+                .foregroundStyle(display == nil ? HierarchicalShapeStyle.tertiary : .primary)
                 .gridColumnAlignment(.trailing)
             // Always emit the third cell (empty when no reset) so both rows
             // keep the same column count and stay aligned.

@@ -99,7 +99,9 @@ struct UsageAPIClient {
             throw APIError.badResponse
         }
 
-        var fivePct = 0, weeklyPct = 0
+        // nil until read: a limit the response no longer names stays unread
+        // rather than showing as 0% (#130).
+        var fivePct: Int?, weeklyPct: Int?
         var fiveReset: Date?, weeklyReset: Date?
         var models: [ModelUsage] = []
         var extraLimits: [ExtraLimit] = []
@@ -114,9 +116,9 @@ struct UsageAPIClient {
             let scopeModel = scopeModelName(limit).map(prettyModelName)
             switch limit["kind"] as? String {
             case "session":
-                fivePct = pct; fiveReset = reset
+                fivePct = percentValue(limit["percent"]); fiveReset = reset
             case "weekly_all":
-                weeklyPct = pct; weeklyReset = reset
+                weeklyPct = percentValue(limit["percent"]); weeklyReset = reset
             case "weekly_scoped":
                 models.append(ModelUsage(name: scopeModel ?? "모델", percent: pct))
             case let rawKind?:
@@ -137,12 +139,16 @@ struct UsageAPIClient {
             }
         }
 
-        // Fallback to the flat objects if `limits` is absent.
-        if limits.isEmpty {
-            let five = root["five_hour"] as? [String: Any]
-            let weekly = root["seven_day"] as? [String: Any]
-            fivePct = percentInt(five?["utilization"]); fiveReset = ResponseDate.parse(five?["resets_at"])
-            weeklyPct = percentInt(weekly?["utilization"]); weeklyReset = ResponseDate.parse(weekly?["resets_at"])
+        // The flat objects mirror session/weekly_all, so each is the
+        // fallback for its own window when `limits` is absent or no longer
+        // carries a readable row for it.
+        if fivePct == nil, let five = root["five_hour"] as? [String: Any],
+           let pct = percentValue(five["utilization"]) {
+            fivePct = pct; fiveReset = ResponseDate.parse(five["resets_at"])
+        }
+        if weeklyPct == nil, let weekly = root["seven_day"] as? [String: Any],
+           let pct = percentValue(weekly["utilization"]) {
+            weeklyPct = pct; weeklyReset = ResponseDate.parse(weekly["resets_at"])
         }
 
         return UsageSnapshot(
