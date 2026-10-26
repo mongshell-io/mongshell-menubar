@@ -79,7 +79,41 @@ enum Probe {
         if result.stdout.allSatisfy(\.isWhitespace) {
             return .unobserved(reason: silentReason(result.termination))
         }
+        // stderr is merged into the output, so the CLI failing on its own
+        // (node missing mid-`brew upgrade`, a broken install) is not silent —
+        // but it never asked the gateway anything. Judged `down`, two in a
+        // row kickstarted a healthy gateway (issue #152).
+        if let reason = cliFailureReason(result) { return .unobserved(reason: reason) }
         return .observed(verdict(fromOutput: result))
+    }
+
+    /// Exit codes the launcher (`env`, the shell) uses for "could not run the
+    /// command" — 127 not found, 126 not executable. openclaw itself never
+    /// got to run, whatever was printed.
+    static let launcherFailureExitCodes: Set<Int32> = [126, 127]
+
+    /// Explicit gateway-unreachable signals — the output means DOWN.
+    static let gatewayDownTokens = ["not reachable", "unreachable", "connection refused", "econnrefused"]
+    /// Substrings that only show up when openclaw got as far as talking about
+    /// the gateway. Built on the DOWN tokens so a real outage is always heard,
+    /// never dodged as unobserved.
+    static let gatewaySignalTokens = gatewayDownTokens + ["reachable"]
+
+    /// Why a probe that printed something still went unheard, or nil when
+    /// its output is the gateway's answer. The reason is logged — it never
+    /// echoes the CLI's raw output, which is not ours to publish.
+    private static func cliFailureReason(_ result: ProcessRunner.RunResult) -> String? {
+        if case .exited(let status) = result.termination, launcherFailureExitCodes.contains(status) {
+            return "openclaw CLI 를 실행하지 못함 (exit \(status))"
+        }
+        if result.termination == .exited(status: 0) { return nil }
+        let lower = result.stdout.lowercased()
+        if gatewaySignalTokens.contains(where: lower.contains) { return nil }
+        switch result.termination {
+        case .exited(let status): return "openclaw CLI 가 게이트웨이 응답 없이 비정상 종료 (exit \(status))"
+        case .signaled(let signal): return "openclaw CLI 가 게이트웨이 응답 없이 신호 \(signal)번으로 종료"
+        case .launchFailed, .unknown: return "openclaw CLI 가 게이트웨이 응답 없이 종료 (종료 상태 모름)"
+        }
     }
 
     private static func silentReason(_ termination: ProcessRunner.Termination) -> String {
@@ -99,12 +133,7 @@ enum Probe {
         // Explicit gateway-unreachable signals → DOWN. (Checked before the
         // positive "reachable" test below, since "not reachable"/"unreachable"
         // both contain the substring "reachable".)
-        if lower.contains("not reachable")
-            || lower.contains("unreachable")
-            || lower.contains("connection refused")
-            || lower.contains("econnrefused") {
-            return .down
-        }
+        if gatewayDownTokens.contains(where: lower.contains) { return .down }
 
         let channelLines = text
             .split(whereSeparator: \.isNewline)
@@ -114,7 +143,8 @@ enum Probe {
         // No parseable channel state. A clean exit that still reports the
         // gateway as reachable (real output: "Gateway reachable.") but lists no
         // channels is OK-but-empty; anything else (nonzero exit, or no positive
-        // reachable signal at all) is treated as the gateway being down.
+        // reachable signal at all) is treated as the gateway being down —
+        // a nonzero exit only gets here with a gateway signal in the output.
         if channelLines.isEmpty {
             if result.termination == .exited(status: 0) && lower.contains("reachable") {
                 return .ok(detail: "채널 없음")
@@ -130,7 +160,7 @@ enum Probe {
 
         // 🟢 if at least one channel is running and nothing above tripped.
         // NOTE: `disconnected` alone is normal between polls — never DOWN on it.
-        let running = channelLines.filter { $0.lowercased().contains("running") }
+        let running = channelLines.filter(lineIsRunning)
         if !running.isEmpty {
             return .ok(detail: publicDetail(running.map(channelName), fallback: "정상"))
         }
@@ -141,14 +171,15 @@ enum Probe {
     }
 
     /// A line describing a channel: the `- Telegram default: …` shape, or any
-    /// line carrying a status token.
+    /// line carrying a status token. `error:` alone doesn't make a channel
+    /// line — node's `Error: …` and stray warnings start that way too; on a
+    /// `- ` line it is still caught by `lineIsDegraded`.
     private static func isChannelLine(_ line: String) -> Bool {
         if line.hasPrefix("-") { return true }
         let lower = line.lowercased()
         return lower.contains("running")
             || lower.contains("stopped")
             || lower.contains("health:")
-            || lower.contains("error:")
             || lower.contains("disconnected")
     }
 
@@ -156,8 +187,29 @@ enum Probe {
     private static func lineIsDegraded(_ line: String) -> Bool {
         let lower = line.lowercased()
         return lower.contains("stopped")
-            || lower.contains("health:not-running")
             || lower.contains("error:")
+            || hasNotRunning(statusTokens(lower))
+    }
+
+    /// A channel says it is running: a whole `running` token not negated as
+    /// `not running` / `not-running` (`contains("running")` read both green).
+    private static func lineIsRunning(_ line: String) -> Bool {
+        let tokens = statusTokens(line.lowercased())
+        return tokens.indices.contains { i in
+            tokens[i] == "running" && (i == 0 || tokens[i - 1] != "not")
+        }
+    }
+
+    private static func hasNotRunning(_ tokens: [Substring]) -> Bool {
+        tokens.indices.contains { i in
+            tokens[i] == "not-running" || (tokens[i] == "running" && i > 0 && tokens[i - 1] == "not")
+        }
+    }
+
+    /// Words of a status line, split on anything but letters, digits and
+    /// `-` — so `health:not-running` yields `health`, `not-running`.
+    private static func statusTokens(_ lower: String) -> [Substring] {
+        lower.split { !($0.isLetter || $0.isNumber || $0 == "-") }
     }
 
     // MARK: Public detail
