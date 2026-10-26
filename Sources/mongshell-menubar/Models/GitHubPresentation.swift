@@ -30,9 +30,12 @@ struct GitHubPresentation: Equatable {
     /// The settings' token row. `rejected` is a 401 on that token.
     enum Token: Equatable {
         case pat(rejected: Bool)
-        /// A PAT just given could not be stored. The save deletes the old
-        /// item before adding the new one, so no PAT is left to be "in use"
-        /// or to clear (#124).
+        /// A PAT just given could not be stored (#124). What the Keychain
+        /// holds now is unknown — the save may have deleted the old item, or
+        /// failed to (locked, refused, an item another build owns) — but it
+        /// is not the token just given, so nothing is shown as "in use". No
+        /// clear button: clearing is the same delete that just failed. The
+        /// next refresh reads the Keychain again and the row follows it.
         case patSaveFailed(OSStatus)
         case ghAccount(String, rejected: Bool)
         case keychainDenied

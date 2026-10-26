@@ -1319,7 +1319,8 @@ do {
           [GitHubLoadState.loading, .rateLimited(retryAt: retryAt), .error("x")].allSatisfy {
               p($0, .pat).token == .pat(rejected: false) && p($0, .pat).tokenAction == .clearPAT
           })
-    // 저장은 옛 항목을 지운 뒤 추가하므로, 실패하면 "사용 중" 인 PAT 도 지울 PAT 도 없다 (#124).
+    // 저장이 실패하면 Keychain 에 무엇이 남았는지 알 수 없고 방금 준 토큰은 아니다 — "사용 중" 으로
+    // 보이지 않고, 방금 실패한 삭제와 같은 지우기 버튼도 두지 않는다. 다음 새로고침이 다시 읽는다 (#124).
     check("토큰: PAT 쓰던 중 patSaveFailed → 저장 실패, 버튼 없음 (#124)",
           p(.patSaveFailed(-25300), .pat).token == .patSaveFailed(-25300)
           && p(.patSaveFailed(-25300), .pat).tokenAction == .none)
