@@ -211,8 +211,11 @@ Sources/mongshell-menubar/
                             LoginItemService(SMAppService 로그인 항목 등록)
 
 Sources/mongshell-openclaw-agent/     서버 맥용 에이전트 (server/README.md)
-  main.swift                옵션 파싱 + probe → 복구 → 호스트 판정 → 상태 파일 쓰기 루프
+  main.swift                진입점 — 옵션 결과 처리·로그·게시(호스트 판정 + 상태 파일 쓰기)·루프
+  Options.swift             실행 인자 파싱 (순수 함수)
+  AgentCycle.swift          한 사이클: probe → 복구 → 재probe → 게시 (바깥 세계는 주입)
   Probe.swift               `openclaw channels status --probe` 실행·판정
+  ProcessRunner.swift       시간 제한 있는 외부 명령 실행 (새 프로세스 그룹, 정리)
   Heal.swift                자동복구 시점 판정, 게이트웨이 레이블 탐색·kickstart
   HostProbe.swift           전원(IOKit)·디스크 여유 읽기 + 호스트 판정 규칙(HostRules)
   StatusFile.swift          공개 상태 JSON 인코딩·원자적 쓰기

@@ -940,6 +940,13 @@ MainActor.assumeIsolated {
           w2.published.last?.lastHeal.map { $0.ok && $0.reason == "down" } == true && c2.lastHeal != nil)
     check("레이블은 복구 때만 찾는다", w2.labelLookups == 1)
 
+    var c7 = AgentCycle(autoHeal: true, lastHeal: nil)
+    let w7 = FakeWorld([down, down, down])
+    w7.kickstartOK = false
+    _ = c7.run(w7.world); _ = c7.run(w7.world)
+    check("kickstart 실패 → 실패로 게시 (클라이언트가 성공으로 보지 않는다)",
+          w7.published.last?.lastHeal.map { !$0.ok } == true)
+
     // The invariant main.swift relied on by hand: a heal whose re-probe went
     // unheard is still published — the next process reads its cooldown from
     // the file — and with the verdict and time from before the heal.
