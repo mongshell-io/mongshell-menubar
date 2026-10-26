@@ -1361,6 +1361,43 @@ do {
     check("영역 프레임 없음 → Claude", !go(260, nil, 52))
 }
 
+// MARK: #138 PR 행 보조 배지 · 막힘 개수
+// 뷰에 남아 있던 판정 — 보조 배지 목록과 그 순서, 팝오버 "내 PR" 의 막힘 개수.
+
+print("▸ 보조 배지 (PRSecondaryBadge)")
+do {
+    func badges(_ p: GitHubPullRequest) -> [PRSecondaryBadge] {
+        PRSecondaryBadge.of(p, verdict: PRVerdict.of(p))
+    }
+    check("검사 진행중: 롤업 PENDING 만으로도 (칩 없음)",
+          badges(pr(rollup: .pending)) == [.checksPending])
+    check("검사 진행중: 목록이 잘려 롤업이 SUCCESS 여도 도는 칩이 있으면",
+          badges(pr(rollup: .success, checks: [chk("build", .running, end: nil)])) == [.checksPending])
+    check("검사 진행중: 실패가 이긴 PR 이라도 대기 칩이 있으면",
+          badges(pr(rollup: .failure, checks: [chk("a", .failed), chk("b", .queued, end: nil)],
+                    complete: true)) == [.checksPending])
+    check("검사 끝 → 진행중 배지 없음", badges(pr(rollup: .success)) == [])
+    check("승인 + 판정이 다른 것(변경 요청 아님, Draft) → 보조 승인 배지",
+          badges(pr(draft: true, review: .approved)) == [.approved])
+    check("판정이 이미 승인 → 보조 승인 배지 없음",
+          PRSecondaryBadge.of(pr(review: .approved), verdict: .approved) == [])
+    check("판정이 머지 가능 → 보조 승인 배지 없음",
+          badges(pr(review: .approved, merge: .clean)) == [])
+    check("둘 다 (승인된 Draft, 검사 진행중) → 검사 진행중이 먼저",
+          badges(pr(draft: true, review: .approved, rollup: .pending)) == [.checksPending, .approved])
+}
+
+print("▸ 팝오버 막힘 개수 (glance.lines.blocked)")
+do {
+    let s = snap(mine: [pr("o/a", 1, mergeable: .conflicting), pr("o/b", 2, rollup: .failure),
+                        pr("o/c", 3, review: .changesRequested), pr("o/d", 4)])
+    let lines = GitHubGlance.of(s, state: .loaded(.pat), hidden: [], mergeActivity: [:]).lines
+    check("막힘 = 충돌·검사 실패·변경 요청", lines?.mine == 4 && lines?.blocked == 3)
+    let hiddenLines = GitHubGlance.of(s, state: .loaded(.pat), hidden: ["o/a"], mergeActivity: [:]).lines
+    check("숨긴 레포는 개수에서 빠진다 (목록과 같은 기준)",
+          hiddenLines?.mine == 3 && hiddenLines?.blocked == 2)
+}
+
 print("")
 if failures.isEmpty {
     print("✓ \(caseCount) cases passed")

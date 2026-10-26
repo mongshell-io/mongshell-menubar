@@ -99,6 +99,12 @@ struct GitHubPullRequest: Equatable, Identifiable, Sendable {
 
     /// The first failed check chip, for the hover line.
     var firstFailedCheck: PRCheck? { checks.first { $0.outcome == .failed } }
+
+    /// The PR's checks are pending (the same reading the badge uses), or a
+    /// chip is still going — the row's "검사 진행중" badge.
+    var checksPending: Bool {
+        effectiveChecks == .pending || checks.contains { $0.outcome.isPending }
+    }
 }
 
 // MARK: - Verdict
@@ -149,6 +155,23 @@ enum PRVerdict: Int, Comparable, Sendable {
             break
         }
         return approved ? .approved : .awaitingReview
+    }
+}
+
+/// The outlined badges after a row's verdict badge, in the order drawn.
+enum PRSecondaryBadge: Equatable, Sendable {
+    case checksPending
+    /// Approved, while the verdict says something else — a verdict that
+    /// already reads approved or mergeable doesn't say it twice.
+    case approved
+
+    static func of(_ pr: GitHubPullRequest, verdict: PRVerdict) -> [PRSecondaryBadge] {
+        var badges: [PRSecondaryBadge] = []
+        if pr.checksPending { badges.append(.checksPending) }
+        if pr.reviewDecision == .approved, verdict != .approved, verdict != .mergeable {
+            badges.append(.approved)
+        }
+        return badges
     }
 }
 

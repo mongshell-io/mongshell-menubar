@@ -30,10 +30,10 @@ struct GitHubPopoverView: View {
                 PopoverBanner(text: "토큰에 repo 권한이 없어 비공개 레포가 빠질 수 있어요",
                               tint: Palette.amber)
             }
-            if let snapshot = listedSnapshot {
+            if let snapshot = listedSnapshot, let lines = model.glance.lines {
                 prSection(title: "내 PR", prs: snapshot.mine,
                           cap: Config.githubSectionCaps.mine,
-                          countText: mineCountText(snapshot.mine),
+                          countText: mineCountText(lines),
                           section: .mine)
                 hairline
                 mergedSection(snapshot.recentlyMerged)
@@ -144,9 +144,10 @@ struct GitHubPopoverView: View {
 
     // MARK: PR sections
 
-    private func mineCountText(_ mine: [GitHubPullRequest]) -> String {
-        let blocked = mine.filter { PRVerdict.of($0).isBlocking }.count
-        return blocked > 0 ? "\(mine.count)건 · 막힘 \(blocked)" : "\(mine.count)건"
+    /// Counted by the glance, from the same hidden-filtered list the
+    /// section draws — the menu bar's blocked count and this one can't part.
+    private func mineCountText(_ lines: GitHubGlance.Lines) -> String {
+        lines.blocked > 0 ? "\(lines.mine)건 · 막힘 \(lines.blocked)" : "\(lines.mine)건"
     }
 
     /// One list: header with its count, then up to `cap` rows and a trailing
@@ -397,12 +398,14 @@ private struct PRRow: View {
     private var badges: some View {
         HStack(spacing: 5) {
             Badge(glyph: verdictGlyph, text: verdict.label, style: .fill(verdictTint))
-            if checksPending {
-                Badge(glyph: "circle.fill", glyphSize: Badge.dotGlyphSize, text: "검사 진행중",
-                      style: .line(.amber))
-            }
-            if pr.reviewDecision == .approved, verdict != .approved, verdict != .mergeable {
-                Badge(glyph: "checkmark", text: "승인", style: .line(.green))
+            ForEach(PRSecondaryBadge.of(pr, verdict: verdict), id: \.self) { badge in
+                switch badge {
+                case .checksPending:
+                    Badge(glyph: "circle.fill", glyphSize: Badge.dotGlyphSize, text: "검사 진행중",
+                          style: .line(.amber))
+                case .approved:
+                    Badge(glyph: "checkmark", text: "승인", style: .line(.green))
+                }
             }
             // Only rows that have one make room: every other row lays out as
             // before.
@@ -491,12 +494,6 @@ private struct PRRow: View {
     private func mergeClicked() {
         guard mergeFace == .button, let head = pr.headSHA else { return }
         onMerge(head)
-    }
-
-    /// The PR's checks are pending (the same reading the badge uses), or a
-    /// chip is still going.
-    private var checksPending: Bool {
-        pr.effectiveChecks == .pending || pr.checks.contains { $0.outcome.isPending }
     }
 
     private var verdictGlyph: String {
