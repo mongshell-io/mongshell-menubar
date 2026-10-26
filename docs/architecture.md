@@ -58,7 +58,7 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
 - 응답 스키마가 비공개라 `parse()` 는 후보 키 경로를 여러 개 탐색하고 채울 수 있는 것만 채운다.
 - `limits` 의 모르는 `kind` 는 버리지 않고 `extraLimits` 로 실어 팝오버의 7일 한도 아래에 그리고(설정 화면의 제한 초기화/보너스가 이 경로로 보인다), 최상위의 모르는 객체 키는 `unknownTopLevel` 로 실어 디버그 로그에만 남긴다 — 모르는 것의 집합이 바뀔 때 한 줄. 필터 규칙 셋: (1) 최상위 키 중 값이 null 인 것과 모양을 아는 것(`seven_day_breakdown`·`weekly_scoped_shares`·`member_dashboard_available`)은 세지 않고, 모르는 **객체** 키만 `unknownTopLevel` 에 든다. (2) 로그 줄은 kind·percent·resets_at(과 is_active·scope 모델명·utilization)만 담고 토큰·금액은 넣지 않는다. (3) 응답에서 온 문자열(`kind`·모델명·키 이름)은 `parse()` 에서 한 줄로 평탄화하고 글자 수 상한을 두며, `extraLimits`·`unknownTopLevel` 은 각각 개수 상한까지만 싣고 초과분은 버린다 — 상한값은 `Config`(`usageDisplayTextLimit`·`usageExtraLimitsCap`·`usageUnknownTopLevelCap`)가 권위다.
 - 토큰이 없으면 네트워크를 타지 않고 `UsageSnapshot.sample` 로 렌더한다.
-- 자체 토큰 갱신이 `400` + `invalid_grant` 로 실패하면 자체 토큰을 버리고 로그인 만료 안내(`LoadState.sessionExpired` — 배너, 알림은 한 번)를 띄운다. 다음 폴링은 Claude Code 토큰으로 넘어가고, 그 토큰이 없거나 `401` 이면 사용자가 다시 로그인하거나 로그아웃할 때까지 로그아웃 대신 이 안내를 유지한다. 그 밖의 실패(전송 오류·5xx·거부된 3xx·응답 크기 상한 초과)는 토큰을 유지하고 다음 폴링에 다시 시도한다.
+- 자체 토큰 갱신이 `400` + `invalid_grant` 로 실패하면 자체 토큰을 버리고 로그인 만료 안내(`LoadState.sessionExpired` — 배너, 알림은 한 번)를 띄운다. 다음 폴링은 Claude Code 토큰으로 넘어가고, 그 토큰이 없거나 `401` 이면 사용량 요청이 한 번 성공하거나 사용자가 다시 로그인·로그아웃할 때까지 로그아웃 대신 이 안내를 유지한다. 그 밖의 실패(전송 오류·5xx·거부된 3xx·응답 크기 상한 초과)는 토큰을 유지하고 다음 폴링에 다시 시도한다.
 - 사용량 요청이 `401` 이면: Claude Code 토큰은 바로 로그아웃으로 보이고 다음 폴링에 다시 읽는다. 자체 토큰은 한 번 갱신해 다시 요청한다 — 재요청의 두 번째 `401` 은 로그아웃으로, 갱신의 `invalid_grant` 는 로그인 만료 안내(`LoadState.sessionExpired`)로, 갱신이나 재요청의 일시 실패는 계정을 유지한 채 오류 배너로, 재요청의 `429` 는 위 백오프로 보인다. 재요청이 성공하면 일반 성공과 같이 임계 알림을 확인한다 (#92·#93·#95). 규칙은 `UsageRefreshPolicy` 가 권위다.
 
 ### 2. Claude Code 설정 편집 (양방향)
