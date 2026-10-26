@@ -221,7 +221,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 
 안 되면: `오류:` 로 시작하는 마지막 메시지를 [5-1](#5-1-installsh--uninstallsh-메시지별) 에서 찾는다. `경고:` 는 설치를 멈추지 않는다.
 
-- [ ] **게이트웨이 레이블 확인** — `▶ 게이트웨이 launchd 레이블 탐색` 아래 `→` 줄이 실제 게이트웨이 레이블인지 본다. 스크립트는 `~/Library/LaunchAgents` 의 plist 를 이름순으로 정렬해 **이름에 `claw` 가 들어간 첫 번째**(에이전트 자신 제외)를 고른다. `claw` 가 들어간 plist 가 여러 개면 엉뚱한 것이 잡힐 수 있다. 게이트웨이를 재설치해 레이블이 바뀌면 `install.sh` 를 다시 돌린다.
+- [ ] **게이트웨이 레이블 확인** — `▶ 게이트웨이 launchd 레이블 탐색` 아래 `→` 줄이 실제 게이트웨이 레이블인지 본다. 스크립트는 방금 빌드한 에이전트(`--print-gateway-label`)에 물어, `~/Library/LaunchAgents` 의 plist 를 이름순으로 정렬해 **이름에 `claw` 가 들어간 첫 번째**(에이전트 자신 제외)를 고른다 — 에이전트가 실행 중 쓰는 탐색 규칙과 같은 코드다. `claw` 가 들어간 plist 가 여러 개면 엉뚱한 것이 잡힐 수 있다. 게이트웨이를 재설치해 레이블이 바뀌면 `install.sh` 를 다시 돌린다.
   에이전트는 plist **파일 이름**을 레이블로 kickstart 하므로, 파일 이름과 plist 안의 `Label` 이 같고 launchd 에 실제로 로드돼 있어야 자동복구가 된다:
   ```bash
   LABEL=ai.openclaw.gateway     # 위 → 줄에 나온 값
@@ -586,14 +586,14 @@ cat ~/Library/Application\ Support/mongshell-openclaw-agent/status.json
 
 | # | 가정 (출처) | 실기 | 확인 방법 | 틀렸을 때 증상 |
 |---|---|---|---|---|
-| 1 | serve 설정이 비었을 때 `tailscale serve status --json` 은 빈 출력, JSON, 또는 `No serve config` 로 시작하는 문구다 (`lib.sh`) | 확인 — `{}` 가 나왔다 | **설치 전**에 `tailscale serve status --json; echo "exit $?"` | `'tailscale serve status --json' 출력이 JSON 이 아닙니다` 로 설치 중단 |
+| 1 | serve 설정이 비었을 때 `tailscale serve status --json` 은 빈 출력, JSON, 또는 `No serve config` 로 시작하는 한 줄뿐인 출력이다 (`lib.sh`) | 확인 — `{}` 가 나왔다 | **설치 전**에 `tailscale serve status --json; echo "exit $?"` | `'tailscale serve status --json' 출력이 JSON 이 아닙니다` 로 설치 중단 |
 | 1a | brew 판 tailscaled 에 operator 를 준 일반 사용자가 `tailscale status`·`serve status` 를 sudo 없이 쓸 수 있다 (이 문서 [B](#b-tailscale-오픈소스판-brew-formula) 단계) | 확인. 단 **파일을 서빙하는 funnel 설정은 operator 로도 거부**돼 `install.sh` 가 그 명령을 sudo 로 실행한다 | B 이후 `tailscale status` 와 `tailscale serve status` 가 sudo 없이 되는지 | `access denied`·권한 오류 |
 | 2 | serve JSON 구조가 `Web["<DNS 이름>:8443"].Handlers`, `TCP["8443"]`, `Foreground` 다 (`lib.sh` 의 해석) | `Web[…].Handlers` 는 확인 — 아래 명령이 `/<토큰>` 을 출력했다. `TCP[…].TCPForward`·`Foreground` 분기는 그런 설정이 없어 미확인 | **설치 후** repo 루트에서 아래 명령이 `/<토큰>` 한 줄을 출력하는지 | 빈 출력이면 스크립트가 경로를 못 본다 → 포트 점검이 무의미해지고, `--rotate-token`·uninstall 이 옛 경로를 "없음" 으로 보고 **해제 없이** 진행할 수 있다. 가장 중요한 확인 |
-| 3 | funnel 대상에 파일 경로를 주면 그 파일 하나를 `--set-path` 경로에 서빙한다 (`install.sh` §8) | 확인 (외부망 기기에서도) | 외부망에서 상태 URL 이 JSON 을 돌려주는지 ([F](#f-동작-확인)) | 404·빈 응답·디렉터리 목록 |
-| 4 | `--bg` 는 설정을 tailscaled 에 영구 저장한다 (`install.sh` §8) | 미확인 | `sudo brew services restart tailscale` 후 `tailscale funnel status` 와 외부망 URL 재확인 | 데몬 재시작·재부팅 뒤 ⚪ `주소 또는 토큰이 맞지 않습니다` 또는 연결 불가 |
-| 5 | `--yes` 는 버전에 따라 없을 수 있어 help 에 있을 때만 붙인다 (`install.sh` §8) | 미확인 | `tailscale funnel --help 2>&1 \| grep -E -- '--?yes'` | 없으면 `▶ tailscale funnel 설정` 에서 확인 프롬프트·브라우저 안내가 뜨고 멈춘 것처럼 보일 수 있다 — 화면 안내를 따른다 |
+| 3 | funnel 대상에 파일 경로를 주면 그 파일 하나를 `--set-path` 경로에 서빙한다 (`install.sh` §7) | 확인 (외부망 기기에서도) | 외부망에서 상태 URL 이 JSON 을 돌려주는지 ([F](#f-동작-확인)) | 404·빈 응답·디렉터리 목록 |
+| 4 | `--bg` 는 설정을 tailscaled 에 영구 저장한다 (`install.sh` §7) | 미확인 | `sudo brew services restart tailscale` 후 `tailscale funnel status` 와 외부망 URL 재확인 | 데몬 재시작·재부팅 뒤 ⚪ `주소 또는 토큰이 맞지 않습니다` 또는 연결 불가 |
+| 5 | `--yes` 는 버전에 따라 없을 수 있어 help 에 있을 때만 붙인다 (`install.sh` §7) | 미확인 | `tailscale funnel --help 2>&1 \| grep -E -- '--?yes'` | 없으면 `▶ tailscale funnel 설정` 에서 확인 프롬프트·브라우저 안내가 뜨고 멈춘 것처럼 보일 수 있다 — 화면 안내를 따른다 |
 | 6 | `funnel --https=8443 --set-path=/<토큰> off` 가 그 경로 하나만 해제하고, operator 를 준 사용자가 sudo 없이 실행할 수 있다 (`install.sh`·`uninstall.sh`) | 미확인 | `--rotate-token` 한 번 실행 → `tailscale funnel status` 에 새 경로만 있고, 외부망에서 옛 URL 이 404 | `옛 공개 경로 해제 실패` (권한 거부면 메시지의 명령 앞에 `sudo` 를 붙여 끈 뒤 재실행), `해제 명령은 성공했지만 옛 공개 경로가 남아 있습니다` (스크립트가 잡음), 또는 다른 경로까지 사라짐 |
-| 7 | 토큰 경로만 걸려 있으면 루트 `/` 는 404 다 (`install.sh` §9) | 확인 (서버 맥 자신에서만) | 외부망에서 `https://<DNS 이름>:8443/` | 설치 끝에서 `토큰 없는 … 가 NNN 를 돌려줍니다` 로 중단 |
+| 7 | 토큰 경로만 걸려 있으면 루트 `/` 는 404 다 (`install.sh` §8) | 확인 (서버 맥 자신에서만) | 외부망에서 `https://<DNS 이름>:8443/` | 설치 끝에서 `토큰 없는 … 가 NNN 를 돌려줍니다` 로 중단 |
 | 8 | (추정) 설치 스크립트의 URL 자가 확인은 서버 맥 자신에서 하므로 MagicDNS 가 tailnet 주소로 풀려 **Funnel(인터넷 경로)을 거치지 않았을 수 있다** | 자가 확인이 어느 경로를 탔는지는 미확인. 외부망 기기에서는 상태 URL 이 열렸다 | 반드시 외부망 기기로 [F](#f-동작-확인) | `→ 응답 확인` 이 나와도 외부에서는 안 열림 |
 | 9 | root 인 tailscaled 가 `~/Library/Application Support` 아래 파일을 권한 프롬프트 없이 읽는다 (`install.sh` DATA_DIR 주석) | 확인 (외부망 기기에서도) | 외부망 URL 이 JSON 을 돌려주는지 | `status.json` 은 갱신되는데 URL 이 오류(5xx·404)를 돌려줌 |
 

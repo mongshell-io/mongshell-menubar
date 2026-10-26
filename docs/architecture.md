@@ -105,7 +105,7 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
    └─ host 의 신호별 레벨이 오름 → ServerHostAlertWatch → 전원·디스크·CI 러너 알림 (첫 응답은 기준점, 쿨다운에 눌린 상승은 쿨다운 뒤로 미룸)
 ```
 
-- 게이트웨이 레이블은 설치 시 고정한다(`--gateway-label`). 에이전트 자신의 레이블은 탐색·명시 모두에서 제외된다.
+- 게이트웨이 레이블은 설치 시 고정한다(`--gateway-label`). 설치 스크립트는 탐색 규칙을 따로 갖지 않고 빌드한 에이전트에 묻는다(`--print-gateway-label`, #106). 에이전트 자신의 레이블은 탐색·명시 모두에서 제외된다.
 - 재시작 후에도 `status.json` 의 `lastHeal` 로 복구 쿨다운을 이어받는다.
 - 설치·제거는 `server/install.sh` / `server/uninstall.sh` (사용법: [server/README.md](../server/README.md)). 설치 옵션(주기·자동복구)은 데이터 폴더의 `options` 파일(`key=value`, 실행하지 않고 파싱)에 저장돼, 재실행 때 명시하지 않은 옵션은 지난 값을 이어받는다.
 

@@ -20,6 +20,7 @@ struct Options: Equatable {
           --no-auto-heal           자동복구 끄기
           --self-label <label>     이 에이전트의 launchd 레이블 (기본 \(defaultSelfLabel))
           --build-version <v>      상태 파일에 실을 빌드 버전 (install.sh 가 git 에서 정해 넘긴다)
+          --print-gateway-label    찾은 게이트웨이 레이블을 출력하고 끝낸다 (못 찾으면 빈 출력, install.sh 용)
         """
 
     var statusFile: URL
@@ -33,6 +34,9 @@ struct Options: Equatable {
     enum Parsed: Equatable {
         case run(Options)
         case help
+        /// Print the discovered gateway label and exit — `--self-label` still
+        /// applies, `--status-file` is not needed.
+        case printGatewayLabel(selfLabel: String)
         /// The message for the usage error; the caller prints it and exits.
         case invalid(String)
     }
@@ -46,6 +50,7 @@ struct Options: Equatable {
         var autoHeal = true
         var selfLabel = defaultSelfLabel
         var buildVersion: String?
+        var printGatewayLabel = false
 
         var rest = args[...]
         while let arg = rest.popFirst() {
@@ -75,12 +80,15 @@ struct Options: Equatable {
                 // bad stamp must not stop the watchdog.
                 guard let v = value() else { return .invalid("\(arg) 에 값이 필요합니다") }
                 buildVersion = v
+            case "--print-gateway-label":
+                printGatewayLabel = true
             case "-h", "--help":
                 return .help
             default:
                 return .invalid("알 수 없는 인자: \(arg)")
             }
         }
+        if printGatewayLabel { return .printGatewayLabel(selfLabel: selfLabel) }
         guard let statusFile else { return .invalid("--status-file 은 필수입니다") }
         return .run(Options(statusFile: statusFile, gatewayLabel: gatewayLabel,
                             interval: interval, autoHeal: autoHeal, selfLabel: selfLabel,
