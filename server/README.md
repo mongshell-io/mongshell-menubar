@@ -586,7 +586,7 @@ cat ~/Library/Application\ Support/mongshell-openclaw-agent/status.json
 
 | # | 가정 (출처) | 실기 | 확인 방법 | 틀렸을 때 증상 |
 |---|---|---|---|---|
-| 1 | serve 설정이 비었을 때 `tailscale serve status --json` 은 빈 출력, JSON, 또는 `No serve config` 로 시작하는 문구다 (`lib.sh`) | 확인 — `{}` 가 나왔다 | **설치 전**에 `tailscale serve status --json; echo "exit $?"` | `'tailscale serve status --json' 출력이 JSON 이 아닙니다` 로 설치 중단 |
+| 1 | serve 설정이 비었을 때 `tailscale serve status --json` 은 빈 출력, JSON, 또는 `No serve config` 로 시작하는 한 줄뿐인 출력이다 (`lib.sh`) | 확인 — `{}` 가 나왔다 | **설치 전**에 `tailscale serve status --json; echo "exit $?"` | `'tailscale serve status --json' 출력이 JSON 이 아닙니다` 로 설치 중단 |
 | 1a | brew 판 tailscaled 에 operator 를 준 일반 사용자가 `tailscale status`·`serve status` 를 sudo 없이 쓸 수 있다 (이 문서 [B](#b-tailscale-오픈소스판-brew-formula) 단계) | 확인. 단 **파일을 서빙하는 funnel 설정은 operator 로도 거부**돼 `install.sh` 가 그 명령을 sudo 로 실행한다 | B 이후 `tailscale status` 와 `tailscale serve status` 가 sudo 없이 되는지 | `access denied`·권한 오류 |
 | 2 | serve JSON 구조가 `Web["<DNS 이름>:8443"].Handlers`, `TCP["8443"]`, `Foreground` 다 (`lib.sh` 의 해석) | `Web[…].Handlers` 는 확인 — 아래 명령이 `/<토큰>` 을 출력했다. `TCP[…].TCPForward`·`Foreground` 분기는 그런 설정이 없어 미확인 | **설치 후** repo 루트에서 아래 명령이 `/<토큰>` 한 줄을 출력하는지 | 빈 출력이면 스크립트가 경로를 못 본다 → 포트 점검이 무의미해지고, `--rotate-token`·uninstall 이 옛 경로를 "없음" 으로 보고 **해제 없이** 진행할 수 있다. 가장 중요한 확인 |
 | 3 | funnel 대상에 파일 경로를 주면 그 파일 하나를 `--set-path` 경로에 서빙한다 (`install.sh` §7) | 확인 (외부망 기기에서도) | 외부망에서 상태 URL 이 JSON 을 돌려주는지 ([F](#f-동작-확인)) | 404·빈 응답·디렉터리 목록 |
