@@ -42,6 +42,12 @@ struct GitHubCredentialStore: Sendable {
     /// Replaces the PAT. Returns `SecItemAdd`'s status — `errSecSuccess`
     /// when the new token is stored — so the caller can say so instead of
     /// polling on as if it were.
+    ///
+    /// Delete then add, not an in-place update like the Claude token's: an
+    /// update would write the PAT into an item another process created
+    /// first, where the delete here is refused and the add fails instead.
+    /// A failed add can lose the old PAT, which the user can paste again
+    /// (Decision #109, #126).
     func savePAT(_ token: String) -> OSStatus {
         SecItemDelete(Self.ownItemQuery as CFDictionary)
         var attrs = Self.ownItemQuery

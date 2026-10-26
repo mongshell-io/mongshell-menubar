@@ -473,5 +473,6 @@
 - **결과**:
   - 공격 전제는 사용자 권한으로 이미 실행 중인 악성 프로세스다. 그 프로세스는 `~/.claude/.credentials.json` 과 `security` 로 열린 `Claude Code-credentials`·`gh:github.com` 을 원래부터 읽는다 (#68). 이 결정으로 새로 열리는 것은 자체 OAuth 토큰뿐이다.
   - 자체 GitHub PAT(`savePAT`)는 delete→add 라, 선점 항목이 있으면 delete 가 거부되고 add 가 `errSecDuplicateItem` 으로 실패한다. 값은 새지 않고 저장만 실패한다.
+  - **PAT 는 delete→add 로 둔다 (#126 기각, 2026-10-26).** 자체 OAuth 토큰처럼 제자리 교체로 바꾸면 add 가 실패할 때 쓰던 PAT 를 잃지 않지만, 선점 항목에 `repo` 권한(머지 가능, Decision #49) PAT 가 기록돼 바로 위 성질이 사라진다. 자체 OAuth 토큰을 제자리 교체로 바꾼 이유(#102)는 1회용 갱신 토큰을 잃으면 되찾을 수 없어서였는데, PAT 는 사용자가 원문을 갖고 있어 다시 붙여넣으면 된다 — 그 불편을 덜려고 노출 범위를 넓히지 않는다. 저장 실패 뒤 Keychain 에 무엇이 남았는지 알 수 없는 것은 토큰 행이 그대로 말한다 (#124).
 - **트레이드오프**: 같은 사용자로 도는 악성 코드가 자체 OAuth 토큰(그리고 그 refresh token)을 가져갈 수 있다.
 - **폐기 조건**: 앱을 남에게 배포하거나(Developer ID 경로, Decision 3), 프로비저닝 프로파일을 빌드에 넣을 이유가 따로 생기면 Data Protection 키체인 전환을 다시 검토한다.
