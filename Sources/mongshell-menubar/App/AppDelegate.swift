@@ -121,7 +121,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // QA hook: render reference PNGs offscreen, then exit.
         if SnapshotRenderer.runIfRequested() {
-            DispatchQueue.main.async { NSApp.terminate(nil) }
+            // Not `DispatchQueue.main.async`: `applicationShouldTerminate`
+            // answers `.terminateLater` and its reply arrives through the
+            // main queue, which a nested run loop cannot service while it is
+            // itself inside a main-queue block — the run would never exit.
+            RunLoop.main.perform { MainActor.assumeIsolated { NSApp.terminate(nil) } }
             return
         }
 

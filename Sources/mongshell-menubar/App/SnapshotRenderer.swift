@@ -18,6 +18,7 @@ private final class OffscreenWindow: NSWindow {
 enum SnapshotRenderer {
     static func runIfRequested() -> Bool {
         guard let dir = ProcessInfo.processInfo.environment["MONGSHELL_SNAPSHOT"] else { return false }
+        failUnlessQuitInTime()
         let base = URL(fileURLWithPath: dir)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
 
@@ -257,6 +258,23 @@ enum SnapshotRenderer {
             try png.write(to: dir.appendingPathComponent("\(name).png"))
         } catch {
             report("\(name): \(error)")
+        }
+    }
+
+    /// The run quits through `applicationShouldTerminate`, whose reply can be
+    /// held up — #141 once left every PNG written and the process running
+    /// forever. Past this deadline the run exits non-zero, so a hang reads as
+    /// a failure instead of a command that never returns. The clock starts
+    /// with the run, so it also bounds rendering (~5s).
+    private nonisolated static let quitDeadlineSeconds: TimeInterval = 30
+
+    /// Off the main queue on purpose: a held-up quit is the main queue that
+    /// stopped being serviced.
+    private nonisolated static func failUnlessQuitInTime() {
+        DispatchQueue.global().asyncAfter(deadline: .now() + quitDeadlineSeconds) {
+            FileHandle.standardError.write(Data(
+                "snapshot: did not quit within \(Int(quitDeadlineSeconds))s — exiting 1\n".utf8))
+            exit(1)
         }
     }
 
