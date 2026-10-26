@@ -531,6 +531,18 @@ do {
     let selfExplicit = Launchd.gatewayLabel(explicit: selfLabel, selfLabel: selfLabel, in: dir)
     check("--gateway-label == self → 무시하고 탐색", selfExplicit == "com.zzz.claw-gateway", selfExplicit)
 
+    // openclaw may install other *claw* services; one sorting ahead of the
+    // documented gateway label must not win while that label's plist exists (#156).
+    touch("ai.openclaw.browser.plist")
+    touch("\(Launchd.defaultGatewayLabel).plist")
+    let preferred = Launchd.gatewayLabel(explicit: nil, selfLabel: selfLabel, in: dir)
+    check("기본 레이블 plist 가 있으면 정렬상 앞선 *claw* 보다 우선", preferred == Launchd.defaultGatewayLabel, preferred)
+    check("탐색만 해도 기본 레이블 우선 (install.sh 가 이 값을 쓴다)",
+          Launchd.discoveredGatewayLabel(selfLabel: selfLabel, in: dir) == Launchd.defaultGatewayLabel)
+    let defaultIsSelf = Launchd.discoveredGatewayLabel(selfLabel: Launchd.defaultGatewayLabel, in: dir)
+    check("기본 레이블이 자기 레이블이면 우선하지 않고 정렬 탐색", defaultIsSelf == "ai.openclaw.browser",
+          defaultIsSelf ?? "nil")
+
     let missing = Launchd.gatewayLabel(
         explicit: nil, selfLabel: selfLabel, in: root.appendingPathComponent("nope"))
     check("디렉토리 없음 → 기본값", missing == Launchd.defaultGatewayLabel, missing)
