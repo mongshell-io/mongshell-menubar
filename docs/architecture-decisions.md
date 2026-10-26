@@ -481,7 +481,7 @@
 
 ## Decision #150: `UsageModel` 의 외부 경계를 주입해 await 사이 순서를 테스트한다
 
-- **도입**: 미정 (#150)
+- **도입**: v1.4.1 (#150)
 - **컨텍스트**: #141 로 Keychain 호출이 메인 밖으로 나가면서 `UsageModel` 의 await 마다 로그인·로그아웃·[다시 허용]·다른 refresh 가 끼어들 수 있게 됐고, 모델은 await 뒤 로그인 세대를 다시 확인해 그것을 막는다 (Models/CLAUDE.md § `@MainActor` 격리). 그 확인의 위치를 지키는 테스트가 없었다 — `scripts/test.sh` 는 모델이 `AuthService`(AppKit)·`Notifier`(UserNotifications)·`Preferences`(SwiftUI `@AppStorage`)·실제 Keychain 을 직접 불러 모델 파일을 컴파일하지 못했고, 판정은 순수 타입(`UsageRefreshPolicy`·`UsageSession`)으로만 고정됐다. v1.4.1 두 번째 점검의 architect 리뷰와 독립 diff 리뷰가 둘 다 "새 await 하나에 세대 확인을 빼먹어도 테스트가 통과한다" 를 다음 결함의 가장 유력한 경로로 짚었다.
 - **결정**: 모델이 바깥과 닿는 지점 — `CredentialStore` 의 읽기·저장·삭제·Claude Code 토큰 읽기, `AuthService` 의 로그인·갱신, `UsageAPIClient.fetch`, `Notifier`, 모델이 읽는 설정 둘 — 을 `UsageModel.Boundaries` 클로저 묶음 하나로 받는다. 실앱 값 `.live` 와 `shared` 는 `UsageModelLive.swift` 에 따로 두고, `scripts/test.sh` 의 `usage-model-tests` 가 실제 `UsageModel.swift` 를 가짜 경계와 함께 컴파일한다. 가짜 Keychain 은 `KeychainQueue` 처럼 부른 순서대로 효과를 내고(답은 그때 정해진다) 답만 붙잡아 두며, 테스트가 그 답을 붙잡은 채 다른 동작을 끝까지 돌린 뒤 놓아 줘 끼어들기를 결정적으로 재현한다.
 - **이유**: Decision #11-1 의 "사본이 아니라 배포되는 코드 그대로" 와 양립한다 — 컴파일되는 것은 배포되는 모델 파일 그 자체이고, 바뀌는 것은 그 파일이 부르는 바깥뿐이다. 가짜로 대신하는 경계는 원래 테스트 번들에 넣을 수 없던 것(실제 Keychain·네트워크·AppKit·알림 센터)이라 잃는 검증이 없다. 대안은 둘이었다. (a) 프로토콜 계층(`CredentialStoring` 등)과 DI — 구현이 하나뿐인 경계마다 프로토콜을 세우는 선추상화이고(docs/code-standards.md § 국소성), 1인 운영에 갈아낄 구현이 생길 계획도 없다. (b) 모델 흐름을 순수 타입으로 더 떼어 내기 — await 사이 순서는 모델의 await 자리 자체라 떼어 낼 수 없다.
