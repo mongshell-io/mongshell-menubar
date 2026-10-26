@@ -27,11 +27,13 @@ non_goals:
 - 오래 걸리는 일은 `Task` 안에서 `await` 로 넘기고, 결과를 받아 `@Published` 를 갱신하는 지점만 메인에 남긴다.
 - 폴링 루프는 `Task` 하나로 소유하고, 재시작 시 **이전 태스크를 반드시 취소**한다 (`pollTask?.cancel()`). 취소 없이 새로 만들면 루프가 중첩된다.
 - `Task.isCancelled` 를 루프 조건에 넣는다.
-- Keychain 호출(`Services/` 의 `async` 진입점)을 await 한 뒤에는 그 사이 상태가 바뀌었을 수 있다는 전제로 세대(`UsageModel.loginGeneration`, `GitHubModel.generation`)를 다시 확인하고, 바뀌었으면 읽은 것을 버린다 (#141). 규칙은 [docs/architecture.md § 1. 사용량 폴링](../../../docs/architecture.md#1-사용량-폴링-주-경로) · [§ 4. GitHub PR 폴링](../../../docs/architecture.md#4-github-pr-폴링-선택-경로) 이 권위다.
+- Keychain 호출(`Services/` 의 `async` 진입점)을 await 한 뒤에는 그 사이 상태가 바뀌었을 수 있다는 전제로 세대(`UsageModel.loginGeneration`, `GitHubModel.generation`)를 다시 확인하고, 바뀌었으면 읽은 것을 버린다 (#141). `UsageModel` 에서는 그 위치를 `scripts/test.sh` 의 순서 테스트(`Tests/UsageModelTests`)가 고정한다 — 새 await 를 넣으면 거기에 끼어들기 시나리오도 더한다 (#150). `loginGeneration` 을 올리는 곳은 모두 `UsageSession.declineLifts` 도 올린다 — 취소 기억 판정이 해제 횟수만 보기 때문이다. 규칙은 [docs/architecture.md § 1. 사용량 폴링](../../../docs/architecture.md#1-사용량-폴링-주-경로) · [§ 4. GitHub PR 폴링](../../../docs/architecture.md#4-github-pr-폴링-선택-경로) 이 권위다.
 
 ## 싱글턴
 
 `UsageModel.shared` / `Preferences.shared` / `OpenClawModel.shared` / `ClaudeSettingsModel.shared` 는 의도된 싱글턴이다 — AppKit 호스트와 SwiftUI 뷰가 **같은 인스턴스를 관찰해야** 하기 때문. 새 싱글턴을 늘리지 않는다. 그 이유가 없는 상태는 소유자에게 주입한다 — `LoginItemModel` 이 그 선례이고, `GitHubModel`(Decision #45)도 같다: AppDelegate 가 만들어 소유하고 메뉴바·hover·팝오버·설정 뷰에 넘긴다. AppDelegate 가 모든 뷰를 만들므로 "같은 인스턴스" 는 주입으로 성립한다.
+
+`UsageModel` 의 외부 경계(Keychain·OAuth·사용량 API·알림·읽는 설정 둘)는 `UsageModel.Boundaries` 클로저 묶음 하나로 주입되고, 실앱 값 `.live` 와 `shared` 는 `UsageModelLive.swift` 에 있다 — 테스트 번들이 `UsageModel.swift` 를 AppKit·UserNotifications 없이 컴파일하도록 (Decision #150). `init(boundaries:)` 로 인스턴스를 더 만드는 곳은 순서 테스트뿐이다. 경계를 더할 때는 이 묶음에 클로저를 하나 늘린다 — 프로토콜 계층을 세우지 않는다.
 
 ## 쓰기 가능 상태는 `private(set)`
 

@@ -36,6 +36,7 @@
 | #81 | 서버 에이전트 버전을 git 에서 찍어(`v1.2.0` / `v1.2.0+N`) 상태 문서 `agentVersion` 으로 싣고 팝오버에 보인다 | active |
 | #100 | 서버 에이전트를 이 repo 의 두 번째 제품으로 — PHILOSOPHY 에 가치·범위·원칙을 두고, repo·패키지는 하나로 유지 | active |
 | #109 | 자체 Keychain 항목을 같은 사용자 프로세스가 선점할 수 있음을 수용한다 — 레거시 키체인 유지, DP 키체인 미도입 (PAT 제자리 교체 기각은 #126) | active (의식적 수용) |
+| #150 | `UsageModel` 의 외부 경계를 클로저 묶음 하나로 주입해 await 사이 순서를 테스트한다 — 실제 모델 소스를 가짜 경계와 직접 컴파일 | active |
 
 ---
 
@@ -476,3 +477,17 @@
 - **트레이드오프**: 같은 사용자로 도는 악성 코드가 자체 OAuth 토큰(그리고 그 refresh token)을 가져갈 수 있다.
 - **폐기 조건**: 앱을 남에게 배포하거나(Developer ID 경로, Decision 3), 프로비저닝 프로파일을 빌드에 넣을 이유가 따로 생기면 Data Protection 키체인 전환을 다시 검토한다.
 - **후속 (#126)**: GitHub PAT 저장도 자체 OAuth 토큰처럼 제자리 교체로 바꾸자는 제안을 기각하고 delete→add 로 둔다 (2026-10-26). 제자리 교체는 add 가 실패할 때 쓰던 PAT 를 잃지 않게 해 주지만, 선점 항목에 `repo` 권한 PAT(비공개 레포 읽기·쓰기 전체 — 이 앱은 머지에 쓴다, Decision #49)가 기록돼 위 결과의 "값은 새지 않고 저장만 실패한다" 가 사라진다. 자체 OAuth 토큰을 제자리 교체로 바꾼 이유(#102)는 1회용 갱신 토큰을 잃으면 되찾을 수 없어서였는데, PAT 는 사용자가 원문을 갖고 있어 다시 붙여넣으면 된다 — 그 불편을 덜려고 노출 범위를 넓히지 않는다. 저장 실패 뒤 Keychain 에 무엇이 남았는지 알 수 없는 것은 토큰 행이 그대로 말한다 (#124).
+
+## Decision #150: `UsageModel` 의 외부 경계를 주입해 await 사이 순서를 테스트한다
+
+- **도입**: 미정 (#150)
+- **컨텍스트**: #141 로 Keychain 호출이 메인 밖으로 나가면서 `UsageModel` 의 await 마다 로그인·로그아웃·[다시 허용]·다른 refresh 가 끼어들 수 있게 됐고, 모델은 await 뒤 로그인 세대를 다시 확인해 그것을 막는다 (Models/CLAUDE.md § `@MainActor` 격리). 그 확인의 위치를 지키는 테스트가 없었다 — `scripts/test.sh` 는 모델이 `AuthService`(AppKit)·`Notifier`(UserNotifications)·`Preferences`(SwiftUI `@AppStorage`)·실제 Keychain 을 직접 불러 모델 파일을 컴파일하지 못했고, 판정은 순수 타입(`UsageRefreshPolicy`·`UsageSession`)으로만 고정됐다. v1.4.1 두 번째 점검의 architect 리뷰와 독립 diff 리뷰가 둘 다 "새 await 하나에 세대 확인을 빼먹어도 테스트가 통과한다" 를 다음 결함의 가장 유력한 경로로 짚었다.
+- **결정**: 모델이 바깥과 닿는 지점 — `CredentialStore` 의 읽기·저장·삭제·Claude Code 토큰 읽기, `AuthService` 의 로그인·갱신, `UsageAPIClient.fetch`, `Notifier`, 모델이 읽는 설정 둘 — 을 `UsageModel.Boundaries` 클로저 묶음 하나로 받는다. 실앱 값 `.live` 와 `shared` 는 `UsageModelLive.swift` 에 따로 두고, `scripts/test.sh` 의 `usage-model-tests` 가 실제 `UsageModel.swift` 를 가짜 경계와 함께 컴파일한다. 가짜 Keychain 은 `KeychainQueue` 처럼 부른 순서대로 효과를 내고(답은 그때 정해진다) 답만 붙잡아 두며, 테스트가 그 답을 붙잡은 채 다른 동작을 끝까지 돌린 뒤 놓아 줘 끼어들기를 결정적으로 재현한다.
+- **이유**: Decision #11-1 의 "사본이 아니라 배포되는 코드 그대로" 와 양립한다 — 컴파일되는 것은 배포되는 모델 파일 그 자체이고, 바뀌는 것은 그 파일이 부르는 바깥뿐이다. 가짜로 대신하는 경계는 원래 테스트 번들에 넣을 수 없던 것(실제 Keychain·네트워크·AppKit·알림 센터)이라 잃는 검증이 없다. 대안은 둘이었다. (a) 프로토콜 계층(`CredentialStoring` 등)과 DI — 구현이 하나뿐인 경계마다 프로토콜을 세우는 선추상화이고(docs/code-standards.md § 국소성), 1인 운영에 갈아낄 구현이 생길 계획도 없다. (b) 모델 흐름을 순수 타입으로 더 떼어 내기 — await 사이 순서는 모델의 await 자리 자체라 떼어 낼 수 없다.
+- **결과**:
+  - 시나리오마다 그것을 지키는 가드를 지우면 실패한다 (세대 확인 7곳, 취소 기억의 해제 확인, `lapseIsNews` 를 `expired` 보다 먼저 읽기·이미 알린 토큰 기억, `refreshInFlight` 와 후속 루프). 시나리오 목록은 [docs/development.md § 테스트](development.md#테스트) 가 권위다.
+  - `UsageRefreshPolicy.declined` 의 `sameLogin` 은 `sameAllowance` 에 포함돼 지웠다 — 로그인 세대를 올리는 곳은 모두 `declineLifts` 도 올리며, 그 불변식을 이 테스트가 고정한다.
+  - `Boundaries` 의 Keychain 클로저는 `CredentialStore` 진입점처럼 `nonisolated(nonsending)` 이다. 가짜는 메인에서 돌아 이 수식어가 빠져도 보지 못하므로 `scripts/test.sh` 의 grep 게이트가 확인한다.
+  - `refreshOnce()` 는 테스트가 refresh 하나를 끝까지 기다리도록 `private` 이 아니다.
+- **트레이드오프**: 모델이 바깥을 부르는 곳이 한 겹 간접이 된다 — 호출부에서 "여기가 Keychain" 이 이름(`boundaries.…`)으로만 보인다. 새 외부 호출을 더하면 `Boundaries` 와 `.live`, 테스트의 가짜 세 곳을 함께 고친다. 가짜가 실제 Keychain 의 순서 성질을 흉내 낼 뿐이라, `KeychainQueue` 자체의 순서는 `usage-tests` 의 큐 테스트가 따로 지킨다.
+- **폐기 조건**: `UsageModel` 이 Keychain 을 메인에서 동기로 다시 부르게 되거나(await 사이 끼어들기가 사라짐), XCTest 를 쓸 수 있게 돼 테스트 러너가 바뀌면 다시 본다.
