@@ -285,6 +285,18 @@ enum UsageRefreshPolicy {
         return result == .cancelled || declined
     }
 
+    // MARK: A declined prompt for the Claude Code CLI item (#155)
+
+    /// The CLI item's decline, under the own item's rules: set by the
+    /// prompt's answer, lifted only by the user acting, and an answer from a
+    /// read that went out before a lift does not set it again. While it
+    /// stands the read leaves the Keychain item alone
+    /// (`readingKeychain: false`), so a skipped read cannot lift it either.
+    static func declined(_ declined: Bool, afterReadingCLI read: ClaudeCodeTokenRead, sameAllowance: Bool) -> Bool {
+        guard sameAllowance else { return declined }
+        return read.keychainDeclined || declined
+    }
+
     static func shouldRenewUpFront(source: DataSource, tokenExpired: Bool) -> Bool {
         source == .oauthLogin && tokenExpired
     }

@@ -76,6 +76,10 @@ enum SnapshotRenderer {
                                                  holdsUnsavedLogin: state == .loaded(.oauthLogin))
             write(PopoverPreview(), to: base, "popover_usage_keychain_declined_\(name)", scale: 2)
         }
+        // Only the Claude Code CLI item's prompt declined (#155), nothing
+        // else to poll with: the same banner on the sample, [다시 허용].
+        UsageModel.shared.presentForSnapshot(sample, state: .signedOut, cliKeychainDeclined: true)
+        write(PopoverPreview(), to: base, "popover_usage_cli_keychain_declined_sample", scale: 2)
         // The remembered decline with a 5-hour row gone missing: the format
         // problem is added to the declined banner, not hidden by it (#146).
         for (state, name) in [(LoadState.loaded(.claudeCodeCLI), "cli_account"), (.loaded(.oauthLogin), "held_login")] {

@@ -649,17 +649,22 @@ do {
     d.rateLimited(retryAfter: nil, now: now, pollBase: 180)
     d.expired(refreshTokens: ["r1"], now: now)
     d.loaded(snap, source: .claudeCodeCLI)
-    check("polls do not lift a remembered decline", d.keychainDeclined)
+    d.setCLIKeychainDeclined(true)
+    d.noToken(now: now)
+    d.loaded(snap, source: .claudeCodeCLI)
+    check("polls do not lift a remembered decline", d.keychainDeclined && d.cliKeychainDeclined)
     var d1 = d
     d1.allowKeychainAgain()
-    check("signing in or a manual refresh lifts it", !d1.keychainDeclined)
+    check("signing in or a manual refresh lifts it — both items (#155)", !d1.keychainDeclined && !d1.cliKeychainDeclined)
     var d2 = d
     d2.signedOut(now: now)
+    check("signing out lifts the CLI item's decline too (#155)", !d2.cliKeychainDeclined)
     check("signing out lifts it — the login banner, not 다시 허용, after the item is gone",
           !d2.keychainDeclined
           && UsagePresentation(loadState: d2.loadState, accountSource: d2.accountSource,
                                limitsUnread: false, keychainDeclined: d2.keychainDeclined,
-                               holdsUnsavedLogin: false, now: now).banner
+                               cliKeychainDeclined: d2.cliKeychainDeclined, holdsUnsavedLogin: false,
+                               now: now).banner
               == .signedOut)
 
     var p = UsageSession()
@@ -828,9 +833,10 @@ do {
     let now = Date(timeIntervalSince1970: 1_790_000_000)
     let retryAt = now.addingTimeInterval(600)
     func p(_ state: LoadState, _ source: DataSource?, limitsUnread: Bool = false,
-           declined: Bool = false, held: Bool = false) -> UsagePresentation {
+           declined: Bool = false, cliDeclined: Bool = false, held: Bool = false) -> UsagePresentation {
         UsagePresentation(loadState: state, accountSource: source, limitsUnread: limitsUnread,
-                          keychainDeclined: declined, holdsUnsavedLogin: held, now: now)
+                          keychainDeclined: declined, cliKeychainDeclined: cliDeclined,
+                          holdsUnsavedLogin: held, now: now)
     }
 
     // #90 — the own login keeps "로그아웃" and never gets a login button
@@ -917,6 +923,15 @@ do {
           p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).badge == .connected
           && p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).account == .cliAccount
           && p(.signedOut, nil, declined: true).badge == .sample)
+    // #155 — the CLI item's decline says so where it is why the sample is up.
+    check("CLI item declined, nothing to poll with → the declined banner on the sample, 다시 허용",
+          p(.signedOut, nil, cliDeclined: true).banner == .keychainDeclined(.sample, limitsUnread: false)
+          && p(.signedOut, nil, cliDeclined: true).bannerAction == .allowKeychain
+          && p(.signedOut, nil, declined: true, cliDeclined: true).banner == .keychainDeclined(.sample, limitsUnread: false))
+    check("CLI item declined does not speak over the own login, a CLI file token or a lapsed login",
+          p(.loaded(.oauthLogin), .oauthLogin, cliDeclined: true).banner == UsagePresentation.Banner.none
+          && p(.loaded(.claudeCodeCLI), .claudeCodeCLI, cliDeclined: true).banner == .cliAccount
+          && p(.sessionExpired, nil, cliDeclined: true).banner == .sessionExpired)
     check("not declined → the banners as before",
           p(.loaded(.claudeCodeCLI), .claudeCodeCLI).banner == .cliAccount
           && p(.signedOut, nil).banner == .signedOut)
@@ -1153,6 +1168,15 @@ do {
     check("answer from before a sign-in → does not lift a decline set since",
           UsageRefreshPolicy.declined(true, after: .found(old), sameAllowance: false)
           && UsageRefreshPolicy.declined(true, afterSaving: .saved, sameAllowance: false))
+    // #155 — the CLI item's read folds in by the same rules.
+    let cliCancelled = ClaudeCodeTokenRead(token: nil, keychainDeclined: true)
+    let cliRead = ClaudeCodeTokenRead(token: old, keychainDeclined: false)
+    check("CLI prompt declined → remembered; a later read does not lift it",
+          UsageRefreshPolicy.declined(false, afterReadingCLI: cliCancelled, sameAllowance: true)
+          && UsageRefreshPolicy.declined(true, afterReadingCLI: cliRead, sameAllowance: true)
+          && !UsageRefreshPolicy.declined(false, afterReadingCLI: cliRead, sameAllowance: true))
+    check("CLI cancel from a read that went out before a lift → not remembered",
+          !UsageRefreshPolicy.declined(false, afterReadingCLI: cliCancelled, sameAllowance: false))
     // [다시 허용] while a read was out: same login, but the user acted past
     // the dialog that read put up. Its cancel must not bring the decline
     // back, or the button does nothing once (#146).
@@ -1440,8 +1464,8 @@ do {
     check("locked own item under the lapsed notice → the notice and its login button stay",
           locked.loadState == .sessionExpired && locked.snapshot == .sample(now: now)
           && UsagePresentation(loadState: locked.loadState, accountSource: locked.accountSource,
-                               limitsUnread: false, keychainDeclined: false, holdsUnsavedLogin: false,
-                               now: now).bannerAction == .signIn)
+                               limitsUnread: false, keychainDeclined: false, cliKeychainDeclined: false,
+                               holdsUnsavedLogin: false, now: now).bannerAction == .signIn)
     var lockedPlain = UsageSession()
     lockedPlain.loaded(snap, source: .oauthLogin)
     lockedPlain.ownTokenUnreadable("locked", now: now)

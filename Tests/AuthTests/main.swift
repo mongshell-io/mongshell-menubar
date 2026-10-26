@@ -282,6 +282,27 @@ do {
     check("Claude Code expiresAt string → token without expiry", claudeExpiry(#""1700000000000""#) == .some(nil))
 }
 
+// MARK: #155 — a declined prompt for Claude Code's item is told apart
+
+do {
+    let k = OAuthToken(accessToken: "k", refreshToken: nil, expiresAt: nil)
+    let f = OAuthToken(accessToken: "f", refreshToken: nil, expiresAt: nil)
+    var fileReads = 0
+    func file() -> OAuthToken? { fileReads += 1; return f }
+    let found = ClaudeCodeTokenRead(keychainStatus: errSecSuccess, keychainToken: k, fileToken: file)
+    check("Keychain token → it, file not read, not declined",
+          found == ClaudeCodeTokenRead(token: k, keychainDeclined: false) && fileReads == 0)
+    check("prompt declined → declined, the file still read",
+          ClaudeCodeTokenRead(keychainStatus: errSecUserCanceled, keychainToken: nil, fileToken: file)
+              == ClaudeCodeTokenRead(token: f, keychainDeclined: true) && fileReads == 1)
+    check("no item, or a refusal that is not the user's → not declined",
+          !ClaudeCodeTokenRead(keychainStatus: errSecItemNotFound, keychainToken: nil, fileToken: { nil }).keychainDeclined
+          && !ClaudeCodeTokenRead(keychainStatus: errSecAuthFailed, keychainToken: nil, fileToken: { nil }).keychainDeclined)
+    check("Keychain not asked → file only, not declined",
+          ClaudeCodeTokenRead(keychainStatus: nil, keychainToken: nil, fileToken: { nil })
+              == ClaudeCodeTokenRead(token: nil, keychainDeclined: false))
+}
+
 // MARK: result
 
 if failures.isEmpty {

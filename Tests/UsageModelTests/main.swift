@@ -37,6 +37,11 @@ struct TransientRefreshFailure: Error {}
     /// The own-token Keychain item.
     var own: OAuthToken?
     var cli: OAuthToken?
+    /// What the CLI file holds — read when the Keychain item gives nothing
+    /// or is not asked (#155).
+    var cliFile: OAuthToken?
+    /// The nth read of the CLI Keychain item whose prompt the user declines.
+    var cliDeclines: Set<Int> = []
     /// Replies for the nth own-token read, in place of what the item holds.
     var lookupReplies: [Int: OwnTokenLookup] = [:]
     /// Replies for the nth own-token save; missing means `.saved`.
@@ -54,6 +59,8 @@ struct TransientRefreshFailure: Error {}
     private(set) var saved: [String] = []
     private(set) var clears = 0
     private(set) var cliReads = 0
+    /// CLI reads that asked the Keychain item — each could prompt.
+    private(set) var cliKeychainReads = 0
     private(set) var renewCalls = 0
     private(set) var fetched: [String] = []
     private(set) var expiryNotices = 0
@@ -100,10 +107,17 @@ struct TransientRefreshFailure: Error {}
         return reply
     }
 
-    func readCLI() async -> OAuthToken? {
+    func readCLI(readingKeychain: Bool) async -> ClaudeCodeTokenRead {
         cliReads += 1
-        let reply = cli
-        await pass("cli#\(cliReads)")
+        let n = cliReads
+        var keychain: OAuthToken?
+        var declined = false
+        if readingKeychain {
+            cliKeychainReads += 1
+            if cliDeclines.contains(cliKeychainReads) { declined = true } else { keychain = cli }
+        }
+        let reply = ClaudeCodeTokenRead(token: keychain ?? cliFile, keychainDeclined: declined)
+        await pass("cli#\(n)")
         return reply
     }
 
@@ -130,7 +144,7 @@ struct TransientRefreshFailure: Error {}
             lookupOwnToken: { await self.lookup() },
             saveOwnToken: { await self.save($0) },
             clearOwnToken: { await self.clear() },
-            loadClaudeCodeToken: { await self.readCLI() },
+            loadClaudeCodeToken: { await self.readCLI(readingKeychain: $0) },
             signIn: { try self.signIn() },
             refresh: { try await self.renew($0) },
             fetchUsage: { await self.fetch($0) },
@@ -503,6 +517,85 @@ struct TransientRefreshFailure: Error {}
               model.holdsUnsavedLogin && fake.saved == ["a-N"] && fake.fetched == ["a-N"]
                   && model.loadState == .loaded(.oauthLogin),
               "held=\(model.holdsUnsavedLogin) saved=\(fake.saved) fetched=\(fake.fetched) state=\(model.loadState)")
+    }
+
+    // MARK: (i) a declined prompt for the Claude Code CLI item (#155)
+
+    do {
+        // Without the CLI decline (the read folded to "no token"), every
+        // poll asked the item again — a dialog every 180 seconds.
+        let fake = Fake()
+        fake.cli = token("C")
+        fake.cliDeclines = [1]
+        let model = UsageModel(boundaries: fake.boundaries)
+        await model.refreshOnce()
+        check("(i) CLI prompt declined: remembered, sample with the declined banner and [다시 허용]",
+              model.cliKeychainDeclined && model.loadState == .signedOut
+                  && model.presentation.banner == .keychainDeclined(.sample, limitsUnread: false)
+                  && model.presentation.bannerAction == .allowKeychain,
+              "declined=\(model.cliKeychainDeclined) state=\(model.loadState) banner=\(model.presentation.banner)")
+        await model.refreshOnce()
+        check("(i) a poll under the decline does not ask the CLI item again",
+              fake.cliKeychainReads == 1 && fake.cliReads == 2 && model.cliKeychainDeclined,
+              "keychainReads=\(fake.cliKeychainReads) reads=\(fake.cliReads)")
+        model.refreshNow()
+        await settle()
+        check("(i) [다시 허용] asks the CLI item again and lifts the decline",
+              fake.cliKeychainReads == 2 && !model.cliKeychainDeclined && fake.fetched == ["a-C"]
+                  && model.loadState == .loaded(.claudeCodeCLI),
+              "keychainReads=\(fake.cliKeychainReads) declined=\(model.cliKeychainDeclined) state=\(model.loadState)")
+    }
+
+    do {
+        // The decline leaves the CLI file alone: a token there is polled.
+        let fake = Fake()
+        fake.cliFile = token("F")
+        fake.cliDeclines = [1]
+        let model = UsageModel(boundaries: fake.boundaries)
+        await model.refreshOnce()
+        await model.refreshOnce()
+        check("(i) under the CLI decline the file is still read, the item is not",
+              fake.cliKeychainReads == 1 && fake.fetched == ["a-F", "a-F"] && model.cliKeychainDeclined
+                  && model.presentation.banner == .cliAccount,
+              "keychainReads=\(fake.cliKeychainReads) fetched=\(fake.fetched) banner=\(model.presentation.banner)")
+    }
+
+    do {
+        // Passing `sameAllowance: true` in `loadClaudeCodeToken`: the cancel
+        // from before [다시 허용] is remembered again and the button did
+        // nothing once.
+        let fake = Fake()
+        fake.cli = token("C")
+        fake.cliDeclines = [1]
+        fake.holds = ["cli#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("cancelled CLI read held") { fake.isHeld("cli#1") }
+        model.refreshNow()
+        await settle()
+        fake.release("cli#1")
+        await refresh.value
+        await settle()
+        check("(i) [다시 허용] during a cancelled CLI read: the decline is not brought back, the item is read again",
+              !model.cliKeychainDeclined && fake.cliKeychainReads == 2 && model.loadState == .loaded(.claudeCodeCLI),
+              "declined=\(model.cliKeychainDeclined) keychainReads=\(fake.cliKeychainReads) state=\(model.loadState)")
+    }
+
+    do {
+        // A sign-out while the cancelled CLI read is out lifts it too.
+        let fake = Fake()
+        fake.cli = token("C")
+        fake.cliDeclines = [1]
+        fake.holds = ["cli#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("cancelled CLI read held") { fake.isHeld("cli#1") }
+        await model.signOut()
+        fake.release("cli#1")
+        await refresh.value
+        check("(i) sign-out during a cancelled CLI read: the decline is not remembered",
+              !model.cliKeychainDeclined && model.loadState == .signedOut,
+              "declined=\(model.cliKeychainDeclined) state=\(model.loadState)")
     }
 
     // MARK: (h) the guards #150 left unpinned

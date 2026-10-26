@@ -18,7 +18,7 @@ extension UsageModel.Boundaries {
             lookupOwnToken: CredentialStore.lookupOwnToken,
             saveOwnToken: CredentialStore.saveOwnToken,
             clearOwnToken: CredentialStore.clearOwnToken,
-            loadClaudeCodeToken: CredentialStore.loadClaudeCodeToken,
+            loadClaudeCodeToken: CredentialStore.loadClaudeCodeToken(readingKeychain:),
             signIn: { try await auth.signIn() },
             refresh: { try await auth.refresh($0) },
             fetchUsage: { try await api.fetch(token: $0) },

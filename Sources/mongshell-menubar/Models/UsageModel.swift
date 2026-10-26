@@ -21,7 +21,8 @@ final class UsageModel: ObservableObject {
         var lookupOwnToken: nonisolated(nonsending) @Sendable () async -> OwnTokenLookup
         var saveOwnToken: nonisolated(nonsending) @Sendable (OAuthToken) async -> OwnTokenSave
         var clearOwnToken: nonisolated(nonsending) @Sendable () async -> Bool
-        var loadClaudeCodeToken: nonisolated(nonsending) @Sendable () async -> OAuthToken?
+        /// `readingKeychain` false: the CLI file only (#155).
+        var loadClaudeCodeToken: nonisolated(nonsending) @Sendable (_ readingKeychain: Bool) async -> ClaudeCodeTokenRead
         var signIn: @MainActor @Sendable () async throws -> OAuthToken
         var refresh: @MainActor @Sendable (OAuthToken) async throws -> OAuthToken
         var fetchUsage: @Sendable (OAuthToken) async throws -> UsageSnapshot
@@ -56,6 +57,8 @@ final class UsageModel: ObservableObject {
     /// Every own-token read folds its answer into this flag (#146), so it
     /// too is assigned only when it differs.
     @Published private(set) var keychainDeclined = false
+    /// The same for the Claude Code CLI item (#155).
+    @Published private(set) var cliKeychainDeclined = false
     /// Whether an own token the Keychain did not take is held — the banner
     /// reads it rather than guess from `loadState` (#151). Mirrors
     /// `pendingOwnToken`, assigned only when it differs, like the rest.
@@ -68,6 +71,7 @@ final class UsageModel: ObservableObject {
             if loadState != session.loadState { loadState = session.loadState }
             if accountSource != session.accountSource { accountSource = session.accountSource }
             if keychainDeclined != session.keychainDeclined { keychainDeclined = session.keychainDeclined }
+            if cliKeychainDeclined != session.cliKeychainDeclined { cliKeychainDeclined = session.cliKeychainDeclined }
         }
     }
     private var thresholds = UsageThresholdWatch()
@@ -133,7 +137,8 @@ final class UsageModel: ObservableObject {
     var presentation: UsagePresentation {
         UsagePresentation(loadState: loadState, accountSource: accountSource,
                           limitsUnread: snapshot.hasUnreadLimit, keychainDeclined: keychainDeclined,
-                          holdsUnsavedLogin: holdsUnsavedLogin, now: Date())
+                          cliKeychainDeclined: cliKeychainDeclined, holdsUnsavedLogin: holdsUnsavedLogin,
+                          now: Date())
     }
 
     private var pollBase: Int { max(Config.minPollInterval, boundaries.pollIntervalSeconds()) }
@@ -205,7 +210,22 @@ final class UsageModel: ObservableObject {
     /// read can prompt too.
     private func currentToken(_ resolution: PendingResolution, own: OwnTokenLookup) async -> UsageTokenChoice {
         if let choice = UsageRefreshPolicy.ownChoice(resolution: resolution, own: own) { return choice }
-        return UsageRefreshPolicy.cliChoice(await boundaries.loadClaudeCodeToken())
+        return UsageRefreshPolicy.cliChoice(await loadClaudeCodeToken())
+    }
+
+    /// Every CLI-token read goes through here, so a declined prompt for that
+    /// item is not put back by a poll either (#155): while the decline
+    /// stands only the CLI file is read. Folded in like `lookupOwnToken`.
+    private func loadClaudeCodeToken() async -> OAuthToken? {
+        let lifts = session.declineLifts
+        let read = await boundaries.loadClaudeCodeToken(!session.cliKeychainDeclined)
+        let declined = UsageRefreshPolicy.declined(session.cliKeychainDeclined, afterReadingCLI: read,
+                                                   sameAllowance: lifts == session.declineLifts)
+        if declined, !session.cliKeychainDeclined {
+            AuthDebugLog.write("Claude Code item prompt declined; not asked again until the user acts")
+        }
+        session.setCLIKeychainDeclined(declined)
+        return read.token
     }
 
     // MARK: Refresh
@@ -334,11 +354,12 @@ final class UsageModel: ObservableObject {
     /// `holdsUnsavedLogin` stands in for a held token, which the hook has
     /// no real one for.
     func presentForSnapshot(_ snap: UsageSnapshot, state: LoadState, keychainDeclined: Bool = false,
-                            holdsUnsavedLogin: Bool = false) {
+                            cliKeychainDeclined: Bool = false, holdsUnsavedLogin: Bool = false) {
         pollTask?.cancel()
         pollTask = nil
         pendingOwnToken = nil
-        session.present(snap, state: state, keychainDeclined: keychainDeclined)
+        session.present(snap, state: state, keychainDeclined: keychainDeclined,
+                        cliKeychainDeclined: cliKeychainDeclined)
         self.holdsUnsavedLogin = holdsUnsavedLogin
     }
 
