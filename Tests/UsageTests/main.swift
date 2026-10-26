@@ -1088,13 +1088,13 @@ do {
         private(set) var peak = 0
         private(set) var order: [Int] = []
         private(set) var onMain = false
-        func job(_ index: Int) -> Int {
+        func job(_ index: Int, pause: TimeInterval = 0.005) -> Int {
             lock.lock()
             active += 1
             peak = max(peak, active)
             if Thread.isMainThread { onMain = true }
             lock.unlock()
-            Thread.sleep(forTimeInterval: 0.005)
+            Thread.sleep(forTimeInterval: pause)
             lock.lock()
             active -= 1
             order.append(index)
@@ -1119,6 +1119,29 @@ do {
     check("Keychain queue: not on the main thread", !probe.onMain)
     check("Keychain queue: one caller's jobs run in the order asked",
           Array(probe.order.suffix(jobCount)) == (0..<jobCount).map { 100 + $0 }, "\(probe.order)")
+
+    // Calls started one after another on the main actor, no await between
+    // them, run on the queue in that order: each is queued before its task
+    // first suspends, on the caller's actor — not after a hop to the global
+    // executor, where the order is lost. This is what lets a sign-in's save
+    // land after a poll's delete asked for before it.
+    let ordered = Probe()
+    let orderedCount = 64
+    var finished = 0
+    MainActor.assumeIsolated {
+        for index in 0..<orderedCount {
+            Task { @MainActor in
+                _ = await KeychainQueue.run { ordered.job(index, pause: 0) }
+                finished += 1
+            }
+        }
+    }
+    let deadline = Date().addingTimeInterval(10)
+    while finished < orderedCount, Date() < deadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    }
+    check("Keychain queue: calls from the main actor run in the order made",
+          ordered.order == Array(0..<orderedCount), "\(ordered.order)")
 }
 
 // MARK: #133 — reset phrases are made at draw time; flat fallbacks are logged

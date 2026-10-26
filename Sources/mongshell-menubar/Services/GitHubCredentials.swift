@@ -24,12 +24,13 @@ struct GitHubGHCredential: Equatable, Sendable {
 /// (read/write) and the gh CLI's (read-only — it is gh's, not ours). The
 /// read order, PAT first, is applied by the model. Like `CredentialStore`,
 /// every entry point runs its Keychain calls on `KeychainQueue`, off the
-/// main thread (#141).
+/// main thread, and is `nonisolated(nonsending)` so calls reach the queue
+/// in the order they were made (#141).
 struct GitHubCredentialStore: Sendable {
 
     // MARK: Own PAT (read/write)
 
-    func loadOwnPAT() async -> String? {
+    nonisolated(nonsending) func loadOwnPAT() async -> String? {
         await KeychainQueue.run { Self.loadOwnPATBlocking() }
     }
 
@@ -56,7 +57,7 @@ struct GitHubCredentialStore: Sendable {
     /// (Decision #109, #126).
     /// The delete and the add are one job, so no other Keychain call lands
     /// between them.
-    func savePAT(_ token: String) async -> OSStatus {
+    nonisolated(nonsending) func savePAT(_ token: String) async -> OSStatus {
         await KeychainQueue.run {
             SecItemDelete(Self.ownItemQuery as CFDictionary)
             var attrs = Self.ownItemQuery
@@ -65,7 +66,7 @@ struct GitHubCredentialStore: Sendable {
         }
     }
 
-    func clearPAT() async {
+    nonisolated(nonsending) func clearPAT() async {
         await KeychainQueue.run { _ = SecItemDelete(Self.ownItemQuery as CFDictionary) }
     }
 
@@ -81,7 +82,7 @@ struct GitHubCredentialStore: Sendable {
     /// under the service (multiple gh accounts) an arbitrary one is read.
     /// The go-keyring wrapping is undone here, so the token comes back
     /// ready to send.
-    func loadGHToken() async -> Result<GitHubGHCredential, GHKeychainError> {
+    nonisolated(nonsending) func loadGHToken() async -> Result<GitHubGHCredential, GHKeychainError> {
         await KeychainQueue.run { Self.loadGHTokenBlocking() }
     }
 

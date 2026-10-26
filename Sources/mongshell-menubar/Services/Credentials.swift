@@ -105,22 +105,25 @@ enum OwnTokenSave: Equatable {
 ///
 /// The entry points are async: each runs its Keychain calls on
 /// `KeychainQueue`, off the main thread, and hands back only the result
-/// (#141). A save's update/delete/add stay one job, so no other Keychain
-/// call lands between them.
+/// (#141). Each is `nonisolated(nonsending)` — it runs on the caller's
+/// actor — so calls reach the queue in the order they were made (see
+/// `KeychainQueue`). A
+/// save's update/delete/add stay one job, so no other Keychain call lands
+/// between them.
 enum CredentialStore {
 
     // MARK: Own OAuth token (read/write)
 
-    static func saveOwnToken(_ token: OAuthToken) async -> OwnTokenSave {
+    nonisolated(nonsending) static func saveOwnToken(_ token: OAuthToken) async -> OwnTokenSave {
         await KeychainQueue.run { saveOwnTokenBlocking(token) }
     }
 
-    static func lookupOwnToken() async -> OwnTokenLookup {
+    nonisolated(nonsending) static func lookupOwnToken() async -> OwnTokenLookup {
         await KeychainQueue.run { lookupOwnTokenBlocking() }
     }
 
     /// Whether the Keychain now holds no own token; a failure is logged.
-    static func clearOwnToken() async -> Bool {
+    nonisolated(nonsending) static func clearOwnToken() async -> Bool {
         await KeychainQueue.run { clearOwnTokenBlocking() }
     }
 
@@ -203,7 +206,7 @@ enum CredentialStore {
     /// present or readable (e.g. the user denies the Keychain prompt). The
     /// file fallback rides the same job: it is only read once the Keychain
     /// has answered.
-    static func loadClaudeCodeToken() async -> OAuthToken? {
+    nonisolated(nonsending) static func loadClaudeCodeToken() async -> OAuthToken? {
         await KeychainQueue.run { readClaudeCodeKeychain() ?? readClaudeCodeFile() }
     }
 
