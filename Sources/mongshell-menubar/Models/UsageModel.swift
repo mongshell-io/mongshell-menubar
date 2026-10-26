@@ -83,10 +83,10 @@ final class UsageModel: ObservableObject {
 
     // MARK: Token resolution
 
-    private func currentToken() -> (OAuthToken, DataSource)? {
-        if let own = CredentialStore.loadOwnToken() { return (own, .oauthLogin) }
-        if let cli = CredentialStore.loadClaudeCodeToken() { return (cli, .claudeCodeCLI) }
-        return nil
+    private func currentToken() -> UsageTokenChoice {
+        let own = CredentialStore.lookupOwnToken()
+        if case .refused(let status) = own { AuthDebugLog.write("own token refused status=\(status)") }
+        return UsageRefreshPolicy.chooseToken(own: own, cli: CredentialStore.loadClaudeCodeToken)
     }
 
     // MARK: Refresh
@@ -105,9 +105,18 @@ final class UsageModel: ObservableObject {
     }
 
     private func performRefresh() async {
-        guard let (initialToken, source) = currentToken() else {
+        let initialToken: OAuthToken, source: DataSource
+        switch currentToken() {
+        case .token(let found, let foundSource):
+            (initialToken, source) = (found, foundSource)
+        case .none:
             markSignedOut()
             snapshot = .sample
+            return
+        case .ownUnavailable(let status):
+            // Keeps the account and the numbers; the next poll reads again.
+            AuthDebugLog.write("own token unavailable status=\(status)")
+            loadState = .error("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다")
             return
         }
         var token = initialToken
@@ -273,7 +282,12 @@ final class UsageModel: ObservableObject {
     func signIn() async {
         do {
             let token = try await auth.signIn()
-            CredentialStore.saveOwnToken(token)
+            // A token that did not reach the Keychain is gone at the next
+            // poll, which would then quietly fall back to the CLI token.
+            guard CredentialStore.saveOwnToken(token) else {
+                loadState = .error("로그인 정보를 Keychain 에 저장하지 못했습니다")
+                return
+            }
             sessionExpiredUnresolved = false
             await refreshOnce()
         } catch {

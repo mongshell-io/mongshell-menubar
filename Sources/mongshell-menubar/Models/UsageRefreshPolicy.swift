@@ -18,6 +18,15 @@ enum UsageFetchResult: Equatable {
     }
 }
 
+/// Which token a refresh polls with.
+enum UsageTokenChoice: Equatable {
+    case token(OAuthToken, DataSource)
+    case none
+    /// Our own token is there but the Keychain is locked — the CLI token
+    /// would quietly switch accounts, so the refresh waits for the next poll.
+    case ownUnavailable(OSStatus)
+}
+
 /// What came of the one own-token refresh a 401 earns.
 enum OwnTokenRetry: Equatable {
     /// The refresh worked and the usage was asked again with the new token.
@@ -50,6 +59,16 @@ enum UsageRefreshPolicy {
     /// the next poll instead (Claude Code may have rotated it).
     static func shouldRenew(after first: UsageFetchResult, source: DataSource) -> Bool {
         first == .unauthorized && source == .oauthLogin
+    }
+
+    /// Our own token first, then the CLI token — but only when ours is
+    /// missing or refused, not while the Keychain is locked (#102).
+    static func chooseToken(own: OwnTokenLookup, cli: () -> OAuthToken?) -> UsageTokenChoice {
+        switch own {
+        case .found(let token): return .token(token, .oauthLogin)
+        case .unavailable(let status): return .ownUnavailable(status)
+        case .missing, .refused: return cli().map { .token($0, .claudeCodeCLI) } ?? .none
+        }
     }
 
     /// `retry` is nil when no refresh was tried.

@@ -215,6 +215,8 @@ GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주�
 1. **자체 OAuth 토큰** — Keychain (`Config.ownKeychainService`)
 2. **Claude Code CLI 토큰** — Keychain `Claude Code-credentials`, 없으면 `~/.claude/.credentials.json`
 
+자체 토큰 항목이 없거나 읽기가 거부되면 2 로 넘어간다. Keychain 이 잠겨 있어 읽지 못하면 넘어가지 않는다 — 토큰과 숫자를 유지한 채 오류 배너를 보이고 다음 폴링에 다시 읽는다. 저장된 값이 해석되지 않는 항목은 없음으로 친다. 로그인 직후 토큰을 Keychain 에 저장하지 못하면 오류로 보인다. 자체 토큰 저장은 항목을 제자리에서 교체하므로 항목의 접근 권한("항상 허용" 등)이 그대로 남는다. 이 빌드가 고칠 수 없는 항목만 지우고 다시 만든다 (#102).
+
 Claude Code 사용자는 로그인 없이 기존 토큰을 재사용한다. 다른 앱의 Keychain 항목을 읽으므로 **첫 실행 시 "키체인 접근 허용" 프롬프트**가 뜬다.
 
 토큰이 없을 때의 로그인 흐름은 **OAuth 2.0 Authorization Code + PKCE** 이며, Claude Code 의 client_id 를 재사용한다 (ToS 회색지대 — Decision 2).
