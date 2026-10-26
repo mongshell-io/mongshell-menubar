@@ -1049,22 +1049,22 @@ do {
           OwnTokenSave(status: refusedDelete.status, deletedFirst: refusedDelete.deleted) == .failed)
 
     // Remembering the decline.
-    check("read cancelled → decline remembered", UsageRefreshPolicy.declined(false, after: cancelled, sameLogin: true, sameAllowance: true))
+    check("read cancelled → decline remembered", UsageRefreshPolicy.declined(false, after: cancelled, sameAllowance: true))
     check("read refused otherwise → no decline (the #132 store retry stays)",
-          !UsageRefreshPolicy.declined(false, after: .refused(errSecAuthFailed), sameLogin: true, sameAllowance: true))
+          !UsageRefreshPolicy.declined(false, after: .refused(errSecAuthFailed), sameAllowance: true))
     check("read found / missing / locked → no decline",
-          !UsageRefreshPolicy.declined(false, after: .found(old), sameLogin: true, sameAllowance: true)
-          && !UsageRefreshPolicy.declined(false, after: .missing, sameLogin: true, sameAllowance: true)
-          && !UsageRefreshPolicy.declined(false, after: .unavailable(errSecInteractionNotAllowed), sameLogin: true, sameAllowance: true))
-    check("save cancelled → decline remembered", UsageRefreshPolicy.declined(false, afterSaving: .cancelled, sameLogin: true, sameAllowance: true))
+          !UsageRefreshPolicy.declined(false, after: .found(old), sameAllowance: true)
+          && !UsageRefreshPolicy.declined(false, after: .missing, sameAllowance: true)
+          && !UsageRefreshPolicy.declined(false, after: .unavailable(errSecInteractionNotAllowed), sameAllowance: true))
+    check("save cancelled → decline remembered", UsageRefreshPolicy.declined(false, afterSaving: .cancelled, sameAllowance: true))
     check("save failed / saved → no decline",
-          !UsageRefreshPolicy.declined(false, afterSaving: .failed, sameLogin: true, sameAllowance: true)
-          && !UsageRefreshPolicy.declined(false, afterSaving: .saved, sameLogin: true, sameAllowance: true)
-          && !UsageRefreshPolicy.declined(false, afterSaving: .failedAfterDelete, sameLogin: true, sameAllowance: true))
+          !UsageRefreshPolicy.declined(false, afterSaving: .failed, sameAllowance: true)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .saved, sameAllowance: true)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .failedAfterDelete, sameAllowance: true))
     check("a poll does not lift a standing decline, whatever it reads or saves",
-          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: true, sameAllowance: true)
-          && UsageRefreshPolicy.declined(true, after: .missing, sameLogin: true, sameAllowance: true)
-          && UsageRefreshPolicy.declined(true, afterSaving: .saved, sameLogin: true, sameAllowance: true))
+          UsageRefreshPolicy.declined(true, after: .found(old), sameAllowance: true)
+          && UsageRefreshPolicy.declined(true, after: .missing, sameAllowance: true)
+          && UsageRefreshPolicy.declined(true, afterSaving: .saved, sameAllowance: true))
 
     // While declined, a poll reads nothing from the Keychain…
     var reads = 0
@@ -1107,16 +1107,18 @@ do {
     // is now (true), the decline stands; folded into the value captured when
     // the read went out (false), it would be lifted and the dialog come back.
     check("save cancelled while a poll read was out → the read's .found keeps the decline",
-          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: true, sameAllowance: true)
-          && !UsageRefreshPolicy.declined(false, after: .found(old), sameLogin: true, sameAllowance: true))
-    // A read or save that went out before a sign-in or sign-out: the sign-in
-    // lifted the flag, and an answer about the item before it sets nothing.
+          UsageRefreshPolicy.declined(true, after: .found(old), sameAllowance: true)
+          && !UsageRefreshPolicy.declined(false, after: .found(old), sameAllowance: true))
+    // A read or save that went out before a sign-in or sign-out: that lifted
+    // the flag (a lift — both bump `declineLifts`), and an answer about the
+    // item before it sets nothing. Tests/UsageModelTests pins that the model
+    // bumps it on both.
     check("answer from before a sign-in → does not set the decline again",
-          !UsageRefreshPolicy.declined(false, after: cancelled, sameLogin: false, sameAllowance: true)
-          && !UsageRefreshPolicy.declined(false, afterSaving: .cancelled, sameLogin: false, sameAllowance: true))
+          !UsageRefreshPolicy.declined(false, after: cancelled, sameAllowance: false)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .cancelled, sameAllowance: false))
     check("answer from before a sign-in → does not lift a decline set since",
-          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: false, sameAllowance: true)
-          && UsageRefreshPolicy.declined(true, afterSaving: .saved, sameLogin: false, sameAllowance: true))
+          UsageRefreshPolicy.declined(true, after: .found(old), sameAllowance: false)
+          && UsageRefreshPolicy.declined(true, afterSaving: .saved, sameAllowance: false))
     // [다시 허용] while a read was out: same login, but the user acted past
     // the dialog that read put up. Its cancel must not bring the decline
     // back, or the button does nothing once (#146).
@@ -1129,12 +1131,12 @@ do {
     check("a manual refresh or sign-out counts as a lift",
           lifted.declineLifts != liftsBefore && liftedBySignOut.declineLifts != UsageSession().declineLifts)
     check("cancel from a read that went out before [다시 허용] → the decline stays lifted",
-          !UsageRefreshPolicy.declined(lifted.keychainDeclined, after: cancelled, sameLogin: true,
+          !UsageRefreshPolicy.declined(lifted.keychainDeclined, after: cancelled,
                                        sameAllowance: liftsBefore == lifted.declineLifts)
-          && !UsageRefreshPolicy.declined(lifted.keychainDeclined, afterSaving: .cancelled, sameLogin: true,
+          && !UsageRefreshPolicy.declined(lifted.keychainDeclined, afterSaving: .cancelled,
                                           sameAllowance: liftsBefore == lifted.declineLifts))
     check("…and a cancel from a read after it is remembered again",
-          UsageRefreshPolicy.declined(lifted.keychainDeclined, after: cancelled, sameLogin: true,
+          UsageRefreshPolicy.declined(lifted.keychainDeclined, after: cancelled,
                                       sameAllowance: lifted.declineLifts == lifted.declineLifts))
 
     // The CLI token (another Keychain read, which can prompt) is read only

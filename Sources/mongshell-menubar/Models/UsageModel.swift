@@ -71,6 +71,12 @@ final class UsageModel: ObservableObject {
     private var pendingOwnToken: PendingOwnToken?
     /// Bumped by every sign-in and sign-out. A refresh that started under an
     /// older value must not adopt or show what it got (#108).
+    ///
+    /// Invariant: every place that bumps this also bumps
+    /// `session.declineLifts` (`allowKeychainAgain()` / `signedOut`). The
+    /// decline is folded in by allowance alone (`UsageRefreshPolicy.declined`),
+    /// so a bump here without one there would let a cancel from before the
+    /// new login set the decline again. Pinned in Tests/UsageModelTests.
     private var loginGeneration = 0
 
     private var pollTask: Task<Void, Never>?
@@ -140,21 +146,19 @@ final class UsageModel: ObservableObject {
     /// read comes back — a save the user cancelled meanwhile keeps it set.
     private func lookupOwnToken() async -> OwnTokenLookup {
         if let remembered = UsageRefreshPolicy.ownLookup(declined: session.keychainDeclined) { return remembered }
-        let generation = loginGeneration, lifts = session.declineLifts
+        let lifts = session.declineLifts
         let own = await boundaries.lookupOwnToken()
         if case .refused(let status) = own { AuthDebugLog.write("own token refused status=\(status)") }
         rememberDecline(UsageRefreshPolicy.declined(session.keychainDeclined, after: own,
-                                                    sameLogin: generation == loginGeneration,
                                                     sameAllowance: lifts == session.declineLifts))
         return own
     }
 
     /// Every own-token save goes through here, for the same reason.
     private func saveOwnToken(_ token: OAuthToken) async -> OwnTokenSave {
-        let generation = loginGeneration, lifts = session.declineLifts
+        let lifts = session.declineLifts
         let result = await boundaries.saveOwnToken(token)
         rememberDecline(UsageRefreshPolicy.declined(session.keychainDeclined, afterSaving: result,
-                                                    sameLogin: generation == loginGeneration,
                                                     sameAllowance: lifts == session.declineLifts))
         return result
     }

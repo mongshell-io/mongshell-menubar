@@ -256,25 +256,23 @@ enum UsageRefreshPolicy {
     /// `declined` is the flag as it is when the read comes back, not as it
     /// was when the read went out: the read runs off the main thread (#141),
     /// and a save the user cancelled meanwhile set the flag — a `.found`
-    /// from the read must not lift that. `sameLogin` is false when a sign-in
-    /// or sign-out came while the read was out: that lifted the flag (or
-    /// stands on its own), and an answer about the item before it does not
-    /// set it again. `sameAllowance` is false when the user lifted the
-    /// decline while the read was out (`UsageSession.declineLifts`): a
-    /// cancel from before the lift setting the flag again made [다시 허용]
-    /// do nothing once (#146).
-    static func declined(_ declined: Bool, after own: OwnTokenLookup, sameLogin: Bool,
-                         sameAllowance: Bool) -> Bool {
-        guard sameLogin, sameAllowance else { return declined }
+    /// from the read must not lift that. `sameAllowance` is false when the
+    /// user lifted the decline while the read was out
+    /// (`UsageSession.declineLifts`): a cancel from before the lift setting
+    /// the flag again made [다시 허용] do nothing once (#146). A sign-in or
+    /// sign-out is such a lift too — every place that bumps the model's
+    /// login generation bumps `declineLifts` with it — so an answer about
+    /// the item from before a new login does not set the flag either.
+    static func declined(_ declined: Bool, after own: OwnTokenLookup, sameAllowance: Bool) -> Bool {
+        guard sameAllowance else { return declined }
         if case .refused(let status) = own, OwnTokenLookup.isUserRefusal(status) { return true }
         return declined
     }
 
     /// Whether the decline stands after this save — under the same rules
     /// as after a read.
-    static func declined(_ declined: Bool, afterSaving result: OwnTokenSave, sameLogin: Bool,
-                         sameAllowance: Bool) -> Bool {
-        guard sameLogin, sameAllowance else { return declined }
+    static func declined(_ declined: Bool, afterSaving result: OwnTokenSave, sameAllowance: Bool) -> Bool {
+        guard sameAllowance else { return declined }
         return result == .cancelled || declined
     }
 

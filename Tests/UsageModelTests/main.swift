@@ -307,6 +307,47 @@ struct TransientRefreshFailure: Error {}
               "declined=\(model.keychainDeclined) lookups=\(fake.lookups) state=\(model.loadState)")
     }
 
+    // MARK: every login-generation bump is a decline lift too
+
+    do {
+        // `declined` folds in by allowance alone, so a sign-out that bumps
+        // the login generation without `declineLifts` (in
+        // `UsageSession.signedOut`) lets the cancel from before it be
+        // remembered — over the sign-out that should have cleared it.
+        let fake = Fake()
+        fake.own = token("T")
+        fake.lookupReplies = [1: .refused(errSecUserCanceled)]
+        fake.holds = ["lookup#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("cancelled read held") { fake.isHeld("lookup#1") }
+        await model.signOut()
+        fake.release("lookup#1")
+        await refresh.value
+        check("sign-out during a cancelled read: the decline is not remembered",
+              !model.keychainDeclined && model.loadState == .signedOut,
+              "declined=\(model.keychainDeclined) state=\(model.loadState)")
+    }
+
+    do {
+        // Likewise a sign-in without `allowKeychainAgain()`: the old cancel
+        // is remembered and the new login's own item is never read.
+        let fake = Fake()
+        fake.own = token("T")
+        fake.signInToken = token("N")
+        fake.lookupReplies = [1: .refused(errSecUserCanceled)]
+        fake.holds = ["lookup#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("cancelled read held") { fake.isHeld("lookup#1") }
+        await model.signIn()
+        fake.release("lookup#1")
+        await refresh.value
+        check("sign-in during a cancelled read: the decline is not remembered, the new login is read",
+              !model.keychainDeclined && fake.lookups == 2 && fake.fetched == ["a-N"],
+              "declined=\(model.keychainDeclined) lookups=\(fake.lookups) fetched=\(fake.fetched)")
+    }
+
     // MARK: (e) the same dead token lapses again
 
     do {
