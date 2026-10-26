@@ -56,6 +56,7 @@ swiftc -o "$OUT/client-tests" \
   "$APP/Models/ServerHostAlertWatch.swift" \
   "$APP/Services/BoundedHTTP.swift" \
   "$APP/Services/DisplayText.swift" \
+  "$APP/Services/JSONNumber.swift" \
   "$APP/Services/OpenClawStatusClient.swift" \
   "$APP/Services/ResponseDate.swift" \
   "$APP/Services/TimeText.swift" \
@@ -106,6 +107,7 @@ swiftc -o "$OUT/github-tests" \
   "$APP/Services/Config.swift" \
   "$APP/Services/GitHubAPIClient.swift" \
   "$APP/Services/GitHubCredentials.swift" \
+  "$APP/Services/JSONNumber.swift" \
   "$APP/Services/ResponseDate.swift" \
   "$APP/Services/TimeText.swift" \
   "$ROOT/Tests/GitHubTests/main.swift"

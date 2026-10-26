@@ -370,8 +370,9 @@ struct GitHubAPIClient: Sendable {
 
     private static func rateLimit(_ any: Any?) -> GitHubRateLimit? {
         guard let dict = any as? [String: Any],
-              let cost = int(dict["cost"]), let remaining = int(dict["remaining"]),
-              let limit = int(dict["limit"]) else { return nil }
+              let cost = JSONNumber.count(dict["cost"]),
+              let remaining = JSONNumber.count(dict["remaining"]),
+              let limit = JSONNumber.count(dict["limit"]) else { return nil }
         return GitHubRateLimit(cost: cost, remaining: remaining, limit: limit,
                                resetAt: ResponseDate.parse(dict["resetAt"]))
     }
@@ -383,7 +384,7 @@ struct GitHubAPIClient: Sendable {
 
     private static func pullRequest(_ node: [String: Any]?) -> GitHubPullRequest? {
         guard let node, node["__typename"] as? String == "PullRequest",
-              let number = int(node["number"]),
+              let number = JSONNumber.count(node["number"]),
               let repository = (node["repository"] as? [String: Any])?["nameWithOwner"] as? String
         else { return nil }
         let rollup = ((((node["commits"] as? [String: Any])?["nodes"] as? [Any])?.first
@@ -463,7 +464,7 @@ struct GitHubAPIClient: Sendable {
               let nodes = contexts["nodes"] as? [Any]
         else { return ([], false) }
         let runs = nodes.compactMap { check($0 as? [String: Any]) }
-        return (runs, int(contexts["totalCount"]) == runs.count)
+        return (runs, JSONNumber.count(contexts["totalCount"]) == runs.count)
     }
 
     /// What makes two runs the same check run again. A CheckRun's `name` is
@@ -582,9 +583,9 @@ struct GitHubAPIClient: Sendable {
     /// `workflowRun`, and a partial answer can't place the run in a series.
     private static func workflowRun(_ any: Any?) -> WorkflowRun? {
         guard let run = (any as? [String: Any])?["workflowRun"] as? [String: Any],
-              let workflowID = int((run["workflow"] as? [String: Any])?["databaseId"]),
+              let workflowID = JSONNumber.count((run["workflow"] as? [String: Any])?["databaseId"]),
               let event = nonEmptyString(run["event"]),
-              let number = int(run["runNumber"])
+              let number = JSONNumber.count(run["runNumber"])
         else { return nil }
         return WorkflowRun(series: .init(workflowID: workflowID, event: event), number: number)
     }
@@ -641,16 +642,6 @@ struct GitHubAPIClient: Sendable {
     }
 
     private static let pullRequestHost = "github.com"
-
-    /// JSONSerialization hands `true` back as an NSNumber worth 1 — a bool is
-    /// not a count.
-    private static func int(_ any: Any?) -> Int? {
-        guard let number = any as? NSNumber,
-              CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
-        let value = number.doubleValue
-        guard value.isFinite, value >= 0, value < Double(Int32.max) else { return nil }
-        return Int(value)
-    }
 
     private static func nonEmptyString(_ any: Any?) -> String? {
         guard let s = any as? String, !s.isEmpty else { return nil }
