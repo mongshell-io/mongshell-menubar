@@ -105,6 +105,7 @@ swiftc -o "$OUT/github-tests" \
   "$APP/Models/GitHubPullRequest.swift" \
   "$APP/Services/BoundedHTTP.swift" \
   "$APP/Services/Config.swift" \
+  "$APP/Services/DisplayText.swift" \
   "$APP/Services/GitHubAPIClient.swift" \
   "$APP/Services/GitHubCredentials.swift" \
   "$APP/Services/JSONNumber.swift" \

@@ -1,11 +1,12 @@
 import Foundation
 
 /// One rule for text that arrives from outside (the openclaw status document,
-/// the usage response) and ends up on screen or in the debug log: control
-/// characters and line breaks become spaces, then it is cut to a caller-chosen
-/// character limit and a fixed scalar limit. Shared by `OpenClawStatusClient`
-/// and `UsageAPIClient`, which apply it at their parsing boundary — views and
-/// the log receive bounded, single-line strings.
+/// the usage response, the GitHub response) and ends up on screen or in the
+/// debug log: control characters and line breaks become spaces, then it is
+/// cut to a caller-chosen character limit and a fixed scalar limit. Shared by
+/// `OpenClawStatusClient`, `UsageAPIClient` and `GitHubAPIClient`, which apply
+/// it at their parsing boundary — views and the log receive bounded,
+/// single-line strings.
 enum DisplayText {
     /// Scalars kept per displayed text, on top of the character limit: one
     /// character can stack any number of combining marks ("Zalgo" text), so a

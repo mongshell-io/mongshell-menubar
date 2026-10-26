@@ -312,11 +312,14 @@ struct GitHubAPIClient: Sendable {
         message.lowercased().contains("head branch was modified")
     }
 
-    /// The one line under a row: whitespace folded, anything shaped like a
-    /// GitHub token masked, cut to `mergeMessageMaxLength`. GitHub has no
-    /// reason to echo a token, but the row is not where to find out.
+    /// The one line under a row: flattened by the `DisplayText` rule, anything
+    /// shaped like a GitHub token masked, cut to `mergeMessageMaxLength`.
+    /// GitHub has no reason to echo a token, but the row is not where to find
+    /// out. The mask runs before the cut, so a shortened token still matches.
     static func mergeMessage(_ raw: String) -> String {
-        let oneLine = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        // GitHub splits its rule-violation messages into paragraphs; flattened,
+        // the blank line would leave a run of spaces mid-sentence.
+        let oneLine = displayText(raw).split(separator: " ").joined(separator: " ")
         let masked = oneLine.replacingOccurrences(of: tokenPattern, with: "•••", options: .regularExpression)
         guard masked.count > mergeMessageMaxLength else { return masked }
         return String(masked.prefix(mergeMessageMaxLength)) + "…"
@@ -385,7 +388,8 @@ struct GitHubAPIClient: Sendable {
     private static func pullRequest(_ node: [String: Any]?) -> GitHubPullRequest? {
         guard let node, node["__typename"] as? String == "PullRequest",
               let number = JSONNumber.count(node["number"]),
-              let repository = (node["repository"] as? [String: Any])?["nameWithOwner"] as? String
+              let repository = ((node["repository"] as? [String: Any])?["nameWithOwner"] as? String)
+                  .map(displayText)
         else { return nil }
         let rollup = ((((node["commits"] as? [String: Any])?["nodes"] as? [Any])?.first
                        as? [String: Any])?["commit"] as? [String: Any])?["statusCheckRollup"]
@@ -393,7 +397,7 @@ struct GitHubAPIClient: Sendable {
         return GitHubPullRequest(
             repository: repository,
             number: number,
-            title: node["title"] as? String ?? "",
+            title: (node["title"] as? String).map(displayText) ?? "",
             url: pullRequestURL(node["url"]),
             isDraft: node["isDraft"] as? Bool ?? false,
             reviewDecision: reviewDecision(node["reviewDecision"]),
@@ -548,7 +552,7 @@ struct GitHubAPIClient: Sendable {
         guard let node else { return nil }
         switch node["__typename"] as? String {
         case "CheckRun":
-            let name = node["name"] as? String ?? ""
+            let name = (node["name"] as? String).map(displayText) ?? ""
             let run = PRCheck(name: name,
                               outcome: checkRunOutcome(status: node["status"] as? String,
                                                        conclusion: node["conclusion"] as? String),
@@ -559,7 +563,7 @@ struct GitHubAPIClient: Sendable {
                     (checkSuiteName(node["checkSuite"]).map { .checkRun(suite: $0, name: name) }, run))
         case "StatusContext":
             // Commit statuses carry a creation time only — no duration.
-            let context = node["context"] as? String ?? ""
+            let context = (node["context"] as? String).map(displayText) ?? ""
             let status = PRCheck(name: context,
                                  outcome: statusContextOutcome(state: node["state"] as? String),
                                  startedAt: nil, completedAt: nil,
@@ -642,6 +646,13 @@ struct GitHubAPIClient: Sendable {
     }
 
     private static let pullRequestHost = "github.com"
+
+    /// Every response string that reaches a row, a chip or a tooltip goes
+    /// through here: one line, at most `Config.githubDisplayTextLimit`
+    /// characters. A check name is whatever an outside integration chose.
+    private static func displayText(_ raw: String) -> String {
+        DisplayText.flatten(raw, limit: Config.githubDisplayTextLimit)
+    }
 
     private static func nonEmptyString(_ any: Any?) -> String? {
         guard let s = any as? String, !s.isEmpty else { return nil }

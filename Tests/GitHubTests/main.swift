@@ -1398,6 +1398,61 @@ do {
           hiddenLines?.mine == 3 && hiddenLines?.blocked == 2)
 }
 
+// MARK: #136 GitHub 문자열은 DisplayText 규칙을 거친다
+// PR 제목·레포 이름·검사 이름·StatusContext 이름은 파싱 경계에서 한 줄·유한 길이가 된다.
+
+print("▸ GitHub 문자열 정규화 (DisplayText)")
+do {
+    /// A Swift string as a JSON string literal, escapes and all.
+    func jsonString(_ raw: String) -> String {
+        let array = String(decoding: try! JSONSerialization.data(withJSONObject: [raw]), as: UTF8.self)
+        return String(array.dropFirst().dropLast())
+    }
+    func titled(_ title: String, repo: String = "mongshell/bookdam", rollup: String? = nil) -> GitHubPullRequest? {
+        let raw = rollup.map { node(repo, rollup: $0) } ?? node(repo)
+        return parsed(body(mine: [raw.replacingOccurrences(of: #""title":"t""#,
+                                                           with: "\"title\":\(jsonString(title))")]))?.mine.first
+    }
+    func isOneLine(_ s: String) -> Bool {
+        !s.unicodeScalars.contains { CharacterSet.controlCharacters.union(.newlines).contains($0) }
+    }
+
+    let multiLine = titled("첫 줄\n둘째 줄\u{0007}끝\u{2028}")
+    check("제목의 개행·제어문자 → 공백, 한 줄", multiLine?.title == "첫 줄 둘째 줄 끝",
+          "\(String(describing: multiLine?.title))")
+
+    let long = titled(String(repeating: "가", count: 5_000))
+    check("과다 길이 제목 → Config 한도로 잘림",
+          long?.title.count == Config.githubDisplayTextLimit, "\(String(describing: long?.title.count))")
+    let zalgo = titled("a" + String(repeating: "\u{0301}", count: 2_000))
+    check("조합문자 누적 제목 → 스칼라 한도",
+          (zalgo?.title.unicodeScalars.count ?? .max) <= DisplayText.scalarLimit,
+          "\(String(describing: zalgo?.title.unicodeScalars.count))")
+
+    // `node` splices the repo into the JSON as-is, so it carries the escape itself.
+    let repo = titled("t", repo: #"mongshell/book\ndam\u0000"#)
+    check("레포 이름의 개행·제어문자 → 한 줄", repo?.repository == "mongshell/book dam",
+          "\(String(describing: repo?.repository))")
+
+    let checkRun: [String: Any] = ["__typename": "CheckRun", "name": "build\nlint\u{0000}",
+                                   "status": "COMPLETED", "conclusion": "SUCCESS"]
+    let status: [String: Any] = ["__typename": "StatusContext",
+                                 "context": "ci/\u{2029}" + String(repeating: "s", count: 5_000),
+                                 "state": "SUCCESS"]
+    let rollup: [String: Any] = ["state": "SUCCESS", "contexts": ["nodes": [checkRun, status]]]
+    let rollupJSON = String(decoding: try! JSONSerialization.data(withJSONObject: rollup), as: UTF8.self)
+    let names = titled("t", rollup: rollupJSON)?.checks.map(\.name) ?? []
+    let heads = names.map { String($0.prefix(16)) }
+    check("검사 이름·StatusContext 이름 → 한 줄", names.count == 2 && names.allSatisfy(isOneLine), "\(heads)")
+    check("CheckRun 이름 개행 → 공백", names.contains("build lint"), "\(heads)")
+    check("과다 길이 StatusContext 이름 → Config 한도",
+          names.contains { $0.hasPrefix("ci/") && $0.count == Config.githubDisplayTextLimit }, "\(names.map(\.count))")
+
+    let message = GitHubAPIClient.mergeMessage("Pull\u{0000}Request\u{0007}is\u{2028}blocked")
+    check("머지 메시지의 제어문자·줄 구분자 → 공백 (DisplayText 규칙)",
+          message == "Pull Request is blocked", message)
+}
+
 print("")
 if failures.isEmpty {
     print("✓ \(caseCount) cases passed")

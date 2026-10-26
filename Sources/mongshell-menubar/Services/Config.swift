@@ -124,6 +124,13 @@ enum Config {
     /// How far back "recently merged" looks.
     static let githubMergedWindowDays = 7
 
+    /// Bounds on what the GitHub response may put on screen, applied once in
+    /// `GitHubAPIClient.parse`: PR titles, repository names, check names and
+    /// merge messages. GitHub caps a title at 256 characters and an
+    /// owner/name pair well under that, so a real value is never cut; the
+    /// row truncates sooner and the tooltip shows the rest.
+    static let githubDisplayTextLimit = 256
+
     /// Largest GraphQL response read. Sixty PRs with thirty check contexts
     /// each come to a few hundred KB; the cap keeps a surprising answer from
     /// filling memory.
