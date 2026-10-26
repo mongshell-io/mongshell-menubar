@@ -14,6 +14,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
+# Every test binary that compiles `AuthDebugLog` writes its lines here, not to
+# the real diagnostic log: `Config.authDebugLogURL` ignores $TMPDIR (#150).
+export MONGSHELL_AUTH_LOG="$OUT/auth.log"
 
 # Every async Keychain entry point must be nonisolated(nonsending) so a call
 # reaches the serial queue in the order the caller made it (#141). The order
@@ -193,8 +196,8 @@ echo "▶ running usage tests"
 # The @MainActor model itself, on fake boundaries (#150): where it re-checks
 # the login generation after each await. The live boundaries
 # (`UsageModelLive.swift` — AuthService, Notifier, Preferences) stay out; the
-# rest is the usage bundle above. TMPDIR keeps `AuthDebugLog` lines from
-# these runs out of the real debug log.
+# rest is the usage bundle above. Its `AuthDebugLog` lines go to
+# MONGSHELL_AUTH_LOG, set above.
 echo "▶ compiling usage model order tests"
 swiftc -o "$OUT/usage-model-tests" \
   "$APP/Design/Palette.swift" \
@@ -217,7 +220,14 @@ swiftc -o "$OUT/usage-model-tests" \
   "$ROOT/Tests/UsageModelTests/main.swift"
 
 echo "▶ running usage model order tests"
-TMPDIR="$OUT" "$OUT/usage-model-tests"
+"$OUT/usage-model-tests"
+
+# The runs above do write diagnostic lines; finding them here, not in the real
+# log, is what shows the override took (#150).
+if [[ ! -s "$MONGSHELL_AUTH_LOG" ]]; then
+  echo "✗ no AuthDebugLog lines in MONGSHELL_AUTH_LOG — did they go to the real log?" >&2
+  exit 1
+fi
 
 # Plain bash: sources the real server/lib.sh, exits non-zero on any failure.
 echo "▶ running server install option tests"

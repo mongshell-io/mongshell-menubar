@@ -146,8 +146,18 @@ enum Config {
     /// mode 0700, emptied on reboot) rather than the shared /tmp: that one is
     /// world-readable, and a fixed path there can be pre-planted as a symlink
     /// by any local user to redirect our appends.
-    static let authDebugLogURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent("mongshell-menubar_auth.log")
+    ///
+    /// `MONGSHELL_AUTH_LOG` overrides the path so the regression tests never
+    /// append to the real log: `temporaryDirectory` resolves the per-user
+    /// directory itself, so pointing $TMPDIR elsewhere does not move it.
+    static let authDebugLogURL: URL = {
+        if let override = ProcessInfo.processInfo.environment["MONGSHELL_AUTH_LOG"],
+           !override.isEmpty {
+            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
+        }
+        return FileManager.default.temporaryDirectory
+            .appendingPathComponent("mongshell-menubar_auth.log")
+    }()
     /// Past this the log starts over rather than growing: a line per token
     /// event or per change in unknown limits is a few KB a month, so 1 MiB
     /// only trips on a runaway.
