@@ -13,7 +13,7 @@ non_goals:
 
 ## 역할 경계
 
-**앱과 바깥 세계가 닿는 모든 지점이 여기 있다.** 이 디렉토리 밖에서 `URLSession`·`SecItem*`·`Process`·`FileManager` 쓰기·`NWListener`·`SMAppService` 를 부르지 않는다.
+**앱과 바깥 세계가 닿는 모든 지점이 여기 있다.** 이 디렉토리 밖에서 `URLSession`·`SecItem*`·`Process`·`FileManager` 쓰기·`NWListener`·`SMAppService`·`UNUserNotificationCenter` 를 부르지 않는다.
 
 | 경계 | 타입 |
 |---|---|
@@ -24,6 +24,7 @@ non_goals:
 | 사용자 설정 파일 | `ClaudeSettingsStore` |
 | openclaw 서버 상태 URL (HTTPS 읽기 전용) — openclaw 판정과 서버 호스트 신호(`host`)를 한 문서에서 읽는다 | `OpenClawStatusClient` |
 | 로그인 항목 (ServiceManagement) | `LoginItemService` |
+| 알림 센터 (UserNotifications — 권한 요청·앱 번들 확인 포함; 보낼지 말지는 호출자가 정한다) | `Notifier` |
 | GitHub 토큰 (자체 PAT 항목 · gh CLI 항목 읽기) | `GitHubCredentials` |
 | GitHub GraphQL (`api.github.com` 단일 호스트 — 폴링 query + 내 PR 의 squash 머지 mutation 하나, Decision #49) | `GitHubAPIClient` |
 

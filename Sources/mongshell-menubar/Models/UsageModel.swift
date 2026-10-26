@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import UserNotifications
 
 /// Owns the usage snapshot + connection state and drives polling.
 /// Shared singleton so the AppKit status item and SwiftUI views agree.
@@ -52,7 +51,7 @@ final class UsageModel: ObservableObject {
     // MARK: Lifecycle
 
     func start() {
-        if Preferences.shared.notifyThresholds { requestNotificationAuth() }
+        if Preferences.shared.notifyThresholds { Notifier.requestAuthorization() }
         pollTask?.cancel()
         pollTask = Task { [weak self] in await self?.pollLoop() }
     }
@@ -323,40 +322,22 @@ final class UsageModel: ObservableObject {
 
     // MARK: Notifications
 
-    /// UserNotifications requires a real app bundle; guard so an unbundled
-    /// `swift run` dev launch doesn't crash.
-    private var notificationsAvailable: Bool { Bundle.main.bundleIdentifier != nil }
-
-    private func requestNotificationAuth() {
-        guard notificationsAvailable else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    }
-
     /// Not tied to `notifyThresholds`: that toggle is about usage levels, and
     /// this is a rare, action-required event of a different kind. Asks for
     /// permission on the spot in case the threshold prompt never ran.
     private func notifySessionExpired() {
-        guard notificationsAvailable else { return }
-        let content = UNMutableNotificationContent()
-        content.title = "Claude 로그인이 만료되었습니다"
-        content.body = "메뉴바 아이콘을 눌러 다시 로그인하세요."
-        let request = UNNotificationRequest(identifier: "mongshell-menubar-session-expired",
-                                            content: content, trigger: nil)
-        Task {
-            let center = UNUserNotificationCenter.current()
-            guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true else { return }
-            try? await center.add(request)
-        }
+        Notifier.postAfterAuthorizing(identifier: "mongshell-menubar-session-expired",
+                                      title: "Claude 로그인이 만료되었습니다",
+                                      body: "메뉴바 아이콘을 눌러 다시 로그인하세요.")
     }
 
+    /// The availability check comes before `observe`: a level the app could
+    /// not have shown is not counted as announced.
     private func maybeNotify(percent: Int) {
-        guard Preferences.shared.notifyThresholds, notificationsAvailable,
+        guard Preferences.shared.notifyThresholds, Notifier.isAvailable,
               let level = thresholds.observe(percent: percent) else { return }
-        let content = UNMutableNotificationContent()
-        content.title = "Claude 사용량 \(level)% 도달"
-        content.body = level >= UsageThresholdWatch.critical ? "곧 한도에 도달합니다." : "사용량이 \(percent)%입니다."
-        UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: "mongshell-menubar-\(level)", content: content, trigger: nil)
-        )
+        Notifier.post(identifier: "mongshell-menubar-\(level)",
+                      title: "Claude 사용량 \(level)% 도달",
+                      body: level >= UsageThresholdWatch.critical ? "곧 한도에 도달합니다." : "사용량이 \(percent)%입니다.")
     }
 }
