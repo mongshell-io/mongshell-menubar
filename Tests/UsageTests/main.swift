@@ -801,6 +801,35 @@ do {
           && p(.rateLimited(retryAt: retryAt), .oauthLogin, limitsUnread: true).banner == .rateLimited(retryAt: retryAt))
 }
 
+// MARK: #134 — a 401 sign-out drops the last real numbers like every other sign-out
+
+do {
+    var snap = UsageSnapshot.sample
+    snap.fiveHourPercent = 42
+
+    var r = UsageSession()
+    r.begin(accessToken: "cli", source: .claudeCodeCLI)
+    r.loaded(snap, source: .claudeCodeCLI)
+    r.rejected(accessToken: "cli")
+    check("401 after real numbers → sample, signed out (#134)",
+          r.snapshot == .sample && r.loadState == .signedOut && r.accountSource == nil)
+
+    // Every sign-out path agrees on what the user sees after real numbers.
+    let paths: [(String, (inout UsageSession) -> Void)] = [
+        ("noToken", { $0.noToken() }),
+        ("rejected", { $0.rejected(accessToken: "cli") }),
+        ("expired", { $0.expired() }),
+        ("signedOut", { $0.signedOut() }),
+    ]
+    for (name, event) in paths {
+        var x = UsageSession()
+        x.loaded(snap, source: .claudeCodeCLI)
+        event(&x)
+        check("\(name) after real numbers → sample, no account (#134)",
+              x.snapshot == .sample && x.accountSource == nil)
+    }
+}
+
 // MARK: result
 
 if failures.isEmpty {

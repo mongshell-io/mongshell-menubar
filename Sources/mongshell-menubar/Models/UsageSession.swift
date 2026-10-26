@@ -32,7 +32,6 @@ struct UsageSession: Equatable {
     /// No token anywhere.
     mutating func noToken() {
         markSignedOut()
-        snapshot = .sample
     }
 
     /// A refresh is about to poll with this token.
@@ -101,10 +100,13 @@ struct UsageSession: Equatable {
 
     /// `sessionExpired` outranks `signedOut`: the banner that explains why the
     /// numbers went back to sample must survive the polls that follow (no
-    /// token at all, or a CLI token that 401s) until the user acts.
+    /// token at all, or a CLI token that 401s) until the user acts. Both
+    /// banners say the numbers are sample, so the numbers go back here too —
+    /// a 401 that left the last real ones up contradicted its banner (#134).
     private mutating func markSignedOut() {
         accountSource = nil
         loadState = expiredUnresolved ? .sessionExpired : .signedOut
+        snapshot = .sample
     }
 }
 
