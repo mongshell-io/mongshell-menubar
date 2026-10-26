@@ -63,6 +63,16 @@ enum SnapshotRenderer {
             UsageModel.shared.presentForSnapshot(sample, state: state)
             write(PopoverPreview(), to: base, "popover_usage_\(name)", scale: 2)
         }
+        // A declined own-token prompt, remembered (#143): one banner, worded
+        // by what is shown in its stead, with "다시 허용" (#146).
+        for (state, name) in [
+            (LoadState.loaded(.claudeCodeCLI), "cli_account"),
+            (.loaded(.oauthLogin), "held_login"),
+            (.signedOut, "sample"),
+        ] {
+            UsageModel.shared.presentForSnapshot(sample, state: state, keychainDeclined: true)
+            write(PopoverPreview(), to: base, "popover_usage_keychain_declined_\(name)", scale: 2)
+        }
         // A response whose 5-hour row went missing: grey ring and the format
         // banner, the weekly limit still read (#130).
         var unread = sample

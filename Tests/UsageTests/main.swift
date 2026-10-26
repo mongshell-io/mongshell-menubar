@@ -781,8 +781,10 @@ do {
 do {
     let now = Date(timeIntervalSince1970: 1_790_000_000)
     let retryAt = now.addingTimeInterval(600)
-    func p(_ state: LoadState, _ source: DataSource?, limitsUnread: Bool = false) -> UsagePresentation {
-        UsagePresentation(loadState: state, accountSource: source, limitsUnread: limitsUnread, now: now)
+    func p(_ state: LoadState, _ source: DataSource?, limitsUnread: Bool = false,
+           declined: Bool = false) -> UsagePresentation {
+        UsagePresentation(loadState: state, accountSource: source, limitsUnread: limitsUnread,
+                          keychainDeclined: declined, now: now)
     }
 
     // #90 — the own login keeps "로그아웃" and never gets a login button
@@ -832,6 +834,33 @@ do {
     check("unread limit does not hide an error or a rate limit",
           p(.error("x"), .oauthLogin, limitsUnread: true).banner == .failed("x")
           && p(.rateLimited(retryAt: retryAt), .oauthLogin, limitsUnread: true).banner == .rateLimited(retryAt: retryAt))
+
+    // #146 — a remembered decline (#143) says so, and what is shown instead.
+    check("declined, CLI account shown → the declined banner names the CLI account, 다시 허용",
+          p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).banner == .keychainDeclined(.cliAccount)
+          && p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).bannerAction == .allowKeychain)
+    check("declined, polling with the held renewal → the declined banner says so (not a clean 'no banner')",
+          p(.loaded(.oauthLogin), .oauthLogin, declined: true).banner == .keychainDeclined(.heldLogin)
+          && p(.loaded(.oauthLogin), .oauthLogin, declined: true).bannerAction == .allowKeychain)
+    check("declined, nothing to poll with → the declined banner on the sample, 다시 허용 rather than 로그인",
+          p(.signedOut, nil, declined: true).banner == .keychainDeclined(.sample)
+          && p(.signedOut, nil, declined: true).bannerAction == .allowKeychain)
+    check("declined outranks the format notice (whose numbers these are comes first)",
+          p(.loaded(.claudeCodeCLI), .claudeCodeCLI, limitsUnread: true, declined: true).banner
+              == .keychainDeclined(.cliAccount))
+    check("declined does not hide a lapsed login, loading, a rate limit or an error",
+          p(.sessionExpired, nil, declined: true).banner == .sessionExpired
+          && p(.sessionExpired, nil, declined: true).bannerAction == .signIn
+          && p(.loading, nil, declined: true).banner == .loading
+          && p(.rateLimited(retryAt: retryAt), .claudeCodeCLI, declined: true).banner == .rateLimited(retryAt: retryAt)
+          && p(.error("x"), .claudeCodeCLI, declined: true).banner == .failed("x"))
+    check("declined leaves the badge and the account row alone",
+          p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).badge == .connected
+          && p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).account == .cliAccount
+          && p(.signedOut, nil, declined: true).badge == .sample)
+    check("not declined → the banners as before",
+          p(.loaded(.claudeCodeCLI), .claudeCodeCLI).banner == .cliAccount
+          && p(.signedOut, nil).banner == .signedOut)
 }
 
 // MARK: #134 — a 401 sign-out drops the last real numbers like every other sign-out

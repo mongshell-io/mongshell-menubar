@@ -19,6 +19,10 @@ final class UsageModel: ObservableObject {
     @Published private(set) var snapshot: UsageSnapshot = .sample(now: Date())
     @Published private(set) var loadState: LoadState = .signedOut
     @Published private(set) var accountSource: DataSource?
+    /// Mirror of `ownKeychainDeclined` for the popover's banner (#146),
+    /// assigned only when it differs, for the same reason as above — every
+    /// own-token read folds its answer into the flag.
+    @Published private(set) var keychainDeclined = false
 
     /// The one place the state above changes (#103).
     private var session = UsageSession() {
@@ -39,7 +43,9 @@ final class UsageModel: ObservableObject {
     /// back (#143). Lifted only where the user acts: `signIn()` and
     /// `refreshNow()`; a relaunch starts without it, like GitHub's
     /// `ghKeychainDenied`.
-    private var ownKeychainDeclined = false
+    private var ownKeychainDeclined = false {
+        didSet { if keychainDeclined != ownKeychainDeclined { keychainDeclined = ownKeychainDeclined } }
+    }
 
     private let api = UsageAPIClient()
     private let auth = AuthService()
@@ -69,7 +75,7 @@ final class UsageModel: ObservableObject {
         pollTask = Task { [weak self] in await self?.pollLoop() }
     }
 
-    /// The popover's "새로고침" and "재시도". Does nothing inside a rate
+    /// The popover's "새로고침", "재시도" and "다시 허용". Does nothing inside a rate
     /// limit — the poll loop asks again once it is over (#86). Asking for it
     /// is the user acting, so a declined Keychain prompt may show again.
     func refreshNow() {
@@ -86,7 +92,7 @@ final class UsageModel: ObservableObject {
     /// What the usage surfaces show and offer right now (#104).
     var presentation: UsagePresentation {
         UsagePresentation(loadState: loadState, accountSource: accountSource,
-                          limitsUnread: snapshot.hasUnreadLimit, now: Date())
+                          limitsUnread: snapshot.hasUnreadLimit, keychainDeclined: keychainDeclined, now: Date())
     }
 
     private var pollBase: Int { max(Config.minPollInterval, Preferences.shared.pollIntervalSeconds) }
@@ -283,10 +289,11 @@ final class UsageModel: ObservableObject {
 
     /// Snapshot hook: shows a given snapshot and state without any network,
     /// so reference images are deterministic and never carry real usage.
-    func presentForSnapshot(_ snap: UsageSnapshot, state: LoadState) {
+    func presentForSnapshot(_ snap: UsageSnapshot, state: LoadState, keychainDeclined: Bool = false) {
         pollTask?.cancel()
         pollTask = nil
         session.present(snap, state: state)
+        ownKeychainDeclined = keychainDeclined
     }
 
     private func renewOwnToken(_ token: OAuthToken) async -> OwnTokenRenewal {

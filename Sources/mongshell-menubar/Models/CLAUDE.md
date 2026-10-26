@@ -66,7 +66,7 @@ Decision #45·#49·#52 의 모델 쪽 규약은 넷이다. 주기와 요청 정�
 - 판정은 `GitHubPullRequest.swift` 의 순수 값 타입에 둔다 — 배지 우선순위, 메뉴바 숫자(내 PR 중 막힌 것), 점 색, hover CI 줄(`GitHubCILine`), 머지 가능 수(모델의 머지 상태를 인자로 받는다 — Decision #52, 머지 상태가 바뀌는 모든 경로가 glance 를 다시 계산한다), 검사 칩 접기. 머지 버튼 노출·요청 판정(스냅샷에서 다시 꺼낸 PR · `loadState` · 스냅샷 세대 · 스냅샷을 받은 토큰 출처로)·머지 상태의 갱신 간 이월은 `GitHubMergePolicy.swift` 의 `GitHubMergePolicy` 가 정한다 (Decision #49, 분리 #142). 연결 상태의 배지·배너·토큰 행 노출은 `GitHubPresentation.swift` 가 정한다 (#117). `GitHubModel` 은 API 결과를 그 타입에 넘겨 호출만 하고, 판정 규칙을 모델 안에 다시 적지 않는다. 규칙은 `scripts/test.sh` 가 고정한다.
 - 팝오버의 열림·닫힘은 `setPopoverOpen(_:)` 으로 받는다 (AppDelegate 가 `NSPopover.didCloseNotification` 으로 부른다). hover 는 갱신을 일으키지 않는다.
 - gh 항목의 Keychain 접근 거부(`.denied`)는 모델이 세션 동안 기억하고 설정에서만 재시도한다 — 폴링마다 대화상자가 뜨지 않도록.
-  - 같은 이유로 `UsageModel` 은 자체 토큰 항목의 대화상자 취소(`errSecUserCanceled`)를 세션 동안 기억한다 (#143) — 해제는 로그인·수동 새로고침·앱 재시작뿐이다 (사양: [docs/architecture.md § Auth](../../../docs/architecture.md#auth)).
+  - 같은 이유로 `UsageModel` 은 자체 토큰 항목의 대화상자 취소(`errSecUserCanceled`)를 세션 동안 기억한다 (#143) — 해제는 로그인·수동 새로고침·앱 재시작뿐이다. 기억 중임은 `keychainDeclined`(didSet 미러)로 `UsagePresentation` 에 넘겨 배너로 보인다 (#146, 사양: [docs/architecture.md § Auth](../../../docs/architecture.md#auth)).
 - 1초 경과 시간은 모델의 일이 아니다 — 팝오버·hover 뷰의 `TimelineView` 가 그린다. 모델은 검사의 `startedAt`/`completedAt` 을 저장만 한다.
 
 ## 알림·백오프
