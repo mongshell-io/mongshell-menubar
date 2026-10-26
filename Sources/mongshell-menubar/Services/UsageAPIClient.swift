@@ -228,15 +228,12 @@ struct UsageAPIClient {
         percentValue(any) ?? 0
     }
 
-    /// nil when the field is absent, not a number, or not finite. Clamped
-    /// while still a Double: `Int(_:)` traps on a value outside Int's range,
-    /// and a hostile `1e300` must fold to 100, not crash the poll.
+    /// nil when the field is absent, not a number (a JSON `true` included —
+    /// it is not 1%), or not finite. Clamped while still a Double: `Int(_:)`
+    /// traps on a value outside Int's range, and a hostile `1e300` must fold
+    /// to 100, not crash the poll.
     private static func percentValue(_ any: Any?) -> Int? {
-        let v: Double
-        if let d = any as? Double { v = d }
-        else if let i = any as? Int { v = Double(i) }
-        else { return nil }
-        guard v.isFinite else { return nil }
+        guard let v = JSONNumber.finite(any) else { return nil }
         return Int(max(0, min(100, v.rounded())))
     }
 

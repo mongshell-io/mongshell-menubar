@@ -10,7 +10,8 @@ import Foundation
 // while null keys and known-shape keys are not; the debug-log line is nil
 // when there is nothing unknown and carries only kind/percent/reset times
 // otherwise; its dedupe key ignores the moving numbers; hostile numbers
-// (1e300, Int.max, non-numbers) fold to 100/0/nil without a trap; response
+// (1e300, Int.max, non-numbers) fold to 100/0/nil without a trap, and a
+// JSON bool is not a percentage (#135); response
 // strings reach labels and the log as one bounded line, and unknown rows
 // stop at the cap; the status code maps onto the error the model branches
 // on (401/403 → re-auth, 429 → back off with Retry-After, a refused 3xx →
@@ -318,6 +319,33 @@ do {
     check("utilization 1e300 → 100, non-number → nil", utilizations == [100, nil], "\(utilizations)")
 } catch {
     check("response with hostile numbers parses", false, "\(error)")
+}
+
+// MARK: (f2) a JSON bool is not a percentage (#135)
+
+// JSONSerialization hands `true` back as an NSNumber worth 1, which `as? Double`
+// reads as 1% — the openclaw and GitHub readers already refused it.
+do {
+    let limits = try UsageAPIClient.parse(body("""
+        {"limits": [{"kind":"session","percent":true},
+                    {"kind":"weekly_all","percent":false},
+                    {"kind":"weekly_scoped","percent":true,
+                     "scope":{"model":{"display_name":"Opus"}}},
+                    {"kind":"bonus","percent":true}]}
+        """))
+    check("session percent true → unread, not 1%", limits.fiveHourPercent == nil,
+          "\(String(describing: limits.fiveHourPercent))")
+    check("weekly_all percent false → unread, not 0%", limits.weeklyAllPercent == nil,
+          "\(String(describing: limits.weeklyAllPercent))")
+    check("scoped / extra percent true → 0, not 1",
+          limits.models.first?.percent == 0 && limits.extraLimits.first?.percent == 0,
+          "\(limits.models.map(\.percent)) \(limits.extraLimits.map(\.percent))")
+
+    let flat = try UsageAPIClient.parse(body(#"{"five_hour": {"utilization": true}, "seven_day": {"utilization": false}}"#))
+    check("flat utilization bool → unread", flat.fiveHourPercent == nil && flat.weeklyAllPercent == nil,
+          "\(String(describing: flat.fiveHourPercent)) \(String(describing: flat.weeklyAllPercent))")
+} catch {
+    check("response with bool percents parses", false, "\(error)")
 }
 
 // MARK: (g) response strings are bounded single lines; rows stop at the cap

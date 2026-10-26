@@ -137,6 +137,7 @@ swiftc -o "$OUT/usage-tests" \
   "$APP/Services/Config.swift" \
   "$APP/Services/Credentials.swift" \
   "$APP/Services/DisplayText.swift" \
+  "$APP/Services/JSONNumber.swift" \
   "$APP/Services/ResponseDate.swift" \
   "$APP/Services/TimeText.swift" \
   "$APP/Services/UsageAPIClient.swift" \
