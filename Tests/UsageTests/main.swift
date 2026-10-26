@@ -16,7 +16,10 @@ import Foundation
 // on (401/403 → re-auth, 429 → back off with Retry-After, a refused 3xx →
 // an HTTP error); only a 200 body is read and the real shape sits far under
 // the response cap; a 429 holds both the poll and the manual refresh until
-// the backoff or Retry-After (capped) runs out; and the `Meter`
+// the backoff or Retry-After (capped) runs out; a 401 refreshes only the
+// own token, only a second 401 signs out, a blip on the refresh or the
+// retry keeps the account behind an error, a 429 on the retry backs off,
+// and a successful retry shows like any success (#92/#93/#95); and the `Meter`
 // shows the mode's number with the risk color (or monochrome when color
 // coding is off).
 //
@@ -410,6 +413,51 @@ do {
     check("minutes left round up, never under one",
           TimeText.minutesLeft(until: now.addingTimeInterval(61), now: now) == 2
           && TimeText.minutesLeft(until: now, now: now) == 1)
+}
+
+// MARK: 401 → refresh → retry (#92, #93, #95)
+
+do {
+    let snap = UsageSnapshot.sample
+    let none: OwnTokenRetry? = nil
+    check("error mapping: 401 / 429 / anything else",
+          UsageFetchResult(.failure(APIError.unauthorized)) == .unauthorized
+          && UsageFetchResult(.failure(APIError.rateLimited(retryAfter: 30))) == .rateLimited(retryAfter: 30)
+          && UsageFetchResult(.failure(APIError.http(503))) == .failed
+          && UsageFetchResult(.failure(URLError(.notConnectedToInternet))) == .failed
+          && UsageFetchResult(.success(snap)) == .ok(snap))
+
+    check("401 on the own token → refresh it",
+          UsageRefreshPolicy.shouldRenew(after: .unauthorized, source: .oauthLogin))
+    check("401 on a CLI token → no refresh",
+          !UsageRefreshPolicy.shouldRenew(after: .unauthorized, source: .claudeCodeCLI))
+    check("no 401 → no refresh",
+          !UsageRefreshPolicy.shouldRenew(after: .failed, source: .oauthLogin)
+          && !UsageRefreshPolicy.shouldRenew(after: .ok(snap), source: .oauthLogin)
+          && !UsageRefreshPolicy.shouldRenew(after: .rateLimited(retryAfter: nil), source: .oauthLogin))
+
+    check("first fetch ok → show (thresholds checked)",
+          UsageRefreshPolicy.step(after: .ok(snap), retry: none) == .show(snap))
+    check("401 with no refresh (CLI token) → signed out",
+          UsageRefreshPolicy.step(after: .unauthorized, retry: none) == .signOut)
+    check("first fetch 429 → back off",
+          UsageRefreshPolicy.step(after: .rateLimited(retryAfter: 60), retry: none) == .rateLimited(retryAfter: 60))
+    check("first fetch blip → error",
+          UsageRefreshPolicy.step(after: .failed, retry: none) == .failed)
+
+    check("refresh blip → error, not signed out (#92)",
+          UsageRefreshPolicy.step(after: .unauthorized, retry: .renewalFailed) == .failed)
+    check("refresh rejected for good → lapsed login",
+          UsageRefreshPolicy.step(after: .unauthorized, retry: .sessionExpired) == .expireSession)
+    check("retry 401 → signed out",
+          UsageRefreshPolicy.step(after: .unauthorized, retry: .refetched(.unauthorized)) == .signOut)
+    check("retry blip → error, not signed out (#93)",
+          UsageRefreshPolicy.step(after: .unauthorized, retry: .refetched(.failed)) == .failed)
+    check("retry 429 → back off with its Retry-After (#93)",
+          UsageRefreshPolicy.step(after: .unauthorized, retry: .refetched(.rateLimited(retryAfter: 90)))
+              == .rateLimited(retryAfter: 90))
+    check("retry ok → show like any success (#95)",
+          UsageRefreshPolicy.step(after: .unauthorized, retry: .refetched(.ok(snap))) == .show(snap))
 }
 
 // MARK: result
