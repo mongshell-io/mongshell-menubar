@@ -182,12 +182,12 @@ enum HostProbe {
     /// Budget for asking about every runner in one probe. Healthy, four
     /// runners take well under a second in all; asked one by one, a launchd
     /// that hangs on each would otherwise stack `runnerPrintTimeout` (plus
-    /// `Probe.run`'s kill and read grace) per runner onto every cycle — and
+    /// `ProcessRunner.run`'s kill and read grace) per runner onto every cycle — and
     /// the gateway probe before it may already take 27s of a 30s minimum
     /// interval. Past the budget the remaining runners go unasked, which is
     /// "not heard" like any other (see `readRunners`). The budget bounds when
     /// the last question may start and how long it may wait, not the stage's
-    /// wall time: a last question that hangs still gets `Probe.run`'s kill and
+    /// wall time: a last question that hangs still gets `ProcessRunner.run`'s kill and
     /// read grace on top, so the stage can run about 2s past it.
     static let runnersDeadline: TimeInterval = 10
 
@@ -210,7 +210,7 @@ enum HostProbe {
             labels, deadline: runnersDeadline,
             clock: { ProcessInfo.processInfo.systemUptime }
         ) { label, timeout in
-            interpretRunner(Probe.run(launchctlPath, ["print", "system/\(label)"], timeout: timeout))
+            interpretRunner(ProcessRunner.run(launchctlPath, ["print", "system/\(label)"], timeout: timeout))
         }
     }
 
@@ -250,7 +250,7 @@ enum HostProbe {
     /// `state = running` is "not running" — including launchctl's own "Could
     /// not find service" (plist present but not loaded), which exits non-zero
     /// with output.
-    static func interpretRunner(_ result: Probe.RunResult) -> Bool? {
+    static func interpretRunner(_ result: ProcessRunner.RunResult) -> Bool? {
         if result.timedOut { return nil }
         switch result.termination {
         case .launchFailed, .signaled: return nil

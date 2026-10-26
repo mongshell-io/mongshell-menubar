@@ -94,7 +94,7 @@ do {
 
     // The log line is the only place the cause shows up, so a launch failure
     // must say why (fd exhaustion and a missing binary need different fixes).
-    let missing = Probe.run("/nonexistent/openclaw", [], timeout: 1)
+    let missing = ProcessRunner.run("/nonexistent/openclaw", [], timeout: 1)
     let missingReason = reason(Probe.parseProbe(missing)) ?? ""
     check("없는 경로 실행 → 실행 실패, 출력 없음, timedOut 아님",
           missing.termination == .launchFailed(errno: ENOENT) && missing.stdout.isEmpty && !missing.timedOut,
@@ -104,7 +104,7 @@ do {
     let notExecutable = root.appendingPathComponent("not-executable")
     FileManager.default.createFile(atPath: notExecutable.path, contents: Data("#!/bin/sh\n".utf8),
                                    attributes: [.posixPermissions: 0o644])
-    let denied = Probe.run(notExecutable.path, [], timeout: 1)
+    let denied = ProcessRunner.run(notExecutable.path, [], timeout: 1)
     let deniedReason = reason(Probe.parseProbe(denied)) ?? ""
     check("실행 권한 없음 → 사유에 strerror 문구", deniedReason == "openclaw 실행 실패 — Permission denied",
           deniedReason)
@@ -112,7 +112,7 @@ do {
     // openclaw re-raises a worker's fatal signal on itself; with no output
     // that is still not a statement about the gateway, but the log must say
     // it was a signal rather than a silent exit.
-    let killed = Probe.run("/bin/sh", ["-c", "kill -9 $$"], timeout: 5)
+    let killed = ProcessRunner.run("/bin/sh", ["-c", "kill -9 $$"], timeout: 5)
     let killedObservation = Probe.parseProbe(killed)
     check("출력 없이 신호로 종료 → 관측 실패 + 신호 번호",
           killed.termination == .signaled(SIGKILL)
@@ -145,11 +145,11 @@ do {
 print("▸ run() 타임아웃")
 do {
     let started = Date()
-    let r = Probe.run("/bin/sleep", ["5"], timeout: 0.3)
+    let r = ProcessRunner.run("/bin/sleep", ["5"], timeout: 0.3)
     let elapsed = Date().timeIntervalSince(started)
     check("매달린 프로세스는 timedOut", r.timedOut)
     check("데드라인 근처에서 끊김", elapsed < 3, String(format: "%.2fs", elapsed))
-    let fine = Probe.run("/bin/echo", ["hi"], timeout: 5)
+    let fine = ProcessRunner.run("/bin/echo", ["hi"], timeout: 5)
     check("정상 종료는 timedOut 아님", !fine.timedOut && fine.termination == .exited(status: 0) && fine.stdout == "hi\n")
 }
 
@@ -176,7 +176,7 @@ do {
     // the work is a grandchild holding the pipe. Killing only the direct child
     // left it running — and the read waiting for it.
     let started = Date()
-    let hung = Probe.run("/bin/sh", ["-c", "sleep 30 & echo $!; wait"], timeout: 1)
+    let hung = ProcessRunner.run("/bin/sh", ["-c", "sleep 30 & echo $!; wait"], timeout: 1)
     let elapsed = Date().timeIntervalSince(started)
     let grandchild = firstPid(hung.stdout)
     check("손자가 쥔 파이프 — timedOut", hung.timedOut)
@@ -188,7 +188,7 @@ do {
     // A straggler left behind by a child that exited on its own is cleaned up
     // right away, instead of holding the read open until the deadline.
     let leftStarted = Date()
-    let left = Probe.run("/bin/sh", ["-c", "sleep 30 & echo $!"], timeout: 5)
+    let left = ProcessRunner.run("/bin/sh", ["-c", "sleep 30 & echo $!"], timeout: 5)
     let leftElapsed = Date().timeIntervalSince(leftStarted)
     let straggler = firstPid(left.stdout)
     check("정상 종료 후 남은 자손 — 즉시 반환", !left.timedOut && left.termination == .exited(status: 0) && leftElapsed < 2,
@@ -202,12 +202,12 @@ do {
     // the overall deadline instead of waiting for it. The shell ignores
     // SIGTERM so it lives until the SIGKILL — the full deadline's path.
     let escapeStarted = Date()
-    let escaped = Probe.run(
+    let escaped = ProcessRunner.run(
         "/bin/sh", ["-c", #"trap '' TERM; perl -MPOSIX -e '$|=1; setsid(); print "$$\n"; sleep 30' & wait"#],
         timeout: 1)
     let escapeElapsed = Date().timeIntervalSince(escapeStarted)
     let escapee = firstPid(escaped.stdout)
-    let deadline = 1 + Probe.killGrace + Probe.readGrace
+    let deadline = 1 + ProcessRunner.killGrace + ProcessRunner.readGrace
     check("그룹을 빠져나간 자손 — 마감 근처에서 반환",
           escapeElapsed >= deadline - 0.5 && escapeElapsed < deadline + 1.5,
           String(format: "%.2fs (마감 %.1fs)", escapeElapsed, deadline))
@@ -218,14 +218,14 @@ do {
     // escaped descendant holding the pipe may cost only `readGrace` more,
     // not the rest of the timeout.
     let earlyStarted = Date()
-    let early = Probe.run(
+    let early = ProcessRunner.run(
         "/bin/sh", ["-c", #"perl -MPOSIX -e '$|=1; setsid(); print "$$\n"; sleep 30' & sleep 0.3"#],
         timeout: 5)
     let earlyElapsed = Date().timeIntervalSince(earlyStarted)
     let earlyEscapee = firstPid(early.stdout)
     check("정상 종료 후 빠져나간 자손 — 종료 + readGrace 근처에서 반환",
           !early.timedOut && early.termination == .exited(status: 0)
-              && earlyElapsed < 0.3 + Probe.readGrace + 1,
+              && earlyElapsed < 0.3 + ProcessRunner.readGrace + 1,
           String(format: "%.2fs", earlyElapsed))
     check("정상 종료 후 빠져나간 자손 — 출력은 받음", earlyEscapee != nil,
           early.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -238,9 +238,9 @@ print("▸ run() 출력 상한")
 do {
     // Output past the cap is drained, not kept — and not left in the pipe,
     // where it would block the child until the timeout.
-    let flood = Probe.run("/bin/sh", ["-c", #"head -c 200000 /dev/zero | tr '\0' a"#], timeout: 5)
+    let flood = ProcessRunner.run("/bin/sh", ["-c", #"head -c 200000 /dev/zero | tr '\0' a"#], timeout: 5)
     check("상한 넘는 출력 → 상한까지만 보관",
-          flood.stdout.utf8.count == Probe.maxOutputBytes, "\(flood.stdout.utf8.count)B")
+          flood.stdout.utf8.count == ProcessRunner.maxOutputBytes, "\(flood.stdout.utf8.count)B")
     check("상한 넘는 출력 → 막히지 않고 정상 종료",
           !flood.timedOut && flood.termination == .exited(status: 0), "\(flood.termination)")
 }
@@ -254,7 +254,7 @@ do {
     // and report `timedOut` (which would read as gateway down).
     let previous = signal(SIGCHLD, SIG_IGN)
     let started = Date()
-    let r = Probe.run("/bin/echo", ["hi"], timeout: 2)
+    let r = ProcessRunner.run("/bin/echo", ["hi"], timeout: 2)
     let elapsed = Date().timeIntervalSince(started)
     signal(SIGCHLD, previous)
     check("ECHILD → 시간 초과 아님, 종료 상태 모름",
@@ -279,7 +279,7 @@ do {
     let allowedGrowth = 5
     let before = openFDCount()
     check("열린 fd 목록을 읽을 수 있음", before > 0, "결과 \(before)")
-    for _ in 0..<runs { _ = Probe.run("/bin/echo", ["x"], timeout: 5) }
+    for _ in 0..<runs { _ = ProcessRunner.run("/bin/echo", ["x"], timeout: 5) }
     let growth = openFDCount() - before
     check("\(runs)회 실행해도 fd 가 쌓이지 않음", growth <= allowedGrowth, "증가 \(growth)")
 }
@@ -610,7 +610,7 @@ do {
         }
 
         """
-    func run(_ out: String, exit: Int32 = 0, timedOut: Bool = false) -> Probe.RunResult {
+    func run(_ out: String, exit: Int32 = 0, timedOut: Bool = false) -> ProcessRunner.RunResult {
         .init(stdout: out, termination: .exited(status: exit), timedOut: timedOut)
     }
     check("최상위 state = running → 동작", HostProbe.interpretRunner(run(running)) == true)
