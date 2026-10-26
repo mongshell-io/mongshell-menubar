@@ -2,10 +2,44 @@ import Foundation
 import SwiftUI
 
 /// Owns the usage snapshot + connection state and drives polling.
-/// Shared singleton so the AppKit status item and SwiftUI views agree.
+/// Shared singleton so the AppKit status item and SwiftUI views agree —
+/// `shared`, built on the real boundaries, lives in `UsageModelLive.swift`.
 @MainActor
 final class UsageModel: ObservableObject {
-    static let shared = UsageModel()
+    /// Everything the model reaches outside itself: the Keychain, OAuth, the
+    /// usage endpoint, Notification Center and the two preferences it reads.
+    /// One bundle so `scripts/test.sh` can compile this file with fakes that
+    /// hold an await open and let a sign-in, sign-out or another refresh land
+    /// there (#150). The app uses `.live`.
+    ///
+    /// The Keychain closures are `nonisolated(nonsending)` like the
+    /// `CredentialStore` entry points they stand for: called from here they
+    /// run on the main actor up to the queue, so the calls reach
+    /// `KeychainQueue` in the order the model made them (Services/CLAUDE.md
+    /// § Keychain 호출 스레드).
+    struct Boundaries: Sendable {
+        var lookupOwnToken: nonisolated(nonsending) @Sendable () async -> OwnTokenLookup
+        var saveOwnToken: nonisolated(nonsending) @Sendable (OAuthToken) async -> OwnTokenSave
+        var clearOwnToken: nonisolated(nonsending) @Sendable () async -> Bool
+        var loadClaudeCodeToken: nonisolated(nonsending) @Sendable () async -> OAuthToken?
+        var signIn: @MainActor @Sendable () async throws -> OAuthToken
+        var refresh: @MainActor @Sendable (OAuthToken) async throws -> OAuthToken
+        var fetchUsage: @Sendable (OAuthToken) async throws -> UsageSnapshot
+        var notificationsAvailable: @MainActor @Sendable () -> Bool
+        var requestNotificationAuthorization: @MainActor @Sendable () -> Void
+        var postNotification: @MainActor @Sendable (_ identifier: String, _ title: String, _ body: String) -> Void
+        var postNotificationAfterAuthorizing: @MainActor @Sendable (_ identifier: String, _ title: String,
+                                                                    _ body: String) -> Void
+        var notifyThresholds: @MainActor @Sendable () -> Bool
+        var pollIntervalSeconds: @MainActor @Sendable () -> Int
+    }
+
+    private let boundaries: Boundaries
+
+    /// The app has one instance, `shared`; the order tests make their own.
+    init(boundaries: Boundaries) {
+        self.boundaries = boundaries
+    }
 
     // Mirrors of `session`'s visible state. `@Published` sends
     // `objectWillChange` on every assignment, equal value or not, so the
@@ -39,8 +73,6 @@ final class UsageModel: ObservableObject {
     /// older value must not adopt or show what it got (#108).
     private var loginGeneration = 0
 
-    private let api = UsageAPIClient()
-    private let auth = AuthService()
     private var pollTask: Task<Void, Never>?
     /// The refresh token is single-use and rotates on every refresh, so two
     /// overlapping `refreshOnce` runs (poll loop + the popover's "새로고침")
@@ -62,7 +94,7 @@ final class UsageModel: ObservableObject {
     // MARK: Lifecycle
 
     func start() {
-        if Preferences.shared.notifyThresholds { Notifier.requestAuthorization() }
+        if boundaries.notifyThresholds() { boundaries.requestNotificationAuthorization() }
         pollTask?.cancel()
         pollTask = Task { [weak self] in await self?.pollLoop() }
     }
@@ -87,7 +119,7 @@ final class UsageModel: ObservableObject {
                           limitsUnread: snapshot.hasUnreadLimit, keychainDeclined: keychainDeclined, now: Date())
     }
 
-    private var pollBase: Int { max(Config.minPollInterval, Preferences.shared.pollIntervalSeconds) }
+    private var pollBase: Int { max(Config.minPollInterval, boundaries.pollIntervalSeconds()) }
 
     private func pollLoop() async {
         while !Task.isCancelled {
@@ -109,7 +141,7 @@ final class UsageModel: ObservableObject {
     private func lookupOwnToken() async -> OwnTokenLookup {
         if let remembered = UsageRefreshPolicy.ownLookup(declined: session.keychainDeclined) { return remembered }
         let generation = loginGeneration, lifts = session.declineLifts
-        let own = await CredentialStore.lookupOwnToken()
+        let own = await boundaries.lookupOwnToken()
         if case .refused(let status) = own { AuthDebugLog.write("own token refused status=\(status)") }
         rememberDecline(UsageRefreshPolicy.declined(session.keychainDeclined, after: own,
                                                     sameLogin: generation == loginGeneration,
@@ -120,7 +152,7 @@ final class UsageModel: ObservableObject {
     /// Every own-token save goes through here, for the same reason.
     private func saveOwnToken(_ token: OAuthToken) async -> OwnTokenSave {
         let generation = loginGeneration, lifts = session.declineLifts
-        let result = await CredentialStore.saveOwnToken(token)
+        let result = await boundaries.saveOwnToken(token)
         rememberDecline(UsageRefreshPolicy.declined(session.keychainDeclined, afterSaving: result,
                                                     sameLogin: generation == loginGeneration,
                                                     sameAllowance: lifts == session.declineLifts))
@@ -158,7 +190,7 @@ final class UsageModel: ObservableObject {
     /// read can prompt too.
     private func currentToken(_ resolution: PendingResolution, own: OwnTokenLookup) async -> UsageTokenChoice {
         if let choice = UsageRefreshPolicy.ownChoice(resolution: resolution, own: own) { return choice }
-        return UsageRefreshPolicy.cliChoice(await CredentialStore.loadClaudeCodeToken())
+        return UsageRefreshPolicy.cliChoice(await boundaries.loadClaudeCodeToken())
     }
 
     // MARK: Refresh
@@ -243,7 +275,7 @@ final class UsageModel: ObservableObject {
 
     private func fetchUsage(_ token: OAuthToken) async -> UsageFetchResult {
         do {
-            return .ok(try await api.fetch(token: token))
+            return .ok(try await boundaries.fetchUsage(token))
         } catch {
             return UsageFetchResult(.failure(error))
         }
@@ -291,7 +323,7 @@ final class UsageModel: ObservableObject {
 
     private func renewOwnToken(_ token: OAuthToken) async -> OwnTokenRenewal {
         do {
-            return .renewed(try await auth.refresh(token))
+            return .renewed(try await boundaries.refresh(token))
         } catch AuthError.invalidGrant {
             return .sessionExpired
         } catch {
@@ -323,7 +355,7 @@ final class UsageModel: ObservableObject {
             AuthDebugLog.write("own token lapsed (invalid_grant), Keychain cannot say; item kept \(AuthDebugLog.session(token))")
         case .discard:
             AuthDebugLog.write("own token discarded (invalid_grant) \(AuthDebugLog.session(token))")
-            _ = await CredentialStore.clearOwnToken()
+            _ = await boundaries.clearOwnToken()
             guard generation == loginGeneration else { return }
         }
         let isNews = session.lapseIsNews(refreshToken: token.refreshToken)
@@ -376,7 +408,7 @@ final class UsageModel: ObservableObject {
 
     func signIn() async {
         do {
-            let token = try await auth.signIn()
+            let token = try await boundaries.signIn()
             loginGeneration += 1
             let generation = loginGeneration
             pendingOwnToken = nil
@@ -407,7 +439,7 @@ final class UsageModel: ObservableObject {
         let generation = loginGeneration
         pendingOwnToken = nil
         session.signedOut(now: Date())
-        let cleared = await CredentialStore.clearOwnToken()
+        let cleared = await boundaries.clearOwnToken()
         guard generation == loginGeneration else { return }
         // The token is still there and the next poll would show it again.
         if !cleared { session.failed("Keychain 에서 로그인 정보를 지우지 못했습니다", now: Date()) }
@@ -419,18 +451,18 @@ final class UsageModel: ObservableObject {
     /// this is a rare, action-required event of a different kind. Asks for
     /// permission on the spot in case the threshold prompt never ran.
     private func notifySessionExpired() {
-        Notifier.postAfterAuthorizing(identifier: "mongshell-menubar-session-expired",
-                                      title: "Claude 로그인이 만료되었습니다",
-                                      body: "메뉴바 아이콘을 눌러 다시 로그인하세요.")
+        boundaries.postNotificationAfterAuthorizing("mongshell-menubar-session-expired",
+                                                    "Claude 로그인이 만료되었습니다",
+                                                    "메뉴바 아이콘을 눌러 다시 로그인하세요.")
     }
 
     /// The availability check comes before `observe`: a level the app could
     /// not have shown is not counted as announced.
     private func maybeNotify(percent: Int) {
-        guard Preferences.shared.notifyThresholds, Notifier.isAvailable,
+        guard boundaries.notifyThresholds(), boundaries.notificationsAvailable(),
               let level = thresholds.observe(percent: percent) else { return }
-        Notifier.post(identifier: "mongshell-menubar-\(level)",
-                      title: "Claude 사용량 \(level)% 도달",
-                      body: level >= UsageThresholdWatch.critical ? "곧 한도에 도달합니다." : "사용량이 \(percent)%입니다.")
+        boundaries.postNotification("mongshell-menubar-\(level)",
+                                    "Claude 사용량 \(level)% 도달",
+                                    level >= UsageThresholdWatch.critical ? "곧 한도에 도달합니다." : "사용량이 \(percent)%입니다.")
     }
 }
