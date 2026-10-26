@@ -45,9 +45,22 @@ enum SnapshotRenderer {
                     .environment(\.colorScheme, scheme),
                   to: base, "menubar_host_strip_\(name)", scale: 3)
         }
+        // Every usage state is set explicitly: an image must not lean on
+        // whatever the one before it left behind (#104).
+        UsageModel.shared.presentForSnapshot(.sample, state: .signedOut)
         write(PopoverPreview(), to: base, "popover", scale: 2)
         UsageModel.shared.presentForSnapshot(.snapshotExtraLimit(now: now), state: .loaded(.oauthLogin))
         write(PopoverPreview(), to: base, "popover_extra_limit", scale: 2)
+        // The states the usage banner and its buttons turn on (#104).
+        for (state, name) in [
+            (LoadState.rateLimited(retryAt: now.addingTimeInterval(600)), "rate_limited"),
+            (.sessionExpired, "session_expired"),
+            (.error("사용량을 불러오지 못했습니다"), "error"),
+            (.loaded(.claudeCodeCLI), "cli_account"),
+        ] {
+            UsageModel.shared.presentForSnapshot(.sample, state: state)
+            write(PopoverPreview(), to: base, "popover_usage_\(name)", scale: 2)
+        }
         UsageModel.shared.presentForSnapshot(.sample, state: .signedOut)
         OpenClawModel.shared.presentForSnapshot(
             .snapshotOK(now: now, host: .snapshotOnBattery), now: now)
