@@ -1518,24 +1518,27 @@ do {
     let normal = Config.minPollInterval
     var idle = WakeRetry()
     check("no sleep before it: a failure waits the full interval", idle.wait(normal: normal, failed: true) == normal)
-    idle.waitEnded(slept: false)
-    check("…and a wait with no sleep arms nothing", idle.wait(normal: normal, failed: true) == normal)
+    idle.armIfSlept(false)
+    check("…and a poll with no sleep since the mark arms nothing", idle.wait(normal: normal, failed: true) == normal)
 
     var woke = WakeRetry()
-    woke.waitEnded(slept: true)
+    woke.armIfSlept(true)
     check("after a wake a success still waits the full interval", woke.wait(normal: normal, failed: false) == normal)
+    // The loop's order: the poll comes back, sleep since the mark arms, then
+    // the wait is decided — so the failure the sleep caused is retried first.
+    var failing = WakeRetry()
     var waits: [Int] = []
-    for _ in 0..<(Config.wakeRetryAttempts + 1) {
-        waits.append(woke.wait(normal: normal, failed: true))
-        woke.polled(failed: true)
-        woke.waitEnded(slept: false)
+    for attempt in 0..<(Config.wakeRetryAttempts + 1) {
+        failing.armIfSlept(attempt == 0)
+        waits.append(failing.wait(normal: normal, failed: true))
+        failing.polled(failed: true)
     }
     check("after a wake failures are retried soon, at most wakeRetryAttempts times",
           waits == Array(repeating: Config.wakeRetrySeconds, count: Config.wakeRetryAttempts) + [normal],
           "waits=\(waits)")
 
     var short = WakeRetry()
-    short.waitEnded(slept: true)
+    short.armIfSlept(true)
     check("a retry never waits longer than the normal interval", short.wait(normal: 5, failed: true) == 5)
 
     check("an error with no 429 backoff counts as failed",
@@ -1546,7 +1549,7 @@ do {
           !UsageRetryPolicy.wakeRetryFailed(after: .rateLimited(retryAt: Date()), backoff: 0))
 
     var recovered = WakeRetry()
-    recovered.waitEnded(slept: true)
+    recovered.armIfSlept(true)
     recovered.polled(failed: true)
     recovered.polled(failed: false)
     check("a success ends the retries", recovered.wait(normal: normal, failed: true) == normal)

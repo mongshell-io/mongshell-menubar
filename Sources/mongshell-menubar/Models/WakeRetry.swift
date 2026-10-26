@@ -5,12 +5,13 @@ import Foundation
 /// the mac sleeps, so a poll that fell due during sleep goes out the moment
 /// it wakes — usually before the network is back. Waiting the full interval
 /// after that failure left the error badge up for up to three minutes.
-/// After a wait the mac slept through, a failed poll is retried after
-/// `Config.wakeRetrySeconds`, at most `Config.wakeRetryAttempts` times; a
-/// success, or a failure with no sleep before it, ends that.
+/// After the mac slept — through a wait, or through the request after it — a
+/// failed poll is retried after `Config.wakeRetrySeconds`; a success, or
+/// `Config.wakeRetryAttempts` failures in a row, puts the loop back on its
+/// normal interval.
 ///
-/// Sleep is told from the wait itself — `SuspendingClock` stops while the
-/// mac sleeps, `ContinuousClock` does not — rather than from
+/// Sleep is told from the poll loop's own time — `SuspendingClock` stops
+/// while the mac sleeps, `ContinuousClock` does not — rather than from
 /// `NSWorkspace.didWakeNotification`: that arrives in no set order with the
 /// poll that fell due, and a failure handled before it would get the full
 /// wait. One value per poll loop; the usage, GitHub and openclaw loops use
@@ -27,7 +28,9 @@ struct WakeRetry: Equatable {
         continuous - suspending > sleptThreshold
     }
 
-    /// Both clocks at the start of a wait.
+    /// Both clocks as a wait begins. Read once the next poll has come back,
+    /// so it spans the wait and that request: a mac that sleeps mid-request
+    /// fails it on waking just the same.
     struct Mark {
         private let continuous = ContinuousClock.now
         private let suspending = SuspendingClock.now
@@ -49,8 +52,9 @@ struct WakeRetry: Equatable {
         retriesLeft = failed ? max(retriesLeft - 1, 0) : 0
     }
 
-    /// A wait ended; one the mac slept through arms the retries.
-    mutating func waitEnded(slept: Bool) {
+    /// A poll came back; sleep since the last mark arms the retries. Called
+    /// before `wait`, so the failure that sleep caused is the first retried.
+    mutating func armIfSlept(_ slept: Bool) {
         if slept { retriesLeft = Config.wakeRetryAttempts }
     }
 }

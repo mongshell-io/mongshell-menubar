@@ -145,8 +145,10 @@ final class UsageModel: ObservableObject {
 
     private func pollLoop() async {
         var wake = WakeRetry()
+        var mark = WakeRetry.Mark()
         while !Task.isCancelled {
             await refreshOnce()
+            wake.armIfSlept(mark.sleptSince)
             let failed = UsageRetryPolicy.wakeRetryFailed(after: loadState, backoff: session.backoff)
             var wait = TimeInterval(wake.wait(
                 normal: UsageRetryPolicy.pollWait(base: pollBase, backoff: session.backoff), failed: failed))
@@ -154,9 +156,8 @@ final class UsageModel: ObservableObject {
             if case .rateLimited(let retryAt) = loadState {
                 wait = max(wait, retryAt.timeIntervalSinceNow)
             }
-            let mark = WakeRetry.Mark()
+            mark = WakeRetry.Mark()
             try? await Task.sleep(for: .seconds(wait))
-            wake.waitEnded(slept: mark.sleptSince)
         }
     }
 
