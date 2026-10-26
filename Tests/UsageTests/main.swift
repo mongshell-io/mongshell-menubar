@@ -572,7 +572,7 @@ do {
     // #90 — the account row survives 429, error and the next fetch in flight.
     s.rateLimited(retryAfter: nil, now: now, pollBase: 180)
     check("429 keeps the account (#90)", s.accountSource == .oauthLogin)
-    s.failed("x")
+    s.failed("x", now: now)
     check("error keeps the account and the numbers (#90, #92)", s.accountSource == .oauthLogin && s.snapshot == snap)
     s.begin(accessToken: "own", source: .oauthLogin)
     check("a fetch in flight does not go back to loading or drop the account",
@@ -881,6 +881,33 @@ do {
         check("\(name) ten hours after launch → sample still reads 3시간 8분 (#133)",
               phrase == samplePhrase, phrase)
     }
+}
+
+// MARK: #133 — a locked Keychain while signed out keeps the sample counting from now
+
+do {
+    let launch = Date(timeIntervalSince1970: 1_790_000_000)
+    let later = launch.addingTimeInterval(10 * 3600)
+    let samplePhrase = "3시간 8분 후 초기화"
+
+    var x = UsageSession()
+    x.present(.sample(now: launch), state: .signedOut)
+    x.failed("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다", now: later)
+    let phrase = TimeText.resetsIn(x.snapshot.fiveHourResetAt, now: later)
+    check("failed over a sample ten hours on → sample still reads 3시간 8분 (#133)",
+          phrase == samplePhrase && x.loadState == .error("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다"),
+          phrase)
+    x.failed("again", now: later.addingTimeInterval(3600))
+    check("failed again over the sample → rebuilt again",
+          x.snapshot == .sample(now: later.addingTimeInterval(3600)))
+
+    let real = UsageSnapshot(fiveHourPercent: 40, fiveHourResetAt: launch.addingTimeInterval(600),
+                             weeklyAllPercent: 10, weeklyResetAt: nil, models: [], extraLimits: [],
+                             unknownTopLevel: [], creditsText: nil, lastUpdated: launch)
+    var y = UsageSession()
+    y.loaded(real, source: .oauthLogin)
+    y.failed("x", now: later)
+    check("failed over real numbers → numbers kept as they were", y.snapshot == real)
 }
 
 // MARK: #132 — a held renewal is stored again while the Keychain refuses

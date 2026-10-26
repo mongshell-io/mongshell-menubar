@@ -144,7 +144,7 @@ final class UsageModel: ObservableObject {
             return
         case .ownUnavailable(let status):
             AuthDebugLog.write("own token unavailable status=\(status)")
-            session.failed("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다")
+            session.failed("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다", now: Date())
             return
         }
         var token = initialToken
@@ -209,7 +209,7 @@ final class UsageModel: ObservableObject {
         case .rateLimited(let retryAfter):
             session.rateLimited(retryAfter: retryAfter, now: Date(), pollBase: pollBase)
         case .failed:
-            session.failed("사용량을 불러오지 못했습니다")
+            session.failed("사용량을 불러오지 못했습니다", now: Date())
         }
     }
 
@@ -301,13 +301,13 @@ final class UsageModel: ObservableObject {
             // A token that did not reach the Keychain is gone at the next
             // poll, which would then quietly fall back to the CLI token.
             guard CredentialStore.saveOwnToken(token) == .saved else {
-                session.failed("로그인 정보를 Keychain 에 저장하지 못했습니다")
+                session.failed("로그인 정보를 Keychain 에 저장하지 못했습니다", now: Date())
                 return
             }
             session.signedIn()
             await refreshOnce()
         } catch {
-            session.failed((error as? LocalizedError)?.errorDescription ?? "로그인 실패")
+            session.failed((error as? LocalizedError)?.errorDescription ?? "로그인 실패", now: Date())
         }
     }
 
@@ -317,7 +317,7 @@ final class UsageModel: ObservableObject {
         let cleared = CredentialStore.clearOwnToken()
         session.signedOut(now: Date())
         // The token is still there and the next poll would show it again.
-        if !cleared { session.failed("Keychain 에서 로그인 정보를 지우지 못했습니다") }
+        if !cleared { session.failed("Keychain 에서 로그인 정보를 지우지 못했습니다", now: Date()) }
     }
 
     // MARK: Notifications

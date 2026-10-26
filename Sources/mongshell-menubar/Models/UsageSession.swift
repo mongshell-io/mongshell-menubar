@@ -24,6 +24,10 @@ struct UsageSession: Equatable {
     /// could overwrite the notice and let the next CLI 401 downgrade it to a
     /// plain `signedOut` (#44).
     private var expiredUnresolved = false
+    /// `snapshot` is the placeholder a sign-out put up, not fetched numbers.
+    /// Tracked by event rather than read off the snapshot: nothing in a
+    /// snapshot's values marks it as the sample for certain.
+    private var showsSample = true
 
     static let backoffCap = 4
 
@@ -44,6 +48,7 @@ struct UsageSession: Equatable {
     /// its own: it proves whichever token we hold now works.
     mutating func loaded(_ snap: UsageSnapshot, source: DataSource) {
         snapshot = snap
+        showsSample = false
         loadState = .loaded(source)
         accountSource = source
         rejectedAccessToken = nil
@@ -60,6 +65,7 @@ struct UsageSession: Equatable {
     /// The own token was discarded after `invalid_grant`.
     mutating func expired(now: Date) {
         snapshot = .sample(now: now)
+        showsSample = true
         accountSource = nil
         expiredUnresolved = true
         loadState = .sessionExpired
@@ -71,9 +77,13 @@ struct UsageSession: Equatable {
             now: now, base: pollBase, backoff: backoff, retryAfter: retryAfter))
     }
 
-    /// Keeps the account and the numbers; the next poll tries again.
-    mutating func failed(_ message: String) {
+    /// Keeps the account and the numbers; the next poll tries again. Sample
+    /// numbers are rebuilt from `now` like every signed-out poll: a Keychain
+    /// that stays locked while signed out fails every poll, and a sample left
+    /// from before would tick down to "곧 초기화" and stay there (#133).
+    mutating func failed(_ message: String, now: Date) {
         loadState = .error(message)
+        if showsSample { snapshot = .sample(now: now) }
     }
 
     // MARK: User events
@@ -89,11 +99,14 @@ struct UsageSession: Equatable {
         accountSource = nil
         loadState = .signedOut
         snapshot = .sample(now: now)
+        showsSample = true
     }
 
     /// Snapshot hook: a given snapshot and state, nothing else carried over.
+    /// A signed-out state is taken to be showing the sample, as it would be.
     mutating func present(_ snap: UsageSnapshot, state: LoadState) {
         snapshot = snap
+        showsSample = state == .signedOut || state == .sessionExpired
         loadState = state
         if case .loaded(let source) = state { accountSource = source } else { accountSource = nil }
     }
@@ -109,6 +122,7 @@ struct UsageSession: Equatable {
         accountSource = nil
         loadState = expiredUnresolved ? .sessionExpired : .signedOut
         snapshot = .sample(now: now)
+        showsSample = true
     }
 }
 
