@@ -19,9 +19,8 @@ final class UsageModel: ObservableObject {
     @Published private(set) var snapshot: UsageSnapshot = .sample(now: Date())
     @Published private(set) var loadState: LoadState = .signedOut
     @Published private(set) var accountSource: DataSource?
-    /// Mirror of `ownKeychainDeclined` for the popover's banner (#146),
-    /// assigned only when it differs, for the same reason as above — every
-    /// own-token read folds its answer into the flag.
+    /// Every own-token read folds its answer into this flag (#146), so it
+    /// too is assigned only when it differs.
     @Published private(set) var keychainDeclined = false
 
     /// The one place the state above changes (#103).
@@ -30,6 +29,7 @@ final class UsageModel: ObservableObject {
             if snapshot != session.snapshot { snapshot = session.snapshot }
             if loadState != session.loadState { loadState = session.loadState }
             if accountSource != session.accountSource { accountSource = session.accountSource }
+            if keychainDeclined != session.keychainDeclined { keychainDeclined = session.keychainDeclined }
         }
     }
     private var thresholds = UsageThresholdWatch()
@@ -38,14 +38,6 @@ final class UsageModel: ObservableObject {
     /// Bumped by every sign-in and sign-out. A refresh that started under an
     /// older value must not adopt or show what it got (#108).
     private var loginGeneration = 0
-    /// The user declined the own-token Keychain prompt this session. Polls
-    /// then neither read nor store the own item — each try put the dialog
-    /// back (#143). Lifted only where the user acts: `signIn()` and
-    /// `refreshNow()`; a relaunch starts without it, like GitHub's
-    /// `ghKeychainDenied`.
-    private var ownKeychainDeclined = false {
-        didSet { if keychainDeclined != ownKeychainDeclined { keychainDeclined = ownKeychainDeclined } }
-    }
 
     private let api = UsageAPIClient()
     private let auth = AuthService()
@@ -80,7 +72,7 @@ final class UsageModel: ObservableObject {
     /// is the user acting, so a declined Keychain prompt may show again.
     func refreshNow() {
         guard manualRefreshBlockedUntil == nil else { return }
-        ownKeychainDeclined = false
+        session.allowKeychainAgain()
         Task { await refreshOnce() }
     }
 
@@ -115,11 +107,11 @@ final class UsageModel: ObservableObject {
     /// (#141), so the answer is folded into the flag as it stands when the
     /// read comes back — a save the user cancelled meanwhile keeps it set.
     private func lookupOwnToken() async -> OwnTokenLookup {
-        if let remembered = UsageRefreshPolicy.ownLookup(declined: ownKeychainDeclined) { return remembered }
+        if let remembered = UsageRefreshPolicy.ownLookup(declined: session.keychainDeclined) { return remembered }
         let generation = loginGeneration
         let own = await CredentialStore.lookupOwnToken()
         if case .refused(let status) = own { AuthDebugLog.write("own token refused status=\(status)") }
-        rememberDecline(UsageRefreshPolicy.declined(ownKeychainDeclined, after: own,
+        rememberDecline(UsageRefreshPolicy.declined(session.keychainDeclined, after: own,
                                                     sameLogin: generation == loginGeneration))
         return own
     }
@@ -128,16 +120,16 @@ final class UsageModel: ObservableObject {
     private func saveOwnToken(_ token: OAuthToken) async -> OwnTokenSave {
         let generation = loginGeneration
         let result = await CredentialStore.saveOwnToken(token)
-        rememberDecline(UsageRefreshPolicy.declined(ownKeychainDeclined, afterSaving: result,
+        rememberDecline(UsageRefreshPolicy.declined(session.keychainDeclined, afterSaving: result,
                                                     sameLogin: generation == loginGeneration))
         return result
     }
 
     private func rememberDecline(_ declined: Bool) {
-        if declined, !ownKeychainDeclined {
+        if declined, !session.keychainDeclined {
             AuthDebugLog.write("own token prompt declined; not asked again until the user acts")
         }
-        ownKeychainDeclined = declined
+        session.setKeychainDeclined(declined)
     }
 
     /// Stores or drops the held renewal as `resolution` says. Returns false
@@ -292,8 +284,7 @@ final class UsageModel: ObservableObject {
     func presentForSnapshot(_ snap: UsageSnapshot, state: LoadState, keychainDeclined: Bool = false) {
         pollTask?.cancel()
         pollTask = nil
-        session.present(snap, state: state)
-        ownKeychainDeclined = keychainDeclined
+        session.present(snap, state: state, keychainDeclined: keychainDeclined)
     }
 
     private func renewOwnToken(_ token: OAuthToken) async -> OwnTokenRenewal {
@@ -384,7 +375,7 @@ final class UsageModel: ObservableObject {
             let generation = loginGeneration
             pendingOwnToken = nil
             // Signing in is the user acting: the save below may ask again.
-            ownKeychainDeclined = false
+            session.allowKeychainAgain()
             let save = await saveOwnToken(token)
             // A sign-out or another sign-in while the save was out wins.
             guard generation == loginGeneration else { return }

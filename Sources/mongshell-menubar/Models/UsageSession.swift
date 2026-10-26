@@ -36,6 +36,13 @@ struct UsageSession: Equatable {
     /// down — so the notice being up is not enough to tell it is old news.
     /// Digests, not the tokens: nothing here needs to spend them.
     private var announcedLapses: Set<SHA256Digest> = []
+    /// The user declined the own-token Keychain prompt this session. Polls
+    /// then neither read nor store the own item — each try put the dialog
+    /// back (#143). Set from what each read or save answered
+    /// (`UsageRefreshPolicy.declined`), lifted only where the user acts
+    /// (`allowKeychainAgain()`); a relaunch starts without it, like GitHub's
+    /// `ghKeychainDenied`. The popover's banner reads it (#146).
+    private(set) var keychainDeclined = false
 
     static let backoffCap = 4
 
@@ -113,7 +120,19 @@ struct UsageSession: Equatable {
         rebuildSampleIfShowing(now: now)
     }
 
+    /// The flag as `UsageRefreshPolicy.declined` folded the Keychain's
+    /// answer into it.
+    mutating func setKeychainDeclined(_ declined: Bool) {
+        keychainDeclined = declined
+    }
+
     // MARK: User events
+
+    /// Signing in or a manual refresh: the user acting, so a declined
+    /// Keychain prompt may show again.
+    mutating func allowKeychainAgain() {
+        keychainDeclined = false
+    }
 
     /// A new login reached the Keychain; the lapsed-login notice has done
     /// its job.
@@ -131,8 +150,9 @@ struct UsageSession: Equatable {
 
     /// Snapshot hook: a given snapshot and state, nothing else carried over.
     /// A signed-out state is taken to be showing the sample, as it would be.
-    mutating func present(_ snap: UsageSnapshot, state: LoadState) {
+    mutating func present(_ snap: UsageSnapshot, state: LoadState, keychainDeclined: Bool = false) {
         snapshot = snap
+        self.keychainDeclined = keychainDeclined
         showsSample = state == .signedOut || state == .sessionExpired
         loadState = state
         if case .loaded(let source) = state { accountSource = source } else { accountSource = nil }
