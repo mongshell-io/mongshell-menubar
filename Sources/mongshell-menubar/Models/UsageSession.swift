@@ -71,19 +71,21 @@ struct UsageSession: Equatable {
         loadState = .sessionExpired
     }
 
+    /// Keeps the account and the numbers, like `failed`. A 429 right after
+    /// signing in lands while the sample is still up, and the backoff can
+    /// outlast its countdown.
     mutating func rateLimited(retryAfter: TimeInterval?, now: Date, pollBase: Int) {
         backoff = min(backoff + 1, Self.backoffCap)
         loadState = .rateLimited(retryAt: UsageRetryPolicy.retryAt(
             now: now, base: pollBase, backoff: backoff, retryAfter: retryAfter))
+        rebuildSampleIfShowing(now: now)
     }
 
-    /// Keeps the account and the numbers; the next poll tries again. Sample
-    /// numbers are rebuilt from `now` like every signed-out poll: a Keychain
-    /// that stays locked while signed out fails every poll, and a sample left
-    /// from before would tick down to "곧 초기화" and stay there (#133).
+    /// Keeps the account and the numbers; the next poll tries again. A
+    /// Keychain that stays locked while signed out fails every poll.
     mutating func failed(_ message: String, now: Date) {
         loadState = .error(message)
-        if showsSample { snapshot = .sample(now: now) }
+        rebuildSampleIfShowing(now: now)
     }
 
     // MARK: User events
@@ -123,6 +125,14 @@ struct UsageSession: Equatable {
         loadState = expiredUnresolved ? .sessionExpired : .signedOut
         snapshot = .sample(now: now)
         showsSample = true
+    }
+
+    /// For the events that keep whatever numbers are up: real ones stay as
+    /// they were, but a sample is rebuilt from `now` like every signed-out
+    /// poll — one left from before would tick down to "곧 초기화" and stay
+    /// there for as long as the polls keep failing (#133).
+    private mutating func rebuildSampleIfShowing(now: Date) {
+        if showsSample { snapshot = .sample(now: now) }
     }
 }
 

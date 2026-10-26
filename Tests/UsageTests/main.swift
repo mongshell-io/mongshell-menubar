@@ -908,6 +908,18 @@ do {
     y.loaded(real, source: .oauthLogin)
     y.failed("x", now: later)
     check("failed over real numbers → numbers kept as they were", y.snapshot == real)
+
+    // Signed in, first poll 429s: the sample stays up through the backoff.
+    var z = UsageSession()
+    z.present(.sample(now: launch), state: .signedOut)
+    z.rateLimited(retryAfter: nil, now: later, pollBase: 60)
+    let limitedPhrase = TimeText.resetsIn(z.snapshot.fiveHourResetAt, now: later)
+    check("rateLimited over a sample ten hours on → sample still reads 3시간 8분 (#133)",
+          limitedPhrase == samplePhrase, limitedPhrase)
+    var w = UsageSession()
+    w.loaded(real, source: .oauthLogin)
+    w.rateLimited(retryAfter: nil, now: later, pollBase: 60)
+    check("rateLimited over real numbers → numbers kept as they were", w.snapshot == real)
 }
 
 // MARK: #132 — a held renewal is stored again while the Keychain refuses
