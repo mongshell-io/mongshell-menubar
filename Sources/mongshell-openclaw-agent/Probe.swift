@@ -119,10 +119,17 @@ enum Probe {
     /// "Gateway reachable." hides the positive signal's prefix.
     static let ansiEscapePattern = "\u{1B}\\[[0-?]*[ -/]*[@-~]"
 
+    /// The probe output with colour codes removed. Every rule reads this, not
+    /// the raw output: a colour code in front of a channel's `- ` or inside
+    /// its `running` would hide the runtime state, and the config-only rule
+    /// would then call a healthy gateway down (#159).
+    private static func plain(_ text: String) -> String {
+        text.replacingOccurrences(of: ansiEscapePattern, with: "", options: .regularExpression)
+    }
+
     /// Trimmed, lowercased lines that name the gateway, colour codes removed.
     private static func gatewayLines(_ text: String) -> [String] {
-        text.split(whereSeparator: \.isNewline)
-            .map { String($0).replacingOccurrences(of: ansiEscapePattern, with: "", options: .regularExpression) }
+        plain(text).split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
             .filter(isGatewayLine)
     }
@@ -154,7 +161,7 @@ enum Probe {
         if hasGatewaySignal(result.stdout) { return nil }
         // A channel line can only come from the gateway's answer, so the
         // channel rules judge it whatever the exit code says.
-        if result.stdout.split(whereSeparator: \.isNewline).contains(where: isChannelAnswerLine) { return nil }
+        if plain(result.stdout).split(whereSeparator: \.isNewline).contains(where: isChannelAnswerLine) { return nil }
         switch result.termination {
         case .exited(let status): return "openclaw CLI 가 게이트웨이 응답 없이 비정상 종료 (exit \(status))"
         case .signaled(let signal): return "openclaw CLI 가 게이트웨이 응답 없이 신호 \(signal)번으로 종료"
@@ -173,7 +180,7 @@ enum Probe {
 
     /// The verdict rules proper, for a probe that finished and said something.
     private static func verdict(fromOutput result: ProcessRunner.RunResult) -> ProbeVerdict {
-        let text = result.stdout
+        let text = plain(result.stdout)
         let gateway = gatewayLines(text)
 
         // The gateway said it can't be reached → DOWN — unless a line says

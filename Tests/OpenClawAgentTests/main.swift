@@ -130,6 +130,15 @@ do {
                                 + "\(esc)[1;32mGateway reachable.\(esc)[0m\n- Telegram default: running\n", exit: 0)
     check("색 코드 reachable + vault unreachable + running → ok", colouredVault == .ok(detail: "Telegram default"),
           "\(String(describing: colouredVault))")
+    // Colour on the channel line itself: the runtime state must still be
+    // read, or the config-only rule (#159) turns a healthy gateway down.
+    let colouredState = verdict("\(esc)[1m- Telegram default\(esc)[0m: enabled, \(esc)[32mrunning\(esc)[0m, works\n",
+                                exit: 0)
+    check("채널 줄의 색 코드 running (reachable 줄 없음) → ok", colouredState == .ok(detail: "Telegram default"),
+          "\(String(describing: colouredState))")
+    let colouredStateFail = verdict("\(esc)[32m- Telegram default: running\(esc)[0m\n", exit: 1)
+    check("색 코드 채널 줄 + exit 1 → 관측된 채널 답으로 ok", colouredStateFail == .ok(detail: "Telegram default"),
+          "\(String(describing: colouredStateFail))")
 
     // The positive signal is a line opening "Gateway reachable": the tip on
     // every run says "(requires a reachable gateway)" and must not count.
