@@ -43,6 +43,11 @@ struct UsageSession: Equatable {
     /// (`allowKeychainAgain()`, `signedOut`); a relaunch starts without it,
     /// like GitHub's `ghKeychainDenied`. The popover's banner reads it (#146).
     private(set) var keychainDeclined = false
+    /// The same for the Claude Code CLI item (#155): the user declined its
+    /// prompt this session, so polls read only the CLI file. Set and lifted
+    /// under the same rules and by the same user acts as `keychainDeclined`
+    /// — each read on its own item: declining one says nothing of the other.
+    private(set) var cliKeychainDeclined = false
     /// Bumped wherever the user lifts the decline. A read or save that went
     /// out before the lift answers for the dialog the user acted past, so it
     /// does not set the flag again (`UsageRefreshPolicy.declined`). Kept
@@ -133,6 +138,12 @@ struct UsageSession: Equatable {
         keychainDeclined = declined
     }
 
+    /// The CLI item's flag as `UsageRefreshPolicy.declined(_:afterReadingCLI:sameAllowance:)`
+    /// folded its read into it.
+    mutating func setCLIKeychainDeclined(_ declined: Bool) {
+        cliKeychainDeclined = declined
+    }
+
     /// The own item would not read (a locked Keychain); the next poll
     /// reads again. Like `failed`, except under the lapsed-login notice: a
     /// lapse the Keychain could not confirm leaves the item (#147), and the
@@ -147,9 +158,10 @@ struct UsageSession: Equatable {
     // MARK: User events
 
     /// Signing in or a manual refresh: the user acting, so a declined
-    /// Keychain prompt may show again.
+    /// Keychain prompt — either item's — may show again.
     mutating func allowKeychainAgain() {
         keychainDeclined = false
+        cliKeychainDeclined = false
         declineLifts += 1
     }
 
@@ -165,6 +177,7 @@ struct UsageSession: Equatable {
     mutating func signedOut(now: Date) {
         expiredUnresolved = false
         keychainDeclined = false
+        cliKeychainDeclined = false
         declineLifts += 1
         accountSource = nil
         loadState = .signedOut
@@ -174,9 +187,11 @@ struct UsageSession: Equatable {
 
     /// Snapshot hook: a given snapshot and state, nothing else carried over.
     /// A signed-out state is taken to be showing the sample, as it would be.
-    mutating func present(_ snap: UsageSnapshot, state: LoadState, keychainDeclined: Bool = false) {
+    mutating func present(_ snap: UsageSnapshot, state: LoadState, keychainDeclined: Bool = false,
+                          cliKeychainDeclined: Bool = false) {
         snapshot = snap
         self.keychainDeclined = keychainDeclined
+        self.cliKeychainDeclined = cliKeychainDeclined
         showsSample = state == .signedOut || state == .sessionExpired
         loadState = state
         if case .loaded(let source) = state { accountSource = source } else { accountSource = nil }

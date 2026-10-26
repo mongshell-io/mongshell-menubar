@@ -46,3 +46,33 @@ struct PopoverHeader<Mark: View, BeforeSettings: View, AfterSettings: View>: Vie
         .padding(.bottom, 13)
     }
 }
+
+/// The clock both popover headers run on: while the manual refresh is held
+/// back `until` a date, `TimeText.minuteTick` from the start and then `until`
+/// itself, so the "N분 후 가능" item turns back into "새로고침" when the hold
+/// lifts rather than up to a minute later; otherwise a single entry and no
+/// further updates. One schedule type for both states keeps the header in the
+/// same `TimelineView` when a rate limit starts or ends — swapping a
+/// TimelineView branch for a plain one gives the header a new identity and
+/// rebuilds its ⋯ menu, which can close it while open (#153). Changing
+/// `until` works the way `.animation(paused:)` does: a changed schedule value
+/// restarts the timeline from the current date.
+struct HeaderClockSchedule: TimelineSchedule {
+    let until: Date?
+
+    func entries(from startDate: Date, mode: TimelineScheduleMode) -> AnyIterator<Date> {
+        // Ascending, as TimelineSchedule requires: minute steps clamped to
+        // `until`, which is the last entry. A hold already over by the start
+        // leaves just the start.
+        var pending: Date? = startDate
+        return AnyIterator {
+            guard let current = pending else { return nil }
+            if let until, current < until {
+                pending = min(current.addingTimeInterval(TimeText.minuteTick), until)
+            } else {
+                pending = nil
+            }
+            return current
+        }
+    }
+}

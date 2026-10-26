@@ -23,7 +23,10 @@ enum GitHubLoadState: Equatable, Sendable {
     case loading
     case loaded(GitHubTokenSource)
     /// 403/429/`RATE_LIMITED`, or the remaining budget fell under the reserve.
-    case rateLimited(retryAt: Date)
+    /// `retryAt` is when the next automatic poll goes; `manualRetryAt` when
+    /// the popover's 새로고침 opens again — earlier when the server named a
+    /// time shorter than the backoff (#154). nil means it follows `retryAt`.
+    case rateLimited(retryAt: Date, manualRetryAt: Date? = nil)
     /// 401 — the token was rejected.
     case unauthorized
     /// The pasted PAT could not be stored. Whatever the Keychain holds now
@@ -124,13 +127,57 @@ enum GitHubPollPolicy {
     /// failure; and `hasFreshRunningChecks` (`GitHubSnapshot`, read through
     /// the hidden repos). The popover need not be open: the hover's CI row
     /// should not lag a whole base interval behind the checks it shows.
+    ///
+    /// While rate-limited the wait never ends before `retryAt` (#154): the
+    /// banner says when the next request goes, and one sent earlier only
+    /// earns another refusal — on a token gh shares, so on the user's
+    /// account. The usage loop keeps the same floor.
     static func nextAutoWait(after state: GitHubLoadState, base: Int, backoff: Int,
-                             hasFreshRunningChecks: Bool) -> Int? {
+                             hasFreshRunningChecks: Bool, now: Date) -> Int? {
         if waitsForUser(state) { return nil }
         if backoff == 0, case .loaded = state, hasFreshRunningChecks {
             return Config.githubFastPollSeconds
         }
-        return nextWait(base: base, backoff: backoff)
+        let wait = nextWait(base: base, backoff: backoff)
+        guard case .rateLimited(let retryAt, _) = state else { return wait }
+        return max(wait, secondsUntil(retryAt, now: now))
+    }
+
+    /// When to ask again after a rate-limited answer: the backoff wait, or
+    /// what the server named when that is later — `retry-after` for the
+    /// secondary limit, `x-ratelimit-reset` for the primary one. The
+    /// server's wait is capped at `maxBackoffWait` so a hostile value can't
+    /// park polling for days; that cap is also the backoff's own.
+    static func retryAt(now: Date, serverRetryAt: Date?, base: Int, backoff: Int) -> Date {
+        let serverWait = serverRetryAt.map { secondsUntil($0, now: now) } ?? 0
+        return now.addingTimeInterval(TimeInterval(max(nextWait(base: base, backoff: backoff), serverWait)))
+    }
+
+    /// When the popover's 새로고침 may go out again after a rate-limited
+    /// answer: the time the server named, or the backoff's `retryAt` when
+    /// it named none. Not the automatic wait's max of the two — that held a
+    /// `retry-after: 30` behind a backoff of up to `maxBackoffWait` (#154).
+    /// Capped like `retryAt`, so a hostile value parks it no longer.
+    static func manualRetryAt(now: Date, serverRetryAt: Date?, retryAt: Date) -> Date {
+        guard let serverRetryAt else { return retryAt }
+        return now.addingTimeInterval(TimeInterval(secondsUntil(serverRetryAt, now: now)))
+    }
+
+    /// nil when the popover's manual refresh may go out now; otherwise when
+    /// it may: while rate-limited, not before `manualRetryAt` (or `retryAt`
+    /// when the state carries none).
+    static func manualRefreshBlocked(until state: GitHubLoadState, now: Date) -> Date? {
+        guard case .rateLimited(let retryAt, let manualRetryAt) = state else { return nil }
+        let until = manualRetryAt ?? retryAt
+        return now < until ? until : nil
+    }
+
+    /// Whole seconds from `now` to `date`, rounded up so a wait never ends
+    /// short of it, and kept within 0…`maxBackoffWait` — which also keeps
+    /// the conversion from trapping on an absurd date.
+    private static func secondsUntil(_ date: Date, now: Date) -> Int {
+        let seconds = date.timeIntervalSince(now).rounded(.up)
+        return Int(min(max(seconds, 0), TimeInterval(maxBackoffWait)))
     }
 
     /// Whether a failed request backs off as a rate limit does. A 403 or

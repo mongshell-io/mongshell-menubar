@@ -66,10 +66,158 @@ do {
     check("채널 없음 + exit 0 + reachable → ok(채널 없음)", v9 == .ok(detail: "채널 없음"), "\(String(describing: v9))")
     let v10 = verdict("Gateway reachable.\n", exit: 1)
     check("채널 없음 + exit≠0 → down", v10 == .down, "\(String(describing: v10))")
-    let v12 = verdict("openclaw: failed to load config\n", exit: 1)
-    check("해석 불가 문구 + exit≠0 → down (관측됨)", v12 == .down, "\(String(describing: v12))")
     let v13 = verdict("", exit: 0, timedOut: true)
     check("출력 없는 타임아웃 → timedOut (관측 실패 아님)", v13 == .timedOut, "\(String(describing: v13))")
+
+    // A channel reported as not running is degraded, not green: "running" is
+    // matched as a whole token not preceded by "not".
+    let v14 = verdict("Gateway reachable.\n- Telegram default: not running\n")
+    check("not running → degraded", v14 == .degraded(detail: "Telegram default"), "\(String(describing: v14))")
+    let v15 = verdict("Gateway reachable.\n- Telegram default: status: not-running\n")
+    check("status: not-running → degraded", v15 == .degraded(detail: "Telegram default"), "\(String(describing: v15))")
+    let v16 = verdict("Gateway reachable.\n- Telegram default: not running\n- Slack main: running\n")
+    check("not running 하나 + running 하나 → degraded", v16 == .degraded(detail: "Telegram default"),
+          "\(String(describing: v16))")
+
+    // An `Error:` line outside a `- ` channel line is not a channel: a healthy
+    // probe with a stray warning stays green.
+    let v17 = verdict("Gateway reachable.\nError: update check failed\n- Telegram default: running\n")
+    check("채널 줄 밖 Error: → 채널 아님", v17 == .ok(detail: "Telegram default"), "\(String(describing: v17))")
+
+    // A gateway that really is down must stay `down` even with a nonzero exit —
+    // dodging the verdict here would hide a real outage from the heal.
+    let v18 = verdict("Gateway not reachable.\n", exit: 1)
+    check("not reachable + exit≠0 → down", v18 == .down, "\(String(describing: v18))")
+    let v19 = verdict("Error: connect ECONNREFUSED 127.0.0.1:18789\n", exit: 1)
+    check("ECONNREFUSED + exit≠0 → down", v19 == .down, "\(String(describing: v19))")
+    let v20 = verdict("gateway connection refused\n", exit: 1)
+    check("connection refused + exit≠0 → down", v20 == .down, "\(String(describing: v20))")
+
+    // A gateway that stalls or drops the connection prints none of the
+    // refused/reachable words — unheard, it never healed and the clients sat
+    // on ⚪ forever (#152 follow-up). The line has to name the gateway.
+    let lost: [(String, String)] = [
+        ("ETIMEDOUT", "gateway connection: ETIMEDOUT\n"),
+        ("ECONNRESET", "Error: gateway read ECONNRESET\n"),
+        ("EHOSTUNREACH", "Error: gateway connect EHOSTUNREACH 10.0.0.2:18789\n"),
+        ("ENETUNREACH", "Error: gateway connect ENETUNREACH 10.0.0.2:18789\n"),
+        ("socket hang up", "Gateway error: socket hang up\n"),
+        ("gateway closed", "Error: gateway closed (1006): abnormal closure\n"),
+        ("gateway timeout", "Error: gateway timeout\n"),
+        ("timeout after", "Error: gateway request timeout after 10000ms\n"),
+    ]
+    for (token, out) in lost {
+        let v = verdict(out, exit: 1)
+        check("게이트웨이 언급 \(token) + exit≠0 → down", v == .down, "\(String(describing: v))")
+    }
+    let lostClean = verdict("Error: gateway closed (1006)\n", exit: 0)
+    check("gateway closed + exit 0 → down", lostClean == .down, "\(String(describing: lostClean))")
+    let refusedLoopback = verdict("Error: connect ECONNREFUSED 127.0.0.1:18789\n", exit: 1)
+    check("connect ECONNREFUSED 127.0.0.1:<port> → down", refusedLoopback == .down,
+          "\(String(describing: refusedLoopback))")
+
+    // node prints the same socket errors for any request (update check,
+    // plugin fetch). Without the gateway named on the line they say nothing
+    // about it — read as down, every probe kickstarted a healthy gateway.
+    let unrelatedClean = verdict("Gateway reachable.\nupdate check failed: ETIMEDOUT\n", exit: 0)
+    check("exit 0 + reachable + 무관한 ETIMEDOUT → ok", unrelatedClean == .ok(detail: "채널 없음"),
+          "\(String(describing: unrelatedClean))")
+    let unrelatedChannels = verdict("Gateway reachable.\nupdate check failed: ETIMEDOUT\n- Telegram default: running\n")
+    check("exit 0 + reachable + 무관한 ETIMEDOUT + 채널 → 채널 규칙", unrelatedChannels == .ok(detail: "Telegram default"),
+          "\(String(describing: unrelatedChannels))")
+    let unrelatedNoHeader = verdict("update check failed: ETIMEDOUT\n- Telegram default: running\n")
+    check("reachable 없음 + 무관한 ETIMEDOUT + 채널 → 채널 규칙", unrelatedNoHeader == .ok(detail: "Telegram default"),
+          "\(String(describing: unrelatedNoHeader))")
+    let unrelatedFailure = observation("Error: connect ETIMEDOUT 140.82.112.3:443\n", exit: 1)
+    check("게이트웨이 언급 없는 ETIMEDOUT + exit≠0 → 관측 실패",
+          unrelatedFailure == .unobserved(reason: "openclaw CLI 가 게이트웨이 응답 없이 비정상 종료 (exit 1)"),
+          "\(unrelatedFailure)")
+    // A positive "reachable" outranks a gateway-named socket error, but never
+    // an explicit refusal.
+    let reachableBeatsLost = verdict("Gateway reachable.\ngateway connection: ECONNRESET\n", exit: 0)
+    check("reachable + 게이트웨이 연결 끊김 → ok", reachableBeatsLost == .ok(detail: "채널 없음"),
+          "\(String(describing: reachableBeatsLost))")
+    let refusedBeatsReachable = verdict("Gateway reachable.\nconnect ECONNREFUSED 127.0.0.1:18789\n", exit: 0)
+    check("reachable + ECONNREFUSED → down", refusedBeatsReachable == .down,
+          "\(String(describing: refusedBeatsReachable))")
+    // A gateway-level drop is down even when channels were listed beside it.
+    let lostWithChannels = verdict("- Telegram default: running\ngateway disconnected: socket hang up\n", exit: 1)
+    check("채널 줄 밖 socket hang up → down", lostWithChannels == .down, "\(String(describing: lostWithChannels))")
+    // On a channel line it is that channel's upstream error: the gateway
+    // answered, so 🟡 — not a restart.
+    let channelTimeout = verdict("- Telegram default: error: ETIMEDOUT api.telegram.org\n", exit: 1)
+    check("채널 줄 안 ETIMEDOUT → degraded", channelTimeout == .degraded(detail: "Telegram default"),
+          "\(String(describing: channelTimeout))")
+
+    // A channel line is the gateway's answer: judged by the channel rules,
+    // whatever the exit code, even with no reachable header.
+    let stoppedNonzero = verdict("- Telegram default: enabled, stopped\n", exit: 1)
+    check("- X: stopped + exit≠0 + reachable 없음 → degraded", stoppedNonzero == .degraded(detail: "Telegram default"),
+          "\(String(describing: stoppedNonzero))")
+    let runningNonzero = verdict("- Telegram default: running\n", exit: 2)
+    check("- X: running + exit≠0 + reachable 없음 → ok", runningNonzero == .ok(detail: "Telegram default"),
+          "\(String(describing: runningNonzero))")
+}
+
+// MARK: - CLI 자체 실패 (관측 실패)
+
+print("▸ CLI 자체 실패")
+do {
+    // ProcessRunner merges stderr into the output, so the CLI failing on its
+    // own (node missing mid-`brew upgrade`, a broken install) is not silent.
+    // Judged `down`, two in a row kickstart a healthy gateway (issue #152).
+    func reason(_ out: String, exit: Int32) -> String? {
+        if case .unobserved(let r) = observation(out, exit: exit) { return r }
+        return nil
+    }
+    let noNode = reason("env: node: No such file or directory\n", exit: 127)
+    check("env: node 없음 (exit 127) → 관측 실패", noNode == "openclaw CLI 를 실행하지 못함 (exit 127)",
+          String(describing: noNode))
+    let deniedNode = reason("/usr/bin/env: 'node': Permission denied\n", exit: 126)
+    check("node 권한 없음 (exit 126) → 관측 실패", deniedNode == "openclaw CLI 를 실행하지 못함 (exit 126)",
+          String(describing: deniedNode))
+    // 126/127 come from the launcher before openclaw runs, whatever it printed.
+    let launcher = reason("Gateway not reachable.\n", exit: 127)
+    check("exit 127 은 출력과 무관하게 관측 실패", launcher != nil, String(describing: launcher))
+
+    let moduleMissing = """
+        node:internal/modules/cjs/loader:1228
+          throw err;
+          ^
+
+        Error: Cannot find module 'x'
+        Require stack:
+        - /opt/homebrew/lib/node_modules/openclaw/dist/index.js
+            at Module._resolveFilename (node:internal/modules/cjs/loader:1225:15)
+            at Module._load (node:internal/modules/cjs/loader:1051:27) {
+          code: 'MODULE_NOT_FOUND',
+          requireStack: [ '/opt/homebrew/lib/node_modules/openclaw/dist/index.js' ]
+        }
+
+        Node.js v22.11.0
+
+        """
+    let module = reason(moduleMissing, exit: 1)
+    check("Cannot find module + node 스택 (exit 1) → 관측 실패",
+          module == "openclaw CLI 가 게이트웨이 응답 없이 비정상 종료 (exit 1)", String(describing: module))
+    // Not channel lines: a bare `-` bullet, or a module path (the `Require
+    // stack:` shape above) — the CLI never asked the gateway.
+    let pathBullet = reason("Error: boom\n- /opt/homebrew/lib/node_modules/openclaw/dist/x.js: 12\n", exit: 1)
+    check("경로 bullet 은 채널 줄 아님 → 관측 실패", pathBullet != nil, String(describing: pathBullet))
+    let bareBullet = reason("usage:\n- --probe\n", exit: 1)
+    check("콜론 없는 bullet 은 채널 줄 아님 → 관측 실패", bareBullet != nil, String(describing: bareBullet))
+    let config = reason("openclaw: failed to load config\n", exit: 1)
+    check("게이트웨이 신호 없는 문구 + exit≠0 → 관측 실패", config != nil, String(describing: config))
+
+    // The reason is logged, and must not echo the CLI's raw output.
+    check("관측 실패 사유에 원시 출력 없음", !(module ?? "").contains("Cannot find") && !(noNode ?? "").contains("node:"))
+
+    // A signal death with output but no gateway signal points at the CLI too.
+    let signaled = Probe.parseProbe(.init(stdout: "FATAL ERROR: heap out of memory\n",
+                                          termination: .signaled(SIGABRT), timedOut: false))
+    check("게이트웨이 신호 없는 출력 + 신호 종료 → 관측 실패",
+          signaled == .unobserved(reason: "openclaw CLI 가 게이트웨이 응답 없이 신호 \(SIGABRT)번으로 종료"),
+          "\(signaled)")
 }
 
 // MARK: - 관측 실패

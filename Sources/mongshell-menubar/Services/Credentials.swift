@@ -99,6 +99,28 @@ enum OwnTokenSave: Equatable {
     }
 }
 
+/// What reading the Claude Code CLI token found (#155).
+struct ClaudeCodeTokenRead: Equatable {
+    let token: OAuthToken?
+    /// The user declined the prompt for Claude Code's Keychain item
+    /// (`OwnTokenLookup.isUserRefusal`). Kept apart from "no token" so the
+    /// app stops asking until the user acts, as for its own item (#143). The
+    /// file may still have given a token.
+    let keychainDeclined: Bool
+
+    init(token: OAuthToken?, keychainDeclined: Bool) {
+        self.token = token
+        self.keychainDeclined = keychainDeclined
+    }
+
+    /// `keychainStatus` is nil when the Keychain item was not asked. The
+    /// file is read only when the item gave no token.
+    init(keychainStatus: OSStatus?, keychainToken: OAuthToken?, fileToken: () -> OAuthToken?) {
+        self.init(token: keychainToken ?? fileToken(),
+                  keychainDeclined: keychainStatus.map(OwnTokenLookup.isUserRefusal) ?? false)
+    }
+}
+
 /// Reads/writes tokens. Priority for reads:
 ///   1. our own OAuth token (Keychain)
 ///   2. Claude Code CLI token (Keychain "Claude Code-credentials", else file)
@@ -202,15 +224,21 @@ enum CredentialStore {
     // MARK: Claude Code CLI token (read-only fallback)
 
     /// Attempts to read the Claude Code OAuth access token from the Keychain,
-    /// falling back to ~/.claude/.credentials.json. Returns nil if neither is
-    /// present or readable (e.g. the user denies the Keychain prompt). The
-    /// file fallback rides the same job: it is only read once the Keychain
-    /// has answered.
-    nonisolated(nonsending) static func loadClaudeCodeToken() async -> OAuthToken? {
-        await KeychainQueue.run { readClaudeCodeKeychain() ?? readClaudeCodeFile() }
+    /// falling back to ~/.claude/.credentials.json; no token if neither is
+    /// present or readable. A declined Keychain prompt is told apart (#155).
+    /// `readingKeychain` false leaves the Keychain item — and its prompt —
+    /// alone while the user's decline stands; the file is read either way.
+    /// The file fallback rides the same job: it is only read once the
+    /// Keychain has answered.
+    nonisolated(nonsending) static func loadClaudeCodeToken(readingKeychain: Bool) async -> ClaudeCodeTokenRead {
+        await KeychainQueue.run {
+            let keychain = readingKeychain ? readClaudeCodeKeychain() : nil
+            return ClaudeCodeTokenRead(keychainStatus: keychain?.status, keychainToken: keychain?.token,
+                                       fileToken: readClaudeCodeFile)
+        }
     }
 
-    private static func readClaudeCodeKeychain() -> OAuthToken? {
+    private static func readClaudeCodeKeychain() -> (status: OSStatus, token: OAuthToken?) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Config.claudeCodeKeychainService,
@@ -218,9 +246,9 @@ enum CredentialStore {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var out: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
-              let data = out as? Data else { return nil }
-        return parseClaudeCodeJSON(data)
+        let status = SecItemCopyMatching(query as CFDictionary, &out)
+        guard status == errSecSuccess, let data = out as? Data else { return (status, nil) }
+        return (status, parseClaudeCodeJSON(data))
     }
 
     private static func readClaudeCodeFile() -> OAuthToken? {

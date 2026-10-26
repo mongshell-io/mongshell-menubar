@@ -50,6 +50,10 @@ struct GitHubPresentation: Equatable {
     let badge: Badge
     let banner: Banner
     let token: Token
+    /// When the popover's 새로고침 opens again, nil while it is open. Not
+    /// the banner's automatic retry time: a server-named wait shorter than
+    /// the backoff opens the button first (#154).
+    let manualRefreshBlockedUntil: Date?
 
     var bannerAction: BannerAction {
         switch banner {
@@ -70,7 +74,7 @@ struct GitHubPresentation: Equatable {
         }
     }
 
-    init(loadState: GitHubLoadState, tokenSource: GitHubTokenSource?) {
+    init(loadState: GitHubLoadState, tokenSource: GitHubTokenSource?, now: Date) {
         switch loadState {
         case .off, .loading:         badge = .syncing
         case .loaded:                badge = .connected
@@ -86,7 +90,7 @@ struct GitHubPresentation: Equatable {
         case .loaded(.pat):                  banner = .pat
         case .noToken:                       banner = .noToken
         case .keychainDenied:                banner = .keychainDenied
-        case .rateLimited(let retryAt):      banner = .rateLimited(retryAt: retryAt)
+        case .rateLimited(let retryAt, _):   banner = .rateLimited(retryAt: retryAt)
         case .unauthorized:                  banner = .unauthorized
         case .patSaveFailed(let status):     banner = .patSaveFailed(status)
         case .error(let message):            banner = .failed(message)
@@ -101,5 +105,6 @@ struct GitHubPresentation: Equatable {
         case (nil, .loading):                       token = .checking
         case (nil, _):                              token = .none
         }
+        manualRefreshBlockedUntil = GitHubPollPolicy.manualRefreshBlocked(until: loadState, now: now)
     }
 }

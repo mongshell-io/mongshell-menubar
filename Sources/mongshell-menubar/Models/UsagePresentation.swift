@@ -33,7 +33,8 @@ struct UsagePresentation: Equatable {
     enum DeclinedFallback: Equatable {
         /// The Claude Code CLI account — possibly not the app's login.
         case cliAccount
-        /// The renewal the Keychain did not take, held in memory (#108).
+        /// An own token the Keychain did not take, held in memory — a
+        /// renewal (#108) or a sign-in (#151).
         case heldLogin
         case sample
     }
@@ -84,8 +85,23 @@ struct UsagePresentation: Equatable {
     /// (signing in also asks again), loading, a rate limit (the manual
     /// refresh behind its button is blocked until then) and an error (its
     /// retry is that same refresh).
+    ///
+    /// `cliKeychainDeclined` is the remembered decline of the Claude Code
+    /// CLI item's prompt (#155). It only speaks where it is the reason for
+    /// what is shown — the sample, with nothing to poll with — and says it
+    /// with the same banner: the CLI account it would have shown is not up,
+    /// and [다시 허용] asks both items again. A CLI token that still came
+    /// from its file, or the own login, leaves it unsaid.
+    ///
+    /// `holdsUnsavedLogin` is whether the model holds an own token the
+    /// Keychain did not take (`UsageModel.pendingOwnToken`). Under a decline
+    /// the own login is polled only through that token, so it — not a
+    /// `.loaded(.oauthLogin)` left on screen — says the held login is what
+    /// is shown. Without one, that state is a poll that read the decline and
+    /// is falling through to the CLI token or the sample; until it lands the
+    /// banner is the one a clean load shows (#151, #156).
     init(loadState: LoadState, accountSource: DataSource?, limitsUnread: Bool,
-         keychainDeclined: Bool, now: Date) {
+         keychainDeclined: Bool, cliKeychainDeclined: Bool, holdsUnsavedLogin: Bool, now: Date) {
         switch loadState {
         case .loaded:                     badge = .connected
         case .loading:                    badge = .syncing
@@ -94,20 +110,19 @@ struct UsagePresentation: Equatable {
         case .error:                      badge = .failed
         }
         switch loadState {
-        case .signedOut where keychainDeclined: banner = .keychainDeclined(.sample, limitsUnread: false)
+        case .signedOut where keychainDeclined || cliKeychainDeclined:
+            banner = .keychainDeclined(.sample, limitsUnread: false)
         case .signedOut:                  banner = .signedOut
         case .sessionExpired:             banner = .sessionExpired
         case .loading:                    banner = .loading
         case .rateLimited(let retryAt):   banner = .rateLimited(retryAt: retryAt)
         case .error(let message):         banner = .failed(message)
-        case .loaded(let source) where keychainDeclined:
-            let fallback: DeclinedFallback
-            switch source {
-            case .claudeCodeCLI:          fallback = .cliAccount
-            case .oauthLogin:             fallback = .heldLogin
-            case .sample:                 fallback = .sample
-            }
-            banner = .keychainDeclined(fallback, limitsUnread: limitsUnread)
+        case .loaded(.claudeCodeCLI) where keychainDeclined:
+            banner = .keychainDeclined(.cliAccount, limitsUnread: limitsUnread)
+        case .loaded(.oauthLogin) where keychainDeclined && holdsUnsavedLogin:
+            banner = .keychainDeclined(.heldLogin, limitsUnread: limitsUnread)
+        case .loaded(.sample) where keychainDeclined:
+            banner = .keychainDeclined(.sample, limitsUnread: limitsUnread)
         case .loaded where limitsUnread:  banner = .unreadLimits
         case .loaded(.claudeCodeCLI):     banner = .cliAccount
         case .loaded:                     banner = .none

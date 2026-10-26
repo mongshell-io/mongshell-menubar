@@ -52,14 +52,32 @@ struct GitHubPopoverView: View {
 
     // MARK: Header
 
+    /// While the manual refresh is held back the minutes on it tick with
+    /// the rate-limit banner's period, and once more when it lifts, as the
+    /// usage header's do; the
+    /// snapshot clock, when set, wins. Always the same TimelineView, so the
+    /// open menu survives a limit starting or ending (#153).
     private var header: some View {
+        let frozenNow = model.frozenNow
+        let until = frozenNow == nil ? model.presentation.manualRefreshBlockedUntil : nil
+        return TimelineView(HeaderClockSchedule(until: until)) { context in
+            header(now: frozenNow ?? context.date)
+        }
+    }
+
+    private func header(now: Date) -> some View {
         PopoverHeader(title: "GitHub", badge: statusBadge,
                       onOpenSettings: onOpenSettings, onQuit: onQuit) {
             Image(systemName: "arrow.triangle.pull")
                 .font(.system(size: 18))
                 .foregroundStyle(Palette.textSecondary)
         } beforeSettings: {
-            Button("새로고침") { model.refreshNow() }
+            if let until = model.presentation.manualRefreshBlockedUntil {
+                Button("새로고침 — \(TimeText.minutesLeft(until: until, now: now))분 후 가능") {}
+                    .disabled(true)
+            } else {
+                Button("새로고침") { model.refreshManually() }
+            }
         } afterSettings: {
             EmptyView()
         }

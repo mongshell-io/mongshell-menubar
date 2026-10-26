@@ -79,7 +79,84 @@ enum Probe {
         if result.stdout.allSatisfy(\.isWhitespace) {
             return .unobserved(reason: silentReason(result.termination))
         }
+        // stderr is merged into the output, so the CLI failing on its own
+        // (node missing mid-`brew upgrade`, a broken install) is not silent —
+        // but it never asked the gateway anything. Judged `down`, two in a
+        // row kickstarted a healthy gateway (issue #152).
+        if let reason = cliFailureReason(result) { return .unobserved(reason: reason) }
         return .observed(verdict(fromOutput: result))
+    }
+
+    /// Exit codes the launcher (`env`, the shell) uses for "could not run the
+    /// command" — 127 not found, 126 not executable. openclaw itself never
+    /// got to run, whatever was printed.
+    static let launcherFailureExitCodes: Set<Int32> = [126, 127]
+
+    /// Explicit gateway-unreachable signals — the output means DOWN.
+    static let gatewayDownTokens = ["not reachable", "unreachable", "connection refused", "econnrefused"]
+    /// A connection was made or attempted and then failed: node's socket
+    /// errors (`ETIMEDOUT`, `ECONNRESET`, `EHOSTUNREACH`/`ENETUNREACH`,
+    /// `socket hang up`) and guessed CLI wording for a gateway that hung up
+    /// or never answered. Not a gateway signal on its own — node prints these
+    /// for any request (update check, plugin fetch), and reading them as one
+    /// kickstarted a healthy gateway every probe (#152). See
+    /// `isGatewayConnectionLost` for when they count. The list is built from
+    /// node's standard errors and guesses, not from a real openclaw failure —
+    /// revisit once one is captured.
+    static let gatewayConnectionLostTokens = [
+        "etimedout", "econnreset", "ehostunreach", "enetunreach", "socket hang up",
+        "gateway closed", "gateway timeout", "timeout after",
+    ]
+    /// What ties a connection-lost line to the gateway. Only the word itself:
+    /// neither the gateway's address nor its port is in the agent's code or
+    /// config, and a loopback address alone could be a local model server.
+    static let gatewayMentionToken = "gateway"
+
+    /// A non-bullet line that says the connection to the gateway was lost.
+    /// On a `- channel:` line the same words are that channel's upstream
+    /// error, which the gateway reported (🟡, not a restart).
+    private static func isGatewayConnectionLost<S: StringProtocol>(_ raw: S) -> Bool {
+        let line = raw.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !line.hasPrefix("-"), line.contains(gatewayMentionToken) else { return false }
+        return gatewayConnectionLostTokens.contains(where: line.contains)
+    }
+
+    /// The gateway said it is reachable: a whole `reachable` token not
+    /// negated as `not reachable` (`unreachable` is its own token).
+    private static func reportsReachable(_ lower: String) -> Bool {
+        let tokens = statusTokens(lower)
+        return tokens.indices.contains { i in
+            tokens[i] == "reachable" && (i == 0 || tokens[i - 1] != "not")
+        }
+    }
+
+    /// The output shows openclaw got as far as talking about the gateway.
+    /// Every DOWN token counts, so a real outage is always heard, never
+    /// dodged as unobserved.
+    private static func hasGatewaySignal(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return gatewayDownTokens.contains(where: lower.contains)
+            || reportsReachable(lower)
+            || text.split(whereSeparator: \.isNewline).contains(where: isGatewayConnectionLost)
+    }
+
+    /// Why a probe that printed something still went unheard, or nil when
+    /// its output is the gateway's answer. The reason is logged — it never
+    /// echoes the CLI's raw output, which is not ours to publish.
+    private static func cliFailureReason(_ result: ProcessRunner.RunResult) -> String? {
+        if case .exited(let status) = result.termination, launcherFailureExitCodes.contains(status) {
+            return "openclaw CLI 를 실행하지 못함 (exit \(status))"
+        }
+        if result.termination == .exited(status: 0) { return nil }
+        if hasGatewaySignal(result.stdout) { return nil }
+        // A channel line can only come from the gateway's answer, so the
+        // channel rules judge it whatever the exit code says.
+        if result.stdout.split(whereSeparator: \.isNewline).contains(where: isChannelAnswerLine) { return nil }
+        switch result.termination {
+        case .exited(let status): return "openclaw CLI 가 게이트웨이 응답 없이 비정상 종료 (exit \(status))"
+        case .signaled(let signal): return "openclaw CLI 가 게이트웨이 응답 없이 신호 \(signal)번으로 종료"
+        case .launchFailed, .unknown: return "openclaw CLI 가 게이트웨이 응답 없이 종료 (종료 상태 모름)"
+        }
     }
 
     private static func silentReason(_ termination: ProcessRunner.Termination) -> String {
@@ -99,24 +176,25 @@ enum Probe {
         // Explicit gateway-unreachable signals → DOWN. (Checked before the
         // positive "reachable" test below, since "not reachable"/"unreachable"
         // both contain the substring "reachable".)
-        if lower.contains("not reachable")
-            || lower.contains("unreachable")
-            || lower.contains("connection refused")
-            || lower.contains("econnrefused") {
-            return .down
-        }
+        if gatewayDownTokens.contains(where: lower.contains) { return .down }
 
-        let channelLines = text
+        let lines = text
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter(isChannelLine)
+
+        // The gateway stalled or dropped the connection — unless the same
+        // output says it is reachable, which outranks a stray socket error.
+        if !reportsReachable(lower) && lines.contains(where: isGatewayConnectionLost) { return .down }
+
+        let channelLines = lines.filter(isChannelLine)
 
         // No parseable channel state. A clean exit that still reports the
         // gateway as reachable (real output: "Gateway reachable.") but lists no
         // channels is OK-but-empty; anything else (nonzero exit, or no positive
-        // reachable signal at all) is treated as the gateway being down.
+        // reachable signal at all) is treated as the gateway being down —
+        // a nonzero exit only gets here with a gateway signal in the output.
         if channelLines.isEmpty {
-            if result.termination == .exited(status: 0) && lower.contains("reachable") {
+            if result.termination == .exited(status: 0) && reportsReachable(lower) {
                 return .ok(detail: "채널 없음")
             }
             return .down
@@ -130,7 +208,7 @@ enum Probe {
 
         // 🟢 if at least one channel is running and nothing above tripped.
         // NOTE: `disconnected` alone is normal between polls — never DOWN on it.
-        let running = channelLines.filter { $0.lowercased().contains("running") }
+        let running = channelLines.filter(lineIsRunning)
         if !running.isEmpty {
             return .ok(detail: publicDetail(running.map(channelName), fallback: "정상"))
         }
@@ -141,23 +219,55 @@ enum Probe {
     }
 
     /// A line describing a channel: the `- Telegram default: …` shape, or any
-    /// line carrying a status token.
+    /// line carrying a status token. `error:` alone doesn't make a channel
+    /// line — node's `Error: …` and stray warnings start that way too; on a
+    /// `- ` line it is still caught by `lineIsDegraded`.
     private static func isChannelLine(_ line: String) -> Bool {
         if line.hasPrefix("-") { return true }
         let lower = line.lowercased()
         return lower.contains("running")
             || lower.contains("stopped")
             || lower.contains("health:")
-            || lower.contains("error:")
             || lower.contains("disconnected")
+    }
+
+    /// A `- <name>: <state>` line, the shape openclaw lists channels in. The
+    /// name must not hold a `/`: node's `Require stack:` lists module paths
+    /// as `- /opt/…` bullets, and those come from a CLI that never ran.
+    private static func isChannelAnswerLine<S: StringProtocol>(_ raw: S) -> Bool {
+        let line = raw.trimmingCharacters(in: .whitespaces)
+        guard line.hasPrefix("- "), let colon = line.firstIndex(of: ":") else { return false }
+        let name = line[line.index(line.startIndex, offsetBy: 2)..<colon].trimmingCharacters(in: .whitespaces)
+        return !name.isEmpty && !name.contains("/")
     }
 
     /// The stopped/not-running/errored signals that make a channel 🟡.
     private static func lineIsDegraded(_ line: String) -> Bool {
         let lower = line.lowercased()
         return lower.contains("stopped")
-            || lower.contains("health:not-running")
             || lower.contains("error:")
+            || hasNotRunning(statusTokens(lower))
+    }
+
+    /// A channel says it is running: a whole `running` token not negated as
+    /// `not running` / `not-running` (`contains("running")` read both green).
+    private static func lineIsRunning(_ line: String) -> Bool {
+        let tokens = statusTokens(line.lowercased())
+        return tokens.indices.contains { i in
+            tokens[i] == "running" && (i == 0 || tokens[i - 1] != "not")
+        }
+    }
+
+    private static func hasNotRunning(_ tokens: [Substring]) -> Bool {
+        tokens.indices.contains { i in
+            tokens[i] == "not-running" || (tokens[i] == "running" && i > 0 && tokens[i - 1] == "not")
+        }
+    }
+
+    /// Words of a status line, split on anything but letters, digits and
+    /// `-` — so `health:not-running` yields `health`, `not-running`.
+    private static func statusTokens(_ lower: String) -> [Substring] {
+        lower.split { !($0.isLetter || $0.isNumber || $0 == "-") }
     }
 
     // MARK: Public detail

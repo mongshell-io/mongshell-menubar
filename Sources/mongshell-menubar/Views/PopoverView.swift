@@ -190,14 +190,27 @@ struct PopoverView: View {
 
     // MARK: Header
 
+    /// The ⋯ menu's items are rebuilt from the header's body, so the minute
+    /// clock wraps the whole header rather than the item — and ticks only
+    /// while the manual refresh is blocked, since nothing else in it moves by
+    /// the minute, plus once when the block lifts. It shares the rate-limit
+    /// banner's period so the two numbers agree. Always the same TimelineView, so the open menu survives a limit
+    /// starting or ending (#153).
     private var header: some View {
+        let until = model.presentation.manualRefreshBlockedUntil
+        return TimelineView(HeaderClockSchedule(until: until)) { context in
+            header(now: context.date)
+        }
+    }
+
+    private func header(now: Date) -> some View {
         let presentation = model.presentation
         return PopoverHeader(title: "mongshell-menubar", badge: statusBadge,
                              onOpenSettings: onOpenSettings, onQuit: onQuit) {
             usageRing(fiveMeter, lineWidth: 3, diameter: 18)
         } beforeSettings: {
             if let until = presentation.manualRefreshBlockedUntil {
-                Button("새로고침 — \(TimeText.minutesLeft(until: until))분 후 가능") {}
+                Button("새로고침 — \(TimeText.minutesLeft(until: until, now: now))분 후 가능") {}
                     .disabled(true)
             } else {
                 Button("새로고침") { model.refreshNow() }
