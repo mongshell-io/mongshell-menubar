@@ -95,7 +95,7 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
 [서버 맥] mongshell-openclaw-agent  ──(LaunchAgent, 기본 60초 주기)
    └─ Probe → posix_spawn: `openclaw channels status --probe`  (새 프로세스 그룹, 25초 초과 시 그룹 SIGTERM → 1초 → SIGKILL, 출력 읽기는 최대 27초)
         └─ 파싱 → ok / degraded / down  (공개 detail 은 허용 문자 필터 통과분만). 시간 초과는 따로 판정해 down + detail `응답 지연 · 25초 초과` 로 싣는다
-        └─ 실행 실패·빈 출력·CLI 자체 실패(종료 코드 126/127은 출력과 무관하게, 그 밖의 비정상 종료·신호 종료는 게이트웨이 신호 — 거절·도달 불가 문구, 긍정 `reachable`, 게이트웨이를 언급한 연결 끊김 문구, 채널 줄 — 가 없을 때. 연결 끊김은 `reachable` 이 같이 있으면 down 으로 치지 않음) → 관측 실패 (Decision #25 후속 #152, N회 연속이어도 down 으로 치지 않음 — node 누락 때 오복구): 게시·복구 카운트 없이 주기만큼 대기 후 종료(exit 75) → KeepAlive 재기동. 복구 직후 재확인이면 복구 전 판정으로 한 번 쓰고 종료 — 쿨다운 보존
+        └─ 실행 실패·빈 출력·CLI 자체 실패(종료 코드 126/127은 출력과 무관하게, 그 밖의 비정상 종료·신호 종료는 게이트웨이 신호 — `Gateway` 를 언급한 줄의 거절·도달 불가 문구, `Gateway reachable` 로 시작하는 줄, 채널 줄 — 가 없을 때. 판정 문구는 서버 맥 실측 출력 기준 — #157) → 관측 실패 (Decision #25 후속 #152, N회 연속이어도 down 으로 치지 않음 — node 누락 때 오복구): 게시·복구 카운트 없이 주기만큼 대기 후 종료(exit 75) → KeepAlive 재기동. 복구 직후 재확인이면 복구 전 판정으로 한 번 쓰고 종료 — 쿨다운 보존
    └─ 자동복구: 2회 연속 실패(시간 초과만 이어졌으면 4회, 복구 직후 재확인의 실패는 시간 초과로 셈) + 쿨다운 600초 → launchctl kickstart -k <게이트웨이 레이블>  (Decision #79)
    └─ HostProbe → IOKit 전원 정보 + 홈 볼륨 여유 공간 + CI 러너 (LaunchDaemon plist 개수, 레이블별 launchctl print)  (읽기만)
         └─ HostRules → 신호별·종합 ok / warning / critical  (읽을 신호가 없으면 host = null)
