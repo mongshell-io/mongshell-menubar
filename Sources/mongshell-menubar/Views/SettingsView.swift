@@ -10,14 +10,8 @@ struct SettingsView: View {
 
     private let intervals = [180, 300, 600, 900]
 
-    /// Mirrors the live menu bar (same `showsOpenClaw` rule).
-    private var openClawPreviewColor: Color? {
-        prefs.showsOpenClaw ? openClaw.health.dotColor : nil
-    }
-
-    private var serverHostPreviewColor: Color? {
-        prefs.showsOpenClaw ? openClaw.hostHealth.dotColor : nil
-    }
+    /// The live menu bar's dots, by the same rule.
+    private var previewDots: OpenClawDots { OpenClawDots(prefs: prefs, openClaw: openClaw) }
 
     var body: some View {
         Form {
@@ -45,8 +39,8 @@ struct SettingsView: View {
                                    colorCoding: prefs.colorCoding,
                                    showPercent: prefs.showPercent,
                                    fiveHourReset: TimeText.clockShort(model.snapshot.fiveHourResetAt),
-                                   openClawDotColor: openClawPreviewColor,
-                                   serverHostDotColor: serverHostPreviewColor)
+                                   openClawDotColor: previewDots.openClaw,
+                                   serverHostDotColor: previewDots.serverHost)
                 }
 
                 Toggle("사용량 3단계 색상", isOn: $prefs.colorCoding)
@@ -58,7 +52,7 @@ struct SettingsView: View {
             Section("업데이트") {
                 Picker("폴링 간격", selection: $prefs.pollIntervalSeconds) {
                     ForEach(intervals, id: \.self) { s in
-                        Text(s < 600 ? "\(s / 60)분\(s % 60 == 0 ? "" : "")" : "\(s / 60)분").tag(s)
+                        Text("\(s / 60)분").tag(s)
                     }
                 }
                 Text("최소 3분 — 더 짧으면 서버가 요청을 제한합니다.")

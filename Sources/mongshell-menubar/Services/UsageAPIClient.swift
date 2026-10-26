@@ -108,7 +108,7 @@ struct UsageAPIClient {
         let limits = root["limits"] as? [[String: Any]] ?? []
         for limit in limits {
             let pct = percentInt(limit["percent"])
-            let reset = isoDate(limit["resets_at"])
+            let reset = ResponseDate.parse(limit["resets_at"])
             // Pretty-printed in both rows below, so one model never shows
             // under two spellings ("Fable" / "Fable 5") in the same section.
             let scopeModel = scopeModelName(limit).map(prettyModelName)
@@ -141,8 +141,8 @@ struct UsageAPIClient {
         if limits.isEmpty {
             let five = root["five_hour"] as? [String: Any]
             let weekly = root["seven_day"] as? [String: Any]
-            fivePct = percentInt(five?["utilization"]); fiveReset = isoDate(five?["resets_at"])
-            weeklyPct = percentInt(weekly?["utilization"]); weeklyReset = isoDate(weekly?["resets_at"])
+            fivePct = percentInt(five?["utilization"]); fiveReset = ResponseDate.parse(five?["resets_at"])
+            weeklyPct = percentInt(weekly?["utilization"]); weeklyReset = ResponseDate.parse(weekly?["resets_at"])
         }
 
         return UsageSnapshot(
@@ -181,7 +181,7 @@ struct UsageAPIClient {
             guard !name.isEmpty else { return nil }
             return UnknownBucket(key: name,
                                  utilization: percentValue(object["utilization"]),
-                                 resetAt: isoDate(object["resets_at"]))
+                                 resetAt: ResponseDate.parse(object["resets_at"]))
         }
         return Array(buckets.prefix(Config.usageUnknownTopLevelCap))
     }
@@ -230,13 +230,6 @@ struct UsageAPIClient {
         else { return nil }
         guard v.isFinite else { return nil }
         return Int(max(0, min(100, v.rounded())))
-    }
-
-    private static func isoDate(_ any: Any?) -> Date? {
-        guard let s = any as? String else { return nil }
-        let withFrac = ISO8601DateFormatter()
-        withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return withFrac.date(from: s) ?? ISO8601DateFormatter().date(from: s)
     }
 
     private static func prettyModelName(_ raw: String) -> String {
