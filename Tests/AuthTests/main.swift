@@ -6,8 +6,9 @@ import Foundation
 // classification that decides whether a dead refresh token is discarded
 // (invalid_grant) or kept (anything else). Getting this wrong either leaves a dead token retrying every poll (the bug this
 // pins) or throws away a live token on a transient error. Also the Keychain
-// decoding of tokens saved before `signedInAt` existed, and the age format
-// the diagnostic log prints.
+// decoding of tokens saved before `signedInAt` existed, how a Keychain read
+// is classified (a locked or busy Keychain is not "no token" — #102), and
+// the age format the diagnostic log prints.
 //
 // Run with `./scripts/test.sh`, which compiles this against the real sources.
 
@@ -212,6 +213,24 @@ do {
     let data = try! JSONEncoder().encode(original)
     let decoded = try? JSONDecoder().decode(OAuthToken.self, from: data)
     check("signedInAt survives an encode/decode round trip", decoded == original)
+}
+
+// MARK: own-token Keychain read → found / missing / unreadable (#102)
+
+do {
+    let token = OAuthToken(accessToken: "a", refreshToken: "r", expiresAt: nil)
+    let data = try! JSONEncoder().encode(token)
+    check("read ok → found",
+          OwnTokenLookup(status: errSecSuccess, data: data) == .found(token))
+    check("not found → missing",
+          OwnTokenLookup(status: errSecItemNotFound, data: nil) == .missing)
+    check("item that no longer decodes → missing (sign-in stays possible)",
+          OwnTokenLookup(status: errSecSuccess, data: Data("junk".utf8)) == .missing
+          && OwnTokenLookup(status: errSecSuccess, data: nil) == .missing)
+    check("locked / not allowed → unreadable, not missing",
+          OwnTokenLookup(status: errSecInteractionNotAllowed, data: nil) == .unreadable(errSecInteractionNotAllowed))
+    check("any other Keychain error → unreadable",
+          OwnTokenLookup(status: errSecAuthFailed, data: nil) == .unreadable(errSecAuthFailed))
 }
 
 // MARK: Diagnostic log formatting

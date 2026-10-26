@@ -83,10 +83,22 @@ final class UsageModel: ObservableObject {
 
     // MARK: Token resolution
 
-    private func currentToken() -> (OAuthToken, DataSource)? {
-        if let own = CredentialStore.loadOwnToken() { return (own, .oauthLogin) }
-        if let cli = CredentialStore.loadClaudeCodeToken() { return (cli, .claudeCodeCLI) }
-        return nil
+    private enum TokenResolution {
+        case token(OAuthToken, DataSource)
+        case none
+        /// Our own token may be there but the Keychain would not say; falling
+        /// back to the CLI token would quietly switch accounts.
+        case ownUnreadable(OSStatus)
+    }
+
+    private func currentToken() -> TokenResolution {
+        switch CredentialStore.lookupOwnToken() {
+        case .found(let own): return .token(own, .oauthLogin)
+        case .unreadable(let status): return .ownUnreadable(status)
+        case .missing: break
+        }
+        if let cli = CredentialStore.loadClaudeCodeToken() { return .token(cli, .claudeCodeCLI) }
+        return .none
     }
 
     // MARK: Refresh
@@ -105,9 +117,18 @@ final class UsageModel: ObservableObject {
     }
 
     private func performRefresh() async {
-        guard let (initialToken, source) = currentToken() else {
+        let initialToken: OAuthToken, source: DataSource
+        switch currentToken() {
+        case .token(let found, let foundSource):
+            (initialToken, source) = (found, foundSource)
+        case .none:
             markSignedOut()
             snapshot = .sample
+            return
+        case .ownUnreadable(let status):
+            // Keeps the account and the numbers; the next poll reads again.
+            AuthDebugLog.write("own token unreadable status=\(status)")
+            loadState = .error("Keychain 에서 로그인 정보를 읽지 못했습니다")
             return
         }
         var token = initialToken

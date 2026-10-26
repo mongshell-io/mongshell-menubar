@@ -17,6 +17,34 @@ struct OAuthToken: Codable, Equatable {
     }
 }
 
+/// What reading our own token found. "Cannot read" is kept apart from "none"
+/// so a locked or busy Keychain is not shown as signed-out (#102).
+enum OwnTokenLookup: Equatable {
+    case found(OAuthToken)
+    case missing
+    /// The Keychain answered with something other than "not found"; the
+    /// item may well still be there.
+    case unreadable(OSStatus)
+
+    /// An item that is there but no longer decodes counts as missing: no
+    /// later read will fix it, and calling it unreadable would leave no way
+    /// to sign in again.
+    init(status: OSStatus, data: Data?) {
+        switch status {
+        case errSecSuccess:
+            if let data, let token = try? JSONDecoder().decode(OAuthToken.self, from: data) {
+                self = .found(token)
+            } else {
+                self = .missing
+            }
+        case errSecItemNotFound:
+            self = .missing
+        default:
+            self = .unreadable(status)
+        }
+    }
+}
+
 /// Reads/writes tokens. Priority for reads:
 ///   1. our own OAuth token (Keychain)
 ///   2. Claude Code CLI token (Keychain "Claude Code-credentials", else file)
@@ -24,20 +52,38 @@ enum CredentialStore {
 
     // MARK: Own OAuth token (read/write)
 
-    static func saveOwnToken(_ token: OAuthToken) {
-        guard let data = try? JSONEncoder().encode(token) else { return }
+    /// Replaces the item in place. Deleting first and adding after lost the
+    /// token for good whenever the add failed: the refresh token is single
+    /// use, so the one just spent cannot be asked for again (#102). Returns
+    /// whether the Keychain now holds `token`; a failure is logged.
+    @discardableResult
+    static func saveOwnToken(_ token: OAuthToken) -> Bool {
+        guard let data = try? JSONEncoder().encode(token) else { return false }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Config.ownKeychainService,
             kSecAttrAccount as String: Config.ownKeychainAccount
         ]
-        SecItemDelete(query as CFDictionary)
         var attrs = query
         attrs[kSecValueData as String] = data
-        SecItemAdd(attrs as CFDictionary, nil)
+        var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            status = SecItemAdd(attrs as CFDictionary, nil)
+        } else if status != errSecSuccess {
+            // An item the update cannot touch (e.g. written under another
+            // signing identity) — the old replace is still worth a try.
+            AuthDebugLog.write("own token update failed status=\(status); replacing")
+            SecItemDelete(query as CFDictionary)
+            status = SecItemAdd(attrs as CFDictionary, nil)
+        }
+        guard status == errSecSuccess else {
+            AuthDebugLog.write("own token save failed status=\(status)")
+            return false
+        }
+        return true
     }
 
-    static func loadOwnToken() -> OAuthToken? {
+    static func lookupOwnToken() -> OwnTokenLookup {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Config.ownKeychainService,
@@ -46,10 +92,13 @@ enum CredentialStore {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var out: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
-              let data = out as? Data,
-              let token = try? JSONDecoder().decode(OAuthToken.self, from: data)
-        else { return nil }
+        let status = SecItemCopyMatching(query as CFDictionary, &out)
+        return OwnTokenLookup(status: status, data: out as? Data)
+    }
+
+    /// The token, or nil when there is none or it cannot be read right now.
+    static func loadOwnToken() -> OAuthToken? {
+        guard case .found(let token) = lookupOwnToken() else { return nil }
         return token
     }
 
