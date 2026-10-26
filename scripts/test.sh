@@ -84,6 +84,7 @@ swiftc -o "$OUT/auth-tests" \
   "$APP/Services/Config.swift" \
   "$APP/Services/Credentials.swift" \
   "$APP/Services/JSONNumber.swift" \
+  "$APP/Services/KeychainQueue.swift" \
   "$APP/Services/OAuthTokenClient.swift" \
   "$ROOT/Tests/AuthTests/main.swift"
 
@@ -111,6 +112,7 @@ swiftc -o "$OUT/github-tests" \
   "$APP/Services/GitHubAPIClient.swift" \
   "$APP/Services/GitHubCredentials.swift" \
   "$APP/Services/JSONNumber.swift" \
+  "$APP/Services/KeychainQueue.swift" \
   "$APP/Services/ResponseDate.swift" \
   "$APP/Services/TimeText.swift" \
   "$ROOT/Tests/GitHubTests/main.swift"
@@ -141,6 +143,7 @@ swiftc -o "$OUT/usage-tests" \
   "$APP/Services/Credentials.swift" \
   "$APP/Services/DisplayText.swift" \
   "$APP/Services/JSONNumber.swift" \
+  "$APP/Services/KeychainQueue.swift" \
   "$APP/Services/ResponseDate.swift" \
   "$APP/Services/TimeText.swift" \
   "$APP/Services/UsageAPIClient.swift" \

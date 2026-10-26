@@ -978,27 +978,27 @@ do {
           OwnTokenSave(status: errSecUserCanceled, deletedFirst: true) == .failedAfterDelete)
 
     // Remembering the decline.
-    check("read cancelled → decline remembered", UsageRefreshPolicy.declined(false, after: cancelled))
+    check("read cancelled → decline remembered", UsageRefreshPolicy.declined(false, after: cancelled, sameLogin: true))
     check("read refused otherwise → no decline (the #132 store retry stays)",
-          !UsageRefreshPolicy.declined(false, after: .refused(errSecAuthFailed)))
+          !UsageRefreshPolicy.declined(false, after: .refused(errSecAuthFailed), sameLogin: true))
     check("read found / missing / locked → no decline",
-          !UsageRefreshPolicy.declined(false, after: .found(old))
-          && !UsageRefreshPolicy.declined(false, after: .missing)
-          && !UsageRefreshPolicy.declined(false, after: .unavailable(errSecInteractionNotAllowed)))
-    check("save cancelled → decline remembered", UsageRefreshPolicy.declined(false, afterSaving: .cancelled))
+          !UsageRefreshPolicy.declined(false, after: .found(old), sameLogin: true)
+          && !UsageRefreshPolicy.declined(false, after: .missing, sameLogin: true)
+          && !UsageRefreshPolicy.declined(false, after: .unavailable(errSecInteractionNotAllowed), sameLogin: true))
+    check("save cancelled → decline remembered", UsageRefreshPolicy.declined(false, afterSaving: .cancelled, sameLogin: true))
     check("save failed / saved → no decline",
-          !UsageRefreshPolicy.declined(false, afterSaving: .failed)
-          && !UsageRefreshPolicy.declined(false, afterSaving: .saved)
-          && !UsageRefreshPolicy.declined(false, afterSaving: .failedAfterDelete))
+          !UsageRefreshPolicy.declined(false, afterSaving: .failed, sameLogin: true)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .saved, sameLogin: true)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .failedAfterDelete, sameLogin: true))
     check("a poll does not lift a standing decline, whatever it reads or saves",
-          UsageRefreshPolicy.declined(true, after: .found(old))
-          && UsageRefreshPolicy.declined(true, after: .missing)
-          && UsageRefreshPolicy.declined(true, afterSaving: .saved))
+          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: true)
+          && UsageRefreshPolicy.declined(true, after: .missing, sameLogin: true)
+          && UsageRefreshPolicy.declined(true, afterSaving: .saved, sameLogin: true))
 
     // While declined, a poll reads nothing from the Keychain…
     var reads = 0
     let read: () -> OwnTokenLookup = { reads += 1; return .found(old) }
-    let whileDeclined = UsageRefreshPolicy.ownLookup(declined: true, read: read)
+    let whileDeclined = UsageRefreshPolicy.ownLookup(declined: true) ?? read()
     check("declined → the own item is not read (no prompt)", reads == 0, "\(reads) reads")
     check("declined → the read answers as the refusal it was", whileDeclined == cancelled)
     // …and stores nothing.
@@ -1018,10 +1018,90 @@ do {
           UsageRefreshPolicy.pending(afterSaving: held, result: .cancelled) == held)
 
     // The user acting (sign-in, a manual refresh) lifts the flag: the read happens again.
-    let afterUserActs = UsageRefreshPolicy.ownLookup(declined: false, read: read)
+    let afterUserActs = UsageRefreshPolicy.ownLookup(declined: false) ?? read()
     check("decline lifted → the own item is read again", reads == 1 && afterUserActs == .found(old), "\(reads) reads")
     check("decline lifted, Keychain found → a held renewal is stored again",
           UsageRefreshPolicy.resolvePending(held, own: afterUserActs) == .save(renewed))
+}
+
+// MARK: #141 — Keychain calls off the main thread: what may land between the awaits
+
+do {
+    let old = OAuthToken(accessToken: "a1", refreshToken: "r1", expiresAt: nil)
+    let renewed = OAuthToken(accessToken: "a2", refreshToken: "r2", expiresAt: nil)
+    let cancelled = OwnTokenLookup.refused(errSecUserCanceled)
+
+    // A poll read is out; meanwhile the sign-in's save is cancelled and sets
+    // the flag. The read then comes back `.found` — folded into the flag as it
+    // is now (true), the decline stands; folded into the value captured when
+    // the read went out (false), it would be lifted and the dialog come back.
+    check("save cancelled while a poll read was out → the read's .found keeps the decline",
+          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: true)
+          && !UsageRefreshPolicy.declined(false, after: .found(old), sameLogin: true))
+    // A read or save that went out before a sign-in or sign-out: the sign-in
+    // lifted the flag, and an answer about the item before it sets nothing.
+    check("answer from before a sign-in → does not set the decline again",
+          !UsageRefreshPolicy.declined(false, after: cancelled, sameLogin: false)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .cancelled, sameLogin: false))
+    check("answer from before a sign-in → does not lift a decline set since",
+          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: false)
+          && UsageRefreshPolicy.declined(true, afterSaving: .saved, sameLogin: false))
+
+    // The CLI token (another Keychain read, which can prompt) is read only
+    // when the choice falls through to it.
+    check("own token found / held renewal / locked → no CLI read",
+          UsageRefreshPolicy.ownChoice(resolution: .none, own: .found(old)) == .token(old, .oauthLogin)
+          && UsageRefreshPolicy.ownChoice(resolution: .useInMemory(renewed), own: cancelled) == .token(renewed, .oauthLogin)
+          && UsageRefreshPolicy.ownChoice(resolution: .save(renewed), own: .missing) == .token(renewed, .oauthLogin)
+          && UsageRefreshPolicy.ownChoice(resolution: .none, own: .unavailable(errSecInteractionNotAllowed))
+              == .ownUnavailable(errSecInteractionNotAllowed))
+    check("own token missing / refused / dropped → the CLI token is next",
+          UsageRefreshPolicy.ownChoice(resolution: .none, own: .missing) == nil
+          && UsageRefreshPolicy.ownChoice(resolution: .none, own: cancelled) == nil
+          && UsageRefreshPolicy.ownChoice(resolution: .drop, own: .missing) == nil)
+    check("CLI token read → that token, or none",
+          UsageRefreshPolicy.cliChoice(old) == .token(old, .claudeCodeCLI)
+          && UsageRefreshPolicy.cliChoice(nil) == UsageTokenChoice.none)
+
+    // The queue every SecItem call runs on: off the main thread, one job at a
+    // time, in the order asked for from one caller.
+    final class Probe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var active = 0
+        private(set) var peak = 0
+        private(set) var order: [Int] = []
+        private(set) var onMain = false
+        func job(_ index: Int) -> Int {
+            lock.lock()
+            active += 1
+            peak = max(peak, active)
+            if Thread.isMainThread { onMain = true }
+            lock.unlock()
+            Thread.sleep(forTimeInterval: 0.005)
+            lock.lock()
+            active -= 1
+            order.append(index)
+            lock.unlock()
+            return index
+        }
+    }
+    let probe = Probe()
+    let jobCount = 8
+    let done = DispatchSemaphore(value: 0)
+    Task.detached {
+        await withTaskGroup(of: Int.self) { group in
+            for index in 0..<jobCount {
+                group.addTask { await KeychainQueue.run { probe.job(index) } }
+            }
+        }
+        for index in 0..<jobCount { _ = await KeychainQueue.run { probe.job(100 + index) } }
+        done.signal()
+    }
+    done.wait()
+    check("Keychain queue: never two jobs at once", probe.peak == 1, "peak \(probe.peak)")
+    check("Keychain queue: not on the main thread", !probe.onMain)
+    check("Keychain queue: one caller's jobs run in the order asked",
+          Array(probe.order.suffix(jobCount)) == (0..<jobCount).map { 100 + $0 }, "\(probe.order)")
 }
 
 // MARK: #133 — reset phrases are made at draw time; flat fallbacks are logged

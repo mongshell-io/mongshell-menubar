@@ -18,7 +18,7 @@ non_goals:
 | 경계 | 타입 |
 |---|---|
 | 상수·엔드포인트·OAuth 파라미터 | `Config` |
-| Keychain | `Credentials` |
+| Keychain (모든 `SecItem*` 호출은 `KeychainQueue` 의 직렬 큐에서 — 아래 § Keychain 호출 스레드) | `Credentials`, `KeychainQueue` |
 | HTTPS 전송 공용 (ephemeral 세션·리다이렉트 거부·바이트 캡 — 아래 클라이언트들이 함께 쓴다) | `BoundedHTTP` |
 | 사용량 API | `UsageAPIClient` |
 | OAuth 흐름 (토큰 엔드포인트 요청은 `OAuthTokenClient`) | `AuthService`, `LoopbackServer`, `OAuthTokenClient` |
@@ -69,6 +69,15 @@ non_goals:
 3. 원자적으로 쓴다. 백업은 권한 0600.
 4. 경로는 한 번만 해석하고 재사용한다 — 매 접근마다 심링크를 다시 타지 않는다.
 5. 크기 상한을 둔다 (현재 5MB).
+
+## Keychain 호출 스레드
+
+`SecItem*` 은 "키체인 접근 허용" 대화상자가 떠 있는 동안 돌아오지 않는다. 그래서 **메인 스레드에서 부르지 않는다** (#141).
+
+- `SecItem*` 은 `KeychainQueue.run` 안에서만 부른다. `CredentialStore`·`GitHubCredentialStore` 의 바깥 진입점은 `async` 이고, 동기 본문(`…Blocking`)은 `private` 이다.
+- 큐는 하나, 직렬이다 — 같은 항목의 읽기·쓰기가 겹치지 않고, 부른 순서대로 돈다. 저장처럼 여러 호출로 된 일(update → delete → add, delete → add)은 한 작업으로 올려 사이에 다른 호출이 끼지 않게 한다.
+- 호출자(`Models/`)는 await 뒤 상태가 바뀌었을 수 있다는 전제로 세대를 다시 확인한다 — 규칙은 [docs/architecture.md § 1. 사용량 폴링](../../../docs/architecture.md#1-사용량-폴링-주-경로) · [§ 4. GitHub PR 폴링](../../../docs/architecture.md#4-github-pr-폴링-선택-경로) 이 권위다.
+- 큐에서 쓰는 `AuthDebugLog` 는 메인과 동시에 쓰일 수 있어 한 줄씩 잠그고 덧붙인다.
 
 ## 프로세스 실행
 

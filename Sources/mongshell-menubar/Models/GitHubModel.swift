@@ -145,14 +145,19 @@ final class GitHubModel: ObservableObject {
     /// nothing is requested until the user acts again — not by the loop's
     /// next poll, not by opening the popover: whatever the Keychain holds
     /// now is not the token the user just gave.
-    func applyPAT(_ raw: String) {
+    func applyPAT(_ raw: String) async {
         let token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else { return }
-        let status = credentials.savePAT(token)
-        // The item was replaced either way, so a request still out with the
-        // previous token no longer speaks for what is stored.
+        // The item is replaced either way, so a request still out with the
+        // previous token no longer speaks for what is stored. Bumped before
+        // the save, which runs off the main thread (#141): an answer that
+        // comes back meanwhile is dropped too.
         generation += 1
+        let status = await credentials.savePAT(token)
         guard status == errSecSuccess else {
+            // A refresh that started while the save was out read the
+            // Keychain after the failed save; its answer is dropped too.
+            generation += 1
             guard prefs.githubEnabled else { return }
             // A follow-up asked for before the failure would go out right
             // after the request in flight, with whatever the Keychain now
@@ -166,9 +171,9 @@ final class GitHubModel: ObservableObject {
     }
 
     /// Drops the PAT; the next read falls through to gh's item.
-    func clearPAT() {
-        credentials.clearPAT()
+    func clearPAT() async {
         generation += 1
+        await credentials.clearPAT()
         refreshNow()
     }
 
@@ -198,18 +203,26 @@ final class GitHubModel: ObservableObject {
     /// fetched before the token changed or with another account than the
     /// one the token now resolves to, and a head that moved since the row
     /// was drawn is refused here, before GitHub is asked.
-    func merge(_ id: String, expectedHead: String) {
+    func merge(_ id: String, expectedHead: String) async {
         // The token is resolved before the gate, because the gate compares
         // its source with the list's. A stopped state is turned away first
         // so it reads no Keychain and isn't overwritten by what that read
         // finds — the gate would refuse it anyway.
         guard prefs.githubEnabled, GitHubMergePolicy.allowsMerge(in: loadState) else { return }
+        // The read runs off the main thread (#141); the gate below is judged
+        // on the list, state and activity as they are once it is back.
+        let readIn = generation
+        let resolution = await resolveToken()
+        guard prefs.githubEnabled else { return }
         let token: String
         let source: GitHubTokenSource
-        switch resolveToken() {
+        switch resolution {
         case .token(let t, let s):
             token = t; source = s
         case .unavailable(let state):
+            // A swap meanwhile asked for its own refresh, which says what
+            // the new token finds.
+            guard readIn == generation else { return }
             tokenSource = nil
             loadState = state
             updateGlance()
@@ -217,7 +230,8 @@ final class GitHubModel: ObservableObject {
         }
         let nodeID: String
         switch GitHubMergePolicy.gate(id: id, expectedHead: expectedHead, mine: snapshot?.mine,
-                                      listGeneration: snapshotGeneration, generation: generation,
+                                      listGeneration: snapshotGeneration, tokenGeneration: readIn,
+                                      generation: generation,
                                       listSource: snapshotSource, tokenSource: source,
                                       state: loadState, activity: mergeActivity[id]) {
         case .send(let node):
@@ -363,10 +377,14 @@ final class GitHubModel: ObservableObject {
         case unavailable(GitHubLoadState)
     }
 
-    private func resolveToken() -> TokenResolution {
-        if let pat = credentials.loadOwnPAT() { return .token(pat, .pat) }
+    /// Both reads run off the main thread (#141). A refusal is remembered
+    /// even when the generation moved on meanwhile: the read only goes out
+    /// while no refusal stands, so it is the user's latest answer to the
+    /// prompt.
+    private func resolveToken() async -> TokenResolution {
+        if let pat = await credentials.loadOwnPAT() { return .token(pat, .pat) }
         if ghKeychainDenied { return .unavailable(.keychainDenied) }
-        switch credentials.loadGHToken() {
+        switch await credentials.loadGHToken() {
         case .success(let gh):
             return .token(gh.token, .ghCLI(account: gh.account))
         case .failure(.missing):
@@ -381,14 +399,19 @@ final class GitHubModel: ObservableObject {
 
     // MARK: Refresh
 
-    /// The request is async URLSession work off the main thread; only the
-    /// value lands back here.
+    /// The Keychain reads and the request run off the main thread; only the
+    /// values land back here.
     private func performRefresh() async {
         guard prefs.githubEnabled else { return }
         let requestedIn = generation
+        let resolution = await resolveToken()
+        // A token swap or the switch moving while the Keychain was read: what
+        // it read no longer speaks for what is stored. The swap asks for its
+        // own refresh through `refreshNow()`.
+        guard requestedIn == generation, prefs.githubEnabled else { return }
         let token: String
         let source: GitHubTokenSource
-        switch resolveToken() {
+        switch resolution {
         case .token(let t, let s):
             token = t; source = s
         case .unavailable(let state):

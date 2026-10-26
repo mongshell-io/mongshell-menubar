@@ -102,16 +102,34 @@ enum OwnTokenSave: Equatable {
 /// Reads/writes tokens. Priority for reads:
 ///   1. our own OAuth token (Keychain)
 ///   2. Claude Code CLI token (Keychain "Claude Code-credentials", else file)
+///
+/// The entry points are async: each runs its Keychain calls on
+/// `KeychainQueue`, off the main thread, and hands back only the result
+/// (#141). A save's update/delete/add stay one job, so no other Keychain
+/// call lands between them.
 enum CredentialStore {
 
     // MARK: Own OAuth token (read/write)
+
+    static func saveOwnToken(_ token: OAuthToken) async -> OwnTokenSave {
+        await KeychainQueue.run { saveOwnTokenBlocking(token) }
+    }
+
+    static func lookupOwnToken() async -> OwnTokenLookup {
+        await KeychainQueue.run { lookupOwnTokenBlocking() }
+    }
+
+    /// Whether the Keychain now holds no own token; a failure is logged.
+    static func clearOwnToken() async -> Bool {
+        await KeychainQueue.run { clearOwnTokenBlocking() }
+    }
 
     /// Replaces the item in place. Deleting first and adding after lost the
     /// token for good whenever the add failed: the refresh token is single
     /// use, so the one just spent cannot be asked for again (#102). A
     /// failure is logged. An in-place update keeps the item's access list as
     /// it was.
-    static func saveOwnToken(_ token: OAuthToken) -> OwnTokenSave {
+    private static func saveOwnTokenBlocking(_ token: OAuthToken) -> OwnTokenSave {
         guard let data = try? JSONEncoder().encode(token) else { return .failed }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -139,7 +157,7 @@ enum CredentialStore {
         return OwnTokenSave(status: status, deletedFirst: deleted)
     }
 
-    static func lookupOwnToken() -> OwnTokenLookup {
+    private static func lookupOwnTokenBlocking() -> OwnTokenLookup {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Config.ownKeychainService,
@@ -152,8 +170,7 @@ enum CredentialStore {
         return OwnTokenLookup(status: status, data: out as? Data)
     }
 
-    /// Whether the Keychain now holds no own token; a failure is logged.
-    static func clearOwnToken() -> Bool {
+    private static func clearOwnTokenBlocking() -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Config.ownKeychainService,
@@ -171,10 +188,11 @@ enum CredentialStore {
 
     /// Attempts to read the Claude Code OAuth access token from the Keychain,
     /// falling back to ~/.claude/.credentials.json. Returns nil if neither is
-    /// present or readable (e.g. the user denies the Keychain prompt).
-    static func loadClaudeCodeToken() -> OAuthToken? {
-        if let t = readClaudeCodeKeychain() { return t }
-        return readClaudeCodeFile()
+    /// present or readable (e.g. the user denies the Keychain prompt). The
+    /// file fallback rides the same job: it is only read once the Keychain
+    /// has answered.
+    static func loadClaudeCodeToken() async -> OAuthToken? {
+        await KeychainQueue.run { readClaudeCodeKeychain() ?? readClaudeCodeFile() }
     }
 
     private static func readClaudeCodeKeychain() -> OAuthToken? {

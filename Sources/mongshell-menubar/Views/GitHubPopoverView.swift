@@ -165,7 +165,7 @@ struct GitHubPopoverView: View {
                       frozenNow: model.frozenNow,
                       offersMerge: GitHubMergePolicy.canOffer(pr, section: section),
                       mergeActivity: model.mergeActivity[pr.id],
-                      onMerge: { head in model.merge(pr.id, expectedHead: head) })
+                      onMerge: { head in Task { await model.merge(pr.id, expectedHead: head) } })
             }
             if prs.count > cap {
                 Text("외 \(prs.count - cap)건")

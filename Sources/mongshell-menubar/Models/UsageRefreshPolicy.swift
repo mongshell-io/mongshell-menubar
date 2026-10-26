@@ -201,23 +201,34 @@ enum UsageRefreshPolicy {
     /// nothing held falls through to the CLI token (`chooseToken`).
     static let rememberedRefusal = OwnTokenLookup.refused(errSecUserCanceled)
 
-    /// The own-token read for a refresh: the remembered refusal while the
-    /// user's decline stands, the Keychain otherwise.
-    static func ownLookup(declined: Bool, read: () -> OwnTokenLookup) -> OwnTokenLookup {
-        declined ? rememberedRefusal : read()
+    /// The own-token read for a refresh while the user's decline stands —
+    /// the remembered refusal — or nil: read the Keychain.
+    static func ownLookup(declined: Bool) -> OwnTokenLookup? {
+        declined ? rememberedRefusal : nil
     }
 
     /// Whether the decline stands after this read. It is only lifted by the
     /// user acting (sign-in, a manual refresh) or a relaunch — never by a
     /// poll, which is what kept the dialog coming back.
-    static func declined(_ declined: Bool, after own: OwnTokenLookup) -> Bool {
+    ///
+    /// `declined` is the flag as it is when the read comes back, not as it
+    /// was when the read went out: the read runs off the main thread (#141),
+    /// and a save the user cancelled meanwhile set the flag — a `.found`
+    /// from the read must not lift that. `sameLogin` is false when a sign-in
+    /// or sign-out came while the read was out: that lifted the flag (or
+    /// stands on its own), and an answer about the item before it does not
+    /// set it again.
+    static func declined(_ declined: Bool, after own: OwnTokenLookup, sameLogin: Bool) -> Bool {
+        guard sameLogin else { return declined }
         if case .refused(let status) = own, OwnTokenLookup.isUserRefusal(status) { return true }
         return declined
     }
 
-    /// Whether the decline stands after this save.
-    static func declined(_ declined: Bool, afterSaving result: OwnTokenSave) -> Bool {
-        result == .cancelled || declined
+    /// Whether the decline stands after this save — under the same rules
+    /// as after a read.
+    static func declined(_ declined: Bool, afterSaving result: OwnTokenSave, sameLogin: Bool) -> Bool {
+        guard sameLogin else { return declined }
+        return result == .cancelled || declined
     }
 
     static func shouldRenewUpFront(source: DataSource, tokenExpired: Bool) -> Bool {
@@ -241,21 +252,34 @@ enum UsageRefreshPolicy {
     /// Our own token first, then the CLI token — but only when ours is
     /// missing or refused, not while the Keychain is locked (#102).
     static func chooseToken(own: OwnTokenLookup, cli: () -> OAuthToken?) -> UsageTokenChoice {
-        switch own {
-        case .found(let token): return .token(token, .oauthLogin)
-        case .unavailable(let status): return .ownUnavailable(status)
-        case .missing, .refused: return cli().map { .token($0, .claudeCodeCLI) } ?? .none
-        }
+        chooseToken(resolution: .none, own: own, cli: cli)
     }
 
     /// A held renewal the refresh is storing or keeps in memory is polled
     /// with ahead of whatever the Keychain read said (#108).
     static func chooseToken(resolution: PendingResolution, own: OwnTokenLookup,
                             cli: () -> OAuthToken?) -> UsageTokenChoice {
+        ownChoice(resolution: resolution, own: own) ?? cliChoice(cli())
+    }
+
+    /// The choice `chooseToken` makes without the CLI token, or nil when the
+    /// CLI token is next. Split out so the model reads that token — a
+    /// Keychain read that may prompt — only then, and off the main thread
+    /// (#141).
+    static func ownChoice(resolution: PendingResolution, own: OwnTokenLookup) -> UsageTokenChoice? {
         switch resolution {
         case .save(let token), .useInMemory(let token): return .token(token, .oauthLogin)
-        case .none, .drop: return chooseToken(own: own, cli: cli)
+        case .none, .drop: break
         }
+        switch own {
+        case .found(let token): return .token(token, .oauthLogin)
+        case .unavailable(let status): return .ownUnavailable(status)
+        case .missing, .refused: return nil
+        }
+    }
+
+    static func cliChoice(_ cli: OAuthToken?) -> UsageTokenChoice {
+        cli.map { .token($0, .claudeCodeCLI) } ?? .none
     }
 
     /// `retry` is nil when no refresh was tried.

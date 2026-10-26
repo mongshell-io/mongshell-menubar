@@ -1169,10 +1169,11 @@ do {
     let loaded = GitHubLoadState.loaded(.pat)
     func gate(_ mine: [GitHubPullRequest]?, head: String = "abc", state: GitHubLoadState = loaded,
               activity: PRMergeActivity? = nil, id: String? = nil,
-              listGeneration: Int = 2, generation: Int = 2,
+              listGeneration: Int = 2, tokenGeneration: Int = 2, generation: Int = 2,
               listSource: GitHubTokenSource? = .pat, tokenSource: GitHubTokenSource = .pat) -> GitHubMergePolicy.Gate {
         GitHubMergePolicy.gate(id: id ?? ready.id, expectedHead: head, mine: mine,
-                               listGeneration: listGeneration, generation: generation,
+                               listGeneration: listGeneration, tokenGeneration: tokenGeneration,
+                               generation: generation,
                                listSource: listSource, tokenSource: tokenSource,
                                state: state, activity: activity)
     }
@@ -1194,6 +1195,15 @@ do {
     check("옛 목록에서 head 도 바뀜 → 세대 사유가 먼저", gate([ready], head: "old", generation: 3) == .listStale)
     check("세대가 달라도 이미 나간 머지 → 무시", gate([ready], activity: .merging, generation: 3) == .ignore)
     check("세대가 달라도 정지 상태 → 무시", gate([ready], state: .patSaveFailed(-1), generation: 3) == .ignore)
+    // #141: the token is read off the main thread. A swap lands while the
+    // read is out and the new list arrives before it returns: the list is
+    // current, but the token read is the one before the swap.
+    check("토큰을 읽는 사이 교체되고 새 목록이 도착 → 옛 토큰으로 보내지 않음 (listStale)",
+          gate([ready], listGeneration: 3, tokenGeneration: 2, generation: 3) == .listStale)
+    check("토큰을 읽는 사이 교체, 목록은 아직 옛것 → listStale",
+          gate([ready], listGeneration: 2, tokenGeneration: 2, generation: 3) == .listStale)
+    check("읽는 사이 교체돼도 이미 나간 머지 → 무시",
+          gate([ready], activity: .merging, listGeneration: 3, tokenGeneration: 2, generation: 3) == .ignore)
     // `gh auth switch` outside the app: same generation, another account.
     let alice = GitHubTokenSource.ghCLI(account: "alice")
     check("목록과 같은 gh 계정 → 보냄",

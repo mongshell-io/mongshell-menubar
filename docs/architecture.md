@@ -20,7 +20,7 @@ non_goals:
 | 네트워크 | `URLSession` (Foundation). HTTPS 클라이언트(사용량·OAuth 토큰·openclaw 상태·GitHub)는 `BoundedHTTP` 를 공유한다 — ephemeral 세션, 리다이렉트 거부, 바이트 캡 |
 | GitHub PR (선택 기능) | GitHub GraphQL API (`POST https://api.github.com/graphql`, 공식 API) — `URLSession` 위 `BoundedHTTP` (Decision #45) |
 | 로컬 리스너 | `Network.framework` (`NWListener`) — OAuth 루프백 |
-| 자격증명 | Security.framework Keychain (generic password) |
+| 자격증명 | Security.framework Keychain (generic password) — 모든 `SecItem*` 호출은 전용 직렬 큐 `KeychainQueue` 에서 (#141) |
 | 설정 영속화 | `UserDefaults` (`@AppStorage`) |
 | 알림 | UserNotifications (앱 번들 필수) — `Notifier` |
 | 로그인 항목 | ServiceManagement (`SMAppService.mainApp`) |
@@ -40,8 +40,8 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
    └─ CredentialStore.lookupOwnToken()      ← Keychain 자체 토큰 (있음 / 없음 / 잠김 / 거부)
    └─ UsageRefreshPolicy.resolvePending     ← 보류 토큰(갱신했지만 Keychain 이 받지 못한 것)이 있을 때만
         └─ 저장 다시 시도(CredentialStore.saveOwnToken) / 메모리의 것으로 폴링 / 버림   (§ Auth)
-   └─ UsageRefreshPolicy.chooseToken        ← 보류 토큰 → 자체 토큰 → CredentialStore.loadClaudeCodeToken() 순
-        (자체 토큰이 잠김이면 Claude Code 토큰으로 넘어가지 않고 오류 배너)
+   └─ UsageRefreshPolicy.ownChoice / cliChoice  ← 보류 토큰 → 자체 토큰 → CredentialStore.loadClaudeCodeToken() 순
+        (자체 토큰이 잠김이면 Claude Code 토큰으로 넘어가지 않고 오류 배너. Claude Code 토큰은 그 차례일 때만 읽는다)
    └─ AuthService.refresh(_:)      ← 자체 토큰이 만료됐을 때, 그리고 사용량 401 뒤 한 번
         └─ POST https://platform.claude.com/v1/oauth/token   (OAuthTokenClient · BoundedHTTP: 타임아웃 30초, 리다이렉트 거부, 200·400·401 만 본문을 64KB 까지 읽음)
    └─ UsageAPIClient.fetch(token:)
@@ -60,6 +60,7 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
 - 폴링 주기는 사용자 설정값과 `Config.minPollInterval` 중 큰 값. 기본이자 하한이 180초다.
 - `429` 응답 시 지수 백오프 (`base * 2^n`, 상한 3600초) — 서버의 `Retry-After` 가 그보다 길면 그 시각까지 (같은 3600초 상한). 그 시각(`LoadState.rateLimited(retryAt:)`, 규칙은 `UsageRetryPolicy`)까지는 팝오버의 수동 새로고침(⋯ 메뉴)도 요청을 보내지 않는다 — ⋯ 메뉴의 항목은 "새로고침 — N분 후 가능" 으로 비활성되고, 배너는 "N분 후 자동 재시도" 를 보인다 (#86). 비공식 엔드포인트(Decision 2)라 제한 중 재요청이 제한을 늘릴 수 있어서다.
 - 응답 스키마가 비공개라 `parse()` 는 후보 키 경로를 여러 개 탐색하고 채울 수 있는 것만 채운다.
+- Keychain 호출(`CredentialStore` 의 읽기·저장·삭제)은 `async` 이고 `KeychainQueue` 에서 돈다 — "키체인 접근 허용" 대화상자가 떠 있는 동안 메뉴바·팝오버가 멈추지 않게 (#141). 그래서 한 갱신의 단계 사이(읽기 → 보류 저장 → 토큰 선택 → 갱신 토큰 채택·저장 → 만료 시 삭제)에 로그인·로그아웃이 끼어들 수 있다. 각 단계는 await 뒤 `loginGeneration` 을 다시 보고, 바뀌었으면 읽은 것으로 아무것도 하지 않고 멈춘다 — 상태는 그 로그인·로그아웃(과 그것이 부른 갱신)이 정한다. 다른 갱신은 끼어들지 않는다 — `refreshInFlight` 가 await 를 가로질러 유지된다. 큐는 직렬이고 부른 순서대로 돈다(호출하는 순간 작업이 큐에 오른다): 갱신이 먼저 올린 저장 뒤에 로그인의 저장이 오르므로 새 로그인이 남고, 로그아웃의 삭제 뒤에 오른 읽기는 지운 뒤의 Keychain 을 본다. 로그아웃은 "로그아웃됨" 을 바로 보이고 삭제가 끝난 뒤 실패면 오류를 보인다. 대화상자 취소의 기억(아래 § Auth, #143)은 답이 돌아온 **그 시점의** 플래그에 더하고, 그 사이 로그인·로그아웃이 있었으면 그 답으로 플래그를 바꾸지 않는다 (`UsageRefreshPolicy.declined(_:after:sameLogin:)`).
 - 5시간·7일 한도는 `limits` 의 `session`·`weekly_all` 행이 먼저, 없거나 숫자가 아니면 같은 창의 `five_hour`·`seven_day` 객체가 대신한다. 둘 다 없으면 그 한도는 **값 없음**이다 — 0% 로 접지 않는다. 메뉴바·팝오버·hover 는 점선 회색 링과 "—" 로 그리고, 팝오버는 "사용량 형식을 읽지 못했습니다" 배너를 띄우며(`UsagePresentation` — 연결된 상태에서만 뜨고 Claude Code 계정 안내보다 앞선다. 다른 상태는 제 배너를 그대로 보인다), 임계 알림은 값 없음을 관측하지 않는다 — 5시간 한도가 값 없음이면 그 폴링은 임계 감시를 건너뛰어, 다시 읽혔을 때 이미 알린 레벨을 또 알리지 않는다 (#130). `limits` 배열이 있는데 그 창의 행을 읽지 못해 flat 객체로 대신 읽었으면 그 창 이름을 `flatFallbacks` 에 실어 디버그 로그에 `read flat five_hour` 처럼 남긴다 — 형식이 바뀌는 조짐이라서다. 같은 집합이 이어지는 동안은 한 번만 쓴다 (아래 모르는 것의 로그와 같은 dedupe 키). `limits` 배열이 아예 없는 응답의 flat 읽기는 남기지 않는다.
 - `limits` 의 모르는 `kind` 는 버리지 않고 `extraLimits` 로 실어 팝오버의 7일 한도 아래에 그리고(설정 화면의 제한 초기화/보너스가 이 경로로 보인다), 최상위의 모르는 객체 키는 `unknownTopLevel` 로 실어 디버그 로그에만 남긴다 — 모르는 것의 집합이 바뀔 때 한 줄. 필터 규칙 셋: (1) 최상위 키 중 값이 null 인 것과 모양을 아는 것(`seven_day_breakdown`·`weekly_scoped_shares`·`member_dashboard_available`)은 세지 않고, 모르는 **객체** 키만 `unknownTopLevel` 에 든다. (2) 로그 줄은 kind·percent·resets_at(과 is_active·scope 모델명·utilization)만 담고 토큰·금액은 넣지 않는다. (3) 응답에서 온 문자열(`kind`·모델명·키 이름)은 `parse()` 에서 한 줄로 평탄화하고 글자 수 상한을 두며, `extraLimits`·`unknownTopLevel` 은 각각 개수 상한까지만 싣고 초과분은 버린다 — 상한값은 `Config`(`usageDisplayTextLimit`·`usageExtraLimitsCap`·`usageUnknownTopLevelCap`)가 권위다.
 - 토큰이 없으면 네트워크를 타지 않고 샘플 스냅샷(`UsageSnapshot.sample(now:)`)으로 렌더한다. 샘플의 초기화 시각은 고정값이 아니라 샘플을 보이는 전이마다(토큰 없음·401·로그인 만료·로그아웃, 그리고 샘플을 보이던 중의 실패·요청 제한 — 로그아웃 상태에서 Keychain 이 잠긴 폴링 등) 그 시각부터 다시 잡는다 — 앱을 켤 때 한 번 잡으면 약 세 시간 뒤 "곧 초기화" 에 멈춘다 (#133).
@@ -180,7 +181,7 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
 
 ```
 GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주입, 싱글턴 아님)
-   └─ GitHubCredentialStore            ← Keychain (자체 PAT → gh CLI 항목 순)
+   └─ GitHubCredentialStore            ← Keychain (자체 PAT → gh CLI 항목 순, KeychainQueue 에서 — #141)
         ├─ 자체 PAT: service Config.ownKeychainService, account "github-pat"
         └─ gh CLI:  service "gh:github.com" (account = GitHub 사용자명, service 만으로 조회, 읽기 전용)
              └─ go-keyring 접두 디코딩: `go-keyring-base64:`+base64 / `go-keyring-encoded:`+hex / 평문
@@ -212,6 +213,7 @@ GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주�
 - 한도: 토큰당 시간당 5,000 포인트. 요청당 1 포인트 안팎 (노드 수에 비례). 팝오버 바닥에 쓴 비율을 작은 링으로 보이고, 정확한 `remaining / limit` 는 툴팁에만 둔다.
 - 숨긴 레포(`Preferences.githubHiddenRepos`, "owner/name" 소문자)는 스냅샷을 읽는 모든 소비자가 `hiding(_:)` 을 거치므로 메뉴바 숫자·hover·팝오버·주기 판정 어디에도 세지 않는다.
 - 꺼져 있으면 폴링도 없고 메뉴바·팝오버·hover 어디에도 흔적이 없다. 설정의 "GitHub 표시" 토글은 PHILOSOPHY 원칙 2 의 설정 진입점 예외로 항상 보인다. 켜는 동작이 첫 Keychain 읽기이며, gh 항목 접근 거부는 세션 동안 기억해 설정에서만 재시도한다.
+- Keychain 읽기·PAT 저장·삭제는 `async` 이고 `KeychainQueue` 에서 돈다 (#141). 토큰을 읽는 사이 세대가 바뀌면(PAT 적용·지우기, 켜고 끄기) 그 갱신은 읽은 것을 버린다 — 바꾼 쪽이 `refreshNow()` 로 새 갱신을 부른다. 세대는 PAT 저장·삭제를 보내기 **전에** 올리고, 저장이 실패하면 한 번 더 올려 저장 중에 시작된 갱신의 답도 버린다(PAT 저장 실패 정지가 그 답에 덮이지 않게). 머지는 토큰을 읽은 뒤 그 시점의 목록·상태·진행 표시로 판정하고, 읽는 사이 세대가 바뀌었으면 `listStale` 로 보내지 않는다 (`GitHubMergePolicy.gate` 의 `tokenGeneration`). gh 항목 거부는 그 사이 세대가 바뀌었어도 기억한다 — 읽기는 거부가 기억되지 않은 동안에만 나가므로, 그 거부가 대화상자에 대한 사용자의 마지막 답이다.
 
 ### 응답 읽기 공통 규칙
 

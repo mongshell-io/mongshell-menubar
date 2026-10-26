@@ -77,15 +77,20 @@ enum GitHubMergePolicy {
     /// `tokenSource` the one the merge would go out with. A swap in the app
     /// bumps the generation, but `gh auth switch` outside it changes only
     /// the account gh's item resolves to — the source tells that apart.
+    /// `tokenGeneration` is the generation the token was read under: the
+    /// read runs off the main thread (#141), and a swap that lands while it
+    /// is out — with the new list already in — leaves a token that speaks
+    /// for the item before the swap.
     static func gate(id: String, expectedHead: String, mine: [GitHubPullRequest]?,
-                     listGeneration: Int, generation: Int,
+                     listGeneration: Int, tokenGeneration: Int, generation: Int,
                      listSource: GitHubTokenSource?, tokenSource: GitHubTokenSource,
                      state: GitHubLoadState, activity: PRMergeActivity?) -> Gate {
         guard allowsMerge(in: state), activity != .merging, activity != .merged,
               let current = mine?.first(where: { $0.id == id }),
               canOffer(current, section: .mine),
               let nodeID = current.nodeID else { return .ignore }
-        guard listGeneration == generation, listSource == tokenSource else { return .listStale }
+        guard listGeneration == generation, tokenGeneration == generation,
+              listSource == tokenSource else { return .listStale }
         guard current.headSHA == expectedHead else { return .headMoved }
         return .send(nodeID: nodeID)
     }

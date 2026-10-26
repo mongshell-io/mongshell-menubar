@@ -83,7 +83,7 @@ struct SettingsView: View {
         switch model.presentation.account {
         case .ownLogin:
             LabeledContent("상태", value: "로그인됨 (OAuth)")
-            Button("로그아웃") { model.signOut() }
+            Button("로그아웃") { Task { await model.signOut() } }
         case .cliAccount:
             LabeledContent("상태", value: "Claude Code 계정 사용 중")
             Button("이 앱 계정으로 로그인") { Task { await model.signIn() } }
