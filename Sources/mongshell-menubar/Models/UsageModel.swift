@@ -147,8 +147,7 @@ final class UsageModel: ObservableObject {
         var wake = WakeRetry()
         while !Task.isCancelled {
             await refreshOnce()
-            var failed = false
-            if case .error = loadState { failed = true }
+            let failed = UsageRetryPolicy.wakeRetryFailed(after: loadState, backoff: session.backoff)
             var wait = TimeInterval(wake.wait(
                 normal: UsageRetryPolicy.pollWait(base: pollBase, backoff: session.backoff), failed: failed))
             wake.polled(failed: failed)

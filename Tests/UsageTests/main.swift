@@ -1538,6 +1538,13 @@ do {
     short.waitEnded(slept: true)
     check("a retry never waits longer than the normal interval", short.wait(normal: 5, failed: true) == 5)
 
+    check("an error with no 429 backoff counts as failed",
+          UsageRetryPolicy.wakeRetryFailed(after: .error("x"), backoff: 0))
+    check("an error while a 429 backoff runs keeps the backoff wait",
+          !UsageRetryPolicy.wakeRetryFailed(after: .error("x"), backoff: 1))
+    check("a rate limit is not a failure for the wake retry",
+          !UsageRetryPolicy.wakeRetryFailed(after: .rateLimited(retryAt: Date()), backoff: 0))
+
     var recovered = WakeRetry()
     recovered.waitEnded(slept: true)
     recovered.polled(failed: true)
