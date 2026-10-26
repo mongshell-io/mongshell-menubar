@@ -1261,6 +1261,90 @@ do {
     check("StatusContext nil → queued", ctx(nil) == .queued)
 }
 
+// MARK: - 연결 표시 (#117)
+// 팝오버의 배지·배너·배너 버튼과 설정의 토큰 행·버튼. 상태마다 하나씩 고정한다 —
+// 매핑 하나가 바뀌면 사용자가 보는 배지 문구나 버튼이 바뀐다.
+
+do {
+    func p(_ state: GitHubLoadState, _ source: GitHubTokenSource? = nil) -> GitHubPresentation {
+        GitHubPresentation(loadState: state, tokenSource: source)
+    }
+    typealias B = GitHubPresentation.Banner
+    typealias A = GitHubPresentation.BannerAction
+    let retryAt = now.addingTimeInterval(300)
+    let gh = GitHubTokenSource.ghCLI(account: "mongshellio")
+
+    // 배지
+    check("배지: off → 동기화 중 (loading 과 같다)", p(.off).badge == .syncing)
+    check("배지: loading → 동기화 중", p(.loading).badge == .syncing)
+    check("배지: loaded(gh) → 연결됨", p(.loaded(gh)).badge == .connected)
+    check("배지: loaded(pat) → 연결됨", p(.loaded(.pat)).badge == .connected)
+    check("배지: noToken → 토큰 없음", p(.noToken).badge == .noToken)
+    check("배지: keychainDenied → 거부됨", p(.keychainDenied).badge == .denied)
+    check("배지: rateLimited → 제한됨", p(.rateLimited(retryAt: retryAt)).badge == .limited)
+    check("배지: unauthorized → 권한 부족", p(.unauthorized).badge == .unauthorized)
+    check("배지: patSaveFailed → 오류", p(.patSaveFailed(-25300)).badge == .failed)
+    check("배지: error → 오류", p(.error("x")).badge == .failed)
+
+    // 배너와 그 버튼
+    check("배너: off → 불러오는 중, 버튼 없음",
+          p(.off).banner == B.loading && p(.off).bannerAction == A.none)
+    check("배너: loading → 불러오는 중, 버튼 없음",
+          p(.loading).banner == B.loading && p(.loading).bannerAction == A.none)
+    check("배너: loaded(gh) → gh 계정명, 버튼 없음",
+          p(.loaded(gh)).banner == B.ghAccount("mongshellio") && p(.loaded(gh)).bannerAction == A.none)
+    check("배너: loaded(pat) → PAT 사용 중, 버튼 없음",
+          p(.loaded(.pat)).banner == B.pat && p(.loaded(.pat)).bannerAction == A.none)
+    check("배너: noToken → 설정 열기 버튼",
+          p(.noToken).banner == B.noToken && p(.noToken).bannerAction == A.openSettings)
+    check("배너: keychainDenied → gh Keychain 재시도 버튼",
+          p(.keychainDenied).banner == B.keychainDenied && p(.keychainDenied).bannerAction == A.retryGHKeychain)
+    check("배너: rateLimited → retryAt 그대로, 버튼 없음 (자동 재시도)",
+          p(.rateLimited(retryAt: retryAt)).banner == B.rateLimited(retryAt: retryAt)
+          && p(.rateLimited(retryAt: retryAt)).bannerAction == A.none)
+    check("배너: unauthorized → 재시도 버튼",
+          p(.unauthorized).banner == B.unauthorized && p(.unauthorized).bannerAction == A.retry)
+    check("배너: patSaveFailed → status 그대로, 재시도 버튼",
+          p(.patSaveFailed(-25300)).banner == B.patSaveFailed(-25300)
+          && p(.patSaveFailed(-25300)).bannerAction == A.retry)
+    check("배너: error → 메시지 그대로, 재시도 버튼",
+          p(.error("boom")).banner == B.failed("boom") && p(.error("boom")).bannerAction == A.retry)
+
+    // 설정 토큰 행 — PAT 는 연결 상태와 상관없이 지울 수 있다
+    check("토큰: PAT + 401 → 거부됨, PAT 지우기",
+          p(.unauthorized, .pat).token == .pat(rejected: true) && p(.unauthorized, .pat).tokenAction == .clearPAT)
+    check("토큰: PAT + loaded → 사용 중, PAT 지우기",
+          p(.loaded(.pat), .pat).token == .pat(rejected: false) && p(.loaded(.pat), .pat).tokenAction == .clearPAT)
+    check("토큰: PAT + loading/rateLimited/error → 사용 중, PAT 지우기",
+          [GitHubLoadState.loading, .rateLimited(retryAt: retryAt), .error("x")].allSatisfy {
+              p($0, .pat).token == .pat(rejected: false) && p($0, .pat).tokenAction == .clearPAT
+          })
+    // 현재 동작: 저장 실패 후에도 tokenSource 가 직전 값으로 남아 "PAT 사용 중" 으로 보인다.
+    // 고칠 때는 이 케이스를 함께 바꾼다 (동작 변경은 별도 커밋).
+    check("토큰: PAT + patSaveFailed → 사용 중, PAT 지우기 (현재 동작)",
+          p(.patSaveFailed(-25300), .pat).token == .pat(rejected: false)
+          && p(.patSaveFailed(-25300), .pat).tokenAction == .clearPAT)
+    check("토큰: gh + 401 → 계정명·거부됨, 버튼 없음",
+          p(.unauthorized, gh).token == .ghAccount("mongshellio", rejected: true)
+          && p(.unauthorized, gh).tokenAction == .none)
+    check("토큰: gh + loaded → 계정명 사용, 버튼 없음",
+          p(.loaded(gh), gh).token == .ghAccount("mongshellio", rejected: false)
+          && p(.loaded(gh), gh).tokenAction == .none)
+    check("토큰: gh + loading/rateLimited → 계정명 사용, 버튼 없음",
+          [GitHubLoadState.loading, .rateLimited(retryAt: retryAt)].allSatisfy {
+              p($0, gh).token == .ghAccount("mongshellio", rejected: false) && p($0, gh).tokenAction == .none
+          })
+    check("토큰: 출처 없음 + keychainDenied → 거부됨, gh 토큰 다시 시도",
+          p(.keychainDenied).token == .keychainDenied && p(.keychainDenied).tokenAction == .retryGHKeychain)
+    check("토큰: 출처 없음 + loading → 확인 중, 버튼 없음",
+          p(.loading).token == .checking && p(.loading).tokenAction == .none)
+    check("토큰: 출처 없음 + 그 밖 → 없음, 버튼 없음",
+          [GitHubLoadState.off, .noToken, .unauthorized, .rateLimited(retryAt: retryAt),
+           .patSaveFailed(-25300), .error("x")].allSatisfy {
+              p($0).token == GitHubPresentation.Token.none && p($0).tokenAction == .none
+          })
+}
+
 // MARK: - 영역 클릭 판정 (#58)
 // 메뉴바는 버튼보다 높고 아이템 옆 여백 클릭도 버튼에 온다 — 판정은 경계 x 하나다.
 

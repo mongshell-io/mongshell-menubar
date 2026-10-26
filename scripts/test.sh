@@ -92,12 +92,15 @@ echo "▶ running auth tests"
 # client's decoding, with the constants and formatter they read. The
 # @MainActor model is left out, as above. `GitHubCredentials` is compiled for
 # its pure gh-value decoding; nothing here touches the Keychain. The click
-# split between the two status-item regions (#58) rides along here.
+# split between the two status-item regions (#58) rides along here, and so
+# does `GitHubPresentation` — the connection badge, banner and token row the
+# popover and settings read (#117).
 echo "▶ compiling github tests"
 swiftc -o "$OUT/github-tests" \
   "$APP/App/RegionClickRouting.swift" \
   "$APP/Design/Palette.swift" \
   "$APP/Models/GitHubState.swift" \
+  "$APP/Models/GitHubPresentation.swift" \
   "$APP/Models/GitHubPullRequest.swift" \
   "$APP/Services/BoundedHTTP.swift" \
   "$APP/Services/Config.swift" \
