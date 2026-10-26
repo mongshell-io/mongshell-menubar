@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// What the usage side shows, and the flags that decide it. Every change goes
@@ -28,14 +29,30 @@ struct UsageSession: Equatable {
     /// Tracked by event rather than read off the snapshot: nothing in a
     /// snapshot's values marks it as the sample for certain.
     private var showsSample = true
+    /// Fingerprints of the refresh tokens whose lapse the user has been
+    /// shown, for the life of the app. A lapse the Keychain could not
+    /// confirm leaves the dead token in place (#147); it lapses again once
+    /// the item reads, and by then a CLI fetch may have taken the notice
+    /// down — so the notice being up is not enough to tell it is old news.
+    /// Digests, not the tokens: nothing here needs to spend them.
+    private var announcedLapses: Set<SHA256Digest> = []
 
     static let backoffCap = 4
 
-    /// Whether a lapse now is news to the user — false while the notice from
-    /// an earlier one is still up. A lapse the Keychain could not confirm
-    /// leaves the dead token in place (#147), so it can lapse again once the
-    /// item reads; that one is not announced twice.
-    var lapseIsNews: Bool { !expiredUnresolved }
+    /// Whether a lapse of the token with this refresh token is news to the
+    /// user: false while the notice from an earlier lapse is still up, and
+    /// false for a refresh token whose lapse was already announced this
+    /// session, notice up or not. Another token's lapse is news once the
+    /// notice is down.
+    func lapseIsNews(refreshToken: String?) -> Bool {
+        guard !expiredUnresolved else { return false }
+        guard let refreshToken else { return true }
+        return !announcedLapses.contains(Self.fingerprint(refreshToken))
+    }
+
+    private static func fingerprint(_ refreshToken: String) -> SHA256Digest {
+        SHA256.hash(data: Data(refreshToken.utf8))
+    }
 
     // MARK: Refresh events
 
@@ -68,8 +85,10 @@ struct UsageSession: Equatable {
         markSignedOut(now: now)
     }
 
-    /// The own token was discarded after `invalid_grant`.
-    mutating func expired(now: Date) {
+    /// The own token lapsed on `invalid_grant` and the notice goes up; its
+    /// refresh token is remembered as announced (see `lapseIsNews`).
+    mutating func expired(refreshToken: String?, now: Date) {
+        if let refreshToken { announcedLapses.insert(Self.fingerprint(refreshToken)) }
         snapshot = .sample(now: now)
         showsSample = true
         accountSource = nil

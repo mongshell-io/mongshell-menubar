@@ -614,7 +614,7 @@ do {
     // #44 — the lapsed-login notice outlives the polls after it.
     var e = UsageSession()
     e.loaded(snap, source: .oauthLogin)
-    e.expired(now: now)
+    e.expired(refreshToken: "r1", now: now)
     check("invalid_grant → lapsed notice, sample numbers",
           e.loadState == .sessionExpired && e.snapshot == .sample(now: now) && e.accountSource == nil)
     e.noToken(now: now)
@@ -881,7 +881,7 @@ do {
     let paths: [(String, (inout UsageSession) -> Void)] = [
         ("noToken", { $0.noToken(now: now) }),
         ("rejected", { $0.rejected(accessToken: "cli", now: now) }),
-        ("expired", { $0.expired(now: now) }),
+        ("expired", { $0.expired(refreshToken: "r1", now: now) }),
         ("signedOut", { $0.signedOut(now: now) }),
     ]
     for (name, event) in paths {
@@ -907,7 +907,7 @@ do {
     let paths: [(String, (inout UsageSession) -> Void)] = [
         ("noToken", { $0.noToken(now: later) }),
         ("rejected", { $0.rejected(accessToken: "cli", now: later) }),
-        ("expired", { $0.expired(now: later) }),
+        ("expired", { $0.expired(refreshToken: "r1", now: later) }),
         ("signedOut", { $0.signedOut(now: later) }),
     ]
     for (name, event) in paths {
@@ -1312,17 +1312,28 @@ do {
     // The kept item lapses again once it reads: one notification, not two.
     var s = UsageSession()
     s.loaded(snap, source: .oauthLogin)
-    check("first lapse is news", s.lapseIsNews)
-    s.expired(now: now)
-    check("a second lapse under the notice is not news (no second notification)", !s.lapseIsNews)
+    check("first lapse is news", s.lapseIsNews(refreshToken: "r1"))
+    s.expired(refreshToken: "r1", now: now)
+    check("a second lapse under the notice is not news (no second notification)",
+          !s.lapseIsNews(refreshToken: "r1"))
     s.noToken(now: now)
-    check("…nor after the polls that follow it", !s.lapseIsNews)
+    check("…nor after the polls that follow it", !s.lapseIsNews(refreshToken: "r1"))
     var resolved = s
     resolved.loaded(snap, source: .claudeCodeCLI)
-    check("a lapse after the notice was resolved by a fetch is news again", resolved.lapseIsNews)
+    check("the same dead token lapsing after a CLI fetch took the notice down is not news",
+          !resolved.lapseIsNews(refreshToken: "r1"))
+    resolved.expired(refreshToken: "r1", now: now)
+    check("…but its notice still goes up", resolved.loadState == .sessionExpired)
+    check("another token lapsing under the notice is not news", !s.lapseIsNews(refreshToken: "r2"))
+    var other = s
+    other.loaded(snap, source: .claudeCodeCLI)
+    check("another token lapsing after the notice was resolved is news", other.lapseIsNews(refreshToken: "r2"))
     var signedIn = s
     signedIn.signedIn()
-    check("a lapse after signing in again is news again", signedIn.lapseIsNews)
+    check("a new login lapsing after signing in again is news", signedIn.lapseIsNews(refreshToken: "r2"))
+    check("…the old dead token is still not", !signedIn.lapseIsNews(refreshToken: "r1"))
+    check("a token with no refresh token is news once the notice is down",
+          signedIn.lapseIsNews(refreshToken: nil) && !s.lapseIsNews(refreshToken: nil))
 }
 
 // MARK: result

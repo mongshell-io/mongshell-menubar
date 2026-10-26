@@ -310,7 +310,8 @@ final class UsageModel: ObservableObject {
     /// token (or to signed-out), and tells the user once. When the Keychain
     /// cannot say whether it still holds that token, the notice goes up all
     /// the same but the item is left (#147); once it reads again the dead
-    /// token lapses again, and `lapseIsNews` keeps that from notifying twice.
+    /// token lapses again, and `lapseIsNews` keeps that from notifying twice
+    /// — even when a CLI fetch took the notice down in between.
     /// A sign-in or sign-out that lands while the Keychain is asked wins:
     /// before the delete, nothing is deleted; after it, its save was queued
     /// behind the delete and stands, and the lapsed notice is not shown over
@@ -330,8 +331,8 @@ final class UsageModel: ObservableObject {
             _ = await CredentialStore.clearOwnToken()
             guard generation == loginGeneration else { return }
         }
-        let isNews = session.lapseIsNews
-        session.expired(now: Date())
+        let isNews = session.lapseIsNews(refreshToken: token.refreshToken)
+        session.expired(refreshToken: token.refreshToken, now: Date())
         if isNews { notifySessionExpired() }
     }
 
