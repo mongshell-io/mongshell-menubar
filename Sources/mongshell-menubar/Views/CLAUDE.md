@@ -18,7 +18,7 @@ non_goals:
 - 상태는 `Models/` 의 `@MainActor ObservableObject` (`UsageModel.shared`, `Preferences.shared`, `OpenClawModel`) 를 `@ObservedObject`/`@EnvironmentObject` 로 관찰한다.
 - 뷰 안에서 `URLSession`·`Process`·`FileManager`·Keychain 을 직접 부르지 않는다. 필요하면 모델에 메서드를 만들고 그것을 호출한다.
 - 사용자 액션은 모델 메서드 호출로 끝난다 (`refreshNow()`, `applyStatusURL(_:)` 등).
-- 어떤 배지·배너·버튼을 보일지는 뷰가 상태를 직접 `switch` 해 정하지 않고 모델의 순수 판정 타입을 읽는다 — 사용량은 `UsagePresentation`(#104), GitHub 은 `GitHubPullRequest`·`GitHubMergePolicy`. 뷰에 남는 것은 문구와 색이다. 뷰마다 따로 판정하다 #90 이 났다.
+- 사용량의 배지·배너·버튼·계정 행은 뷰가 `loadState` 를 직접 `switch` 해 정하지 않고 `UsagePresentation` 을 읽는다 (#104). 뷰에 남는 것은 문구와 색이다. GitHub 의 PR 행 배지·머지 버튼은 `GitHubPullRequest`·`GitHubMergePolicy` 가 정하고, GitHub 연결 상태의 배지·배너·토큰 행은 아직 뷰가 직접 판정한다.
 
 ## 뷰 로컬 상태는 `@State` 대신 수동 펼침
 
