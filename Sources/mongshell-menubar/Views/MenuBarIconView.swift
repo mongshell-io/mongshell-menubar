@@ -2,40 +2,15 @@ import SwiftUI
 
 /// The status-bar content: Claude mark + two compact ring gauges (`◔15% ◕96%`)
 /// for the 5-hour and 7-day windows. Hosted inside the NSStatusItem button via
-/// NSHostingView. The mark pulses at ≥90% (per the design's alert behavior).
+/// NSHostingView.
 /// Reset times live in the popover, not the bar, to keep it short.
 struct MenuBarIconView: View {
     @ObservedObject var model: UsageModel
     @ObservedObject var prefs: Preferences
     @ObservedObject var openClaw: OpenClawModel
 
-    // `@State` 를 손으로 펼친 것. macOS 27 SDK 부터 `@State` 는 SwiftUIMacros
-    // 플러그인이 전개하는 매크로인데, 그 플러그인은 Xcode 에만 있고 Command Line
-    // Tools 에는 없다 (Decision #11-2). `State<Value>` 프로퍼티 래퍼 자체는 SDK 에
-    // 그대로 남아 있어, 매크로가 만들었을 저장소와 접근자를 직접 적으면 의미가 같다.
-    private var _pulsing = State(initialValue: false)
-    private var pulsing: Bool {
-        get { _pulsing.wrappedValue }
-        nonmutating set { _pulsing.wrappedValue = newValue }
-    }
-
-    // 초기값이 있는 `private var` 저장 프로퍼티도 멤버와이즈 이니셜라이저에
-    // 들어가 그 접근 수준을 private 으로 끌어내린다. 다른 파일(AppDelegate)이
-    // 뷰를 만들 수 있게 이니셜라이저를 직접 적는다.
-    init(model: UsageModel, prefs: Preferences, openClaw: OpenClawModel) {
-        self.model = model
-        self.prefs = prefs
-        self.openClaw = openClaw
-    }
-
     private var fiveHourUsed: Int { model.snapshot.fiveHourPercent }
     private var weeklyUsed: Int { model.snapshot.weeklyAllPercent }
-
-    /// Pulse always keys off risk (consumed) of the riskier window,
-    /// regardless of display mode.
-    private var shouldPulse: Bool {
-        prefs.pulseWhenCritical && max(fiveHourUsed, weeklyUsed) >= UsageThresholdWatch.critical
-    }
 
     private var dots: OpenClawDots { OpenClawDots(prefs: prefs, openClaw: openClaw) }
 
@@ -45,15 +20,8 @@ struct MenuBarIconView: View {
                        colorCoding: prefs.colorCoding,
                        showPercent: prefs.showPercent,
                        fiveHourReset: TimeText.clockShort(model.snapshot.fiveHourResetAt),
-                       pulsing: pulsing,
                        openClawDotColor: dots.openClaw,
                        serverHostDotColor: dots.serverHost)
-        .animation(shouldPulse
-                   ? .easeInOut(duration: 0.55).repeatForever(autoreverses: true)
-                   : .default,
-                   value: pulsing)
-        .onAppear { pulsing = shouldPulse }
-        .onChange(of: shouldPulse) { _, now in pulsing = now }
     }
 }
 
@@ -69,7 +37,6 @@ struct MenuBarContent: View {
     /// window's reset is easy to lose track of, so it earns the extra text.
     /// nil hides it.
     var fiveHourReset: String? = nil
-    var pulsing: Bool = false
     /// Non-nil = append the unified openclaw indicator (paw + traffic-light dot)
     /// in this color. nil = hide it entirely.
     var openClawDotColor: Color? = nil
@@ -83,7 +50,6 @@ struct MenuBarContent: View {
         HStack(spacing: 6) {
             ClaudeMarkView()
                 .frame(width: 16, height: 16)
-                .scaleEffect(pulsing ? 1.14 : 1.0)
 
             if showPercent {
                 // Position conveys the window: left = 5h, right = 7d.

@@ -17,7 +17,6 @@ final class Preferences: ObservableObject {
     /// The option exists mainly as a 429 escape valve / battery saver.
     @AppStorage("pollIntervalSeconds") var pollIntervalSeconds: Int = 180
     @AppStorage("notifyThresholds") var notifyThresholds: Bool = true
-    @AppStorage("pulseWhenCritical") var pulseWhenCritical: Bool = true
 
     // MARK: openclaw
 

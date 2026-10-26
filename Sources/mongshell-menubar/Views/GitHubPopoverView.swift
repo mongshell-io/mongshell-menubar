@@ -291,7 +291,7 @@ private struct PRRow: View {
     /// showed at that moment.
     let onMerge: (_ expectedHead: String) -> Void
 
-    // `@State` 를 손으로 펼친 것 (Decision #11-2, `MenuBarIconView.pulsing` 참조).
+    // `@State` 를 손으로 펼친 것 (Decision #11-2, `OpenClawSettingsSection.urlError` 참조).
     private var _hovering = State(initialValue: false)
     private var hovering: Bool {
         get { _hovering.wrappedValue }

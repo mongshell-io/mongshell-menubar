@@ -111,7 +111,7 @@ struct UsageSession: Equatable {
 /// When to post a usage-threshold notification: once per level on the way
 /// up, never again on the way down until the window resets.
 struct UsageThresholdWatch: Equatable {
-    /// The top level — also where the menu bar icon starts to pulse.
+    /// The top level.
     static let critical = 90
     static let thresholds = [critical, 75, 50, 25]
 

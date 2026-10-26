@@ -8,7 +8,7 @@ struct GitHubSettingsSection: View {
     @ObservedObject var model: GitHubModel
     @ObservedObject var prefs: Preferences
 
-    // `@State` 를 손으로 펼친 것 (Decision #11-2, `MenuBarIconView.pulsing` 참조).
+    // `@State` 를 손으로 펼친 것 (Decision #11-2, `OpenClawSettingsSection.urlError` 참조).
     // 입력 중인 값은 여기에만 두고 "적용"/"숨기기" 때 모델로 넘긴다.
     private var _draftPAT = State(initialValue: "")
     private var draftPAT: String {
