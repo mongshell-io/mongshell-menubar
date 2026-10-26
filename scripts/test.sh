@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs the regression tests: Claude Code settings, the openclaw server agent,
 # the app's openclaw status client, the OAuth token path, the GitHub PR
-# region, the usage response parser, then server/install.sh's option rules.
+# region, the usage response parser, the usage model's await order, then
+# server/install.sh's option rules.
 #
 # Not `swift test`: that needs XCTest or swift-testing, and neither ships with
 # the Command Line Tools this project builds against (no Xcode required is a
@@ -26,6 +27,17 @@ missing="$(grep -nE 'func [A-Za-z]+.*\) async' \
   | grep -v 'nonisolated(nonsending)' || true)"
 if [[ -n "$missing" ]]; then
   echo "✗ async Keychain entry point without nonisolated(nonsending):" >&2
+  echo "$missing" >&2
+  exit 1
+fi
+# The model's Keychain boundaries stand for those entry points (#150); the
+# order tests run their fakes on the main actor either way, so they cannot
+# see the modifier go missing.
+missing="$(grep -nE 'var (lookupOwnToken|saveOwnToken|clearOwnToken|loadClaudeCodeToken):' \
+  "$ROOT/Sources/mongshell-menubar/Models/UsageModel.swift" \
+  | grep -v 'nonisolated(nonsending)' || true)"
+if [[ -n "$missing" ]]; then
+  echo "✗ UsageModel Keychain boundary without nonisolated(nonsending):" >&2
   echo "$missing" >&2
   exit 1
 fi
@@ -167,6 +179,35 @@ swiftc -o "$OUT/usage-tests" \
 
 echo "▶ running usage tests"
 "$OUT/usage-tests"
+
+# The @MainActor model itself, on fake boundaries (#150): where it re-checks
+# the login generation after each await. The live boundaries
+# (`UsageModelLive.swift` — AuthService, Notifier, Preferences) stay out; the
+# rest is the usage bundle above. TMPDIR keeps `AuthDebugLog` lines from
+# these runs out of the real debug log.
+echo "▶ compiling usage model order tests"
+swiftc -o "$OUT/usage-model-tests" \
+  "$APP/Design/Palette.swift" \
+  "$APP/Models/UsageModel.swift" \
+  "$APP/Models/UsagePresentation.swift" \
+  "$APP/Models/UsageRefreshPolicy.swift" \
+  "$APP/Models/UsageSession.swift" \
+  "$APP/Models/UsageState.swift" \
+  "$APP/Services/AuthDebugLog.swift" \
+  "$APP/Services/AuthError.swift" \
+  "$APP/Services/BoundedHTTP.swift" \
+  "$APP/Services/Config.swift" \
+  "$APP/Services/Credentials.swift" \
+  "$APP/Services/DisplayText.swift" \
+  "$APP/Services/JSONNumber.swift" \
+  "$APP/Services/KeychainQueue.swift" \
+  "$APP/Services/ResponseDate.swift" \
+  "$APP/Services/TimeText.swift" \
+  "$APP/Services/UsageAPIClient.swift" \
+  "$ROOT/Tests/UsageModelTests/main.swift"
+
+echo "▶ running usage model order tests"
+TMPDIR="$OUT" "$OUT/usage-model-tests"
 
 # Plain bash: sources the real server/lib.sh, exits non-zero on any failure.
 echo "▶ running server install option tests"

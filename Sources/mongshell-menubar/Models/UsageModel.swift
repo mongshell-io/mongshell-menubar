@@ -197,8 +197,9 @@ final class UsageModel: ObservableObject {
 
     /// Satisfies one refresh request. Requests that arrive while a refresh is
     /// in flight are coalesced into a single follow-up run, however many
-    /// there were.
-    private func refreshOnce() async {
+    /// there were. Not private only so the order tests can await a whole
+    /// refresh (#150); the app goes through `start()` and `refreshNow()`.
+    func refreshOnce() async {
         guard !refreshInFlight else { refreshRequested = true; return }
         refreshInFlight = true
         defer { refreshInFlight = false }

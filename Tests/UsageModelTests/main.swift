@@ -1,0 +1,372 @@
+import Foundation
+import Security
+
+// Order tests for `UsageModel` (#150): what a sign-in, a sign-out, [다시 허용]
+// or another refresh does when it lands while one of the model's awaits is
+// out. The pure rules are pinned in Tests/UsageTests; these pin where the
+// model re-checks its login generation (and decline allowance) after each
+// await, which only the model itself can show.
+//
+// The model runs on fake boundaries. Like `KeychainQueue`, a fake Keychain
+// call takes effect in the order it was made — its answer is fixed then —
+// and only the reply is held: a test holds a reply open, lets the other
+// action run to its end, then releases it. Each case below names the guard
+// that, removed, makes it fail.
+//
+// Run with `./scripts/test.sh`, which compiles this against the real
+// `UsageModel.swift` and the pure types it uses.
+
+var failures: [String] = []
+
+@MainActor func check(_ label: String, _ ok: Bool, _ detail: String = "") {
+    print("\(ok ? "  ok  " : " FAIL ") \(label)\(detail.isEmpty ? "" : "  — \(detail)")")
+    if !ok { failures.append(label) }
+}
+
+/// A token whose access/refresh values carry `name`, expired or not.
+func token(_ name: String, expired: Bool = false) -> OAuthToken {
+    OAuthToken(accessToken: "a-\(name)", refreshToken: "r-\(name)",
+               expiresAt: Date().addingTimeInterval(expired ? -3600 : 3600), signedInAt: nil)
+}
+
+struct TransientRefreshFailure: Error {}
+
+/// The model's outside world. Calls are numbered per kind from 1; a key such
+/// as `"lookup#2"` in `holds` keeps that call's reply until `release`.
+@MainActor final class Fake {
+    /// The own-token Keychain item.
+    var own: OAuthToken?
+    var cli: OAuthToken?
+    /// Replies for the nth own-token read, in place of what the item holds.
+    var lookupReplies: [Int: OwnTokenLookup] = [:]
+    /// What `refresh` turns an access token into; missing means `invalid_grant`.
+    var renewals: [String: OAuthToken] = [:]
+    var signInToken: OAuthToken?
+
+    var holds: Set<String> = []
+    private var waiting: [String: CheckedContinuation<Void, Never>] = [:]
+
+    private(set) var lookups = 0
+    private(set) var saved: [String] = []
+    private(set) var clears = 0
+    private(set) var cliReads = 0
+    private(set) var renewCalls = 0
+    private(set) var fetched: [String] = []
+    private(set) var expiryNotices = 0
+
+    func isHeld(_ key: String) -> Bool { waiting[key] != nil }
+
+    func release(_ key: String) {
+        holds.remove(key)
+        waiting.removeValue(forKey: key)?.resume()
+    }
+
+    private func pass(_ key: String) async {
+        guard holds.contains(key) else { return }
+        await withCheckedContinuation { waiting[key] = $0 }
+    }
+
+    func lookup() async -> OwnTokenLookup {
+        lookups += 1
+        let n = lookups
+        let reply = lookupReplies[n] ?? own.map(OwnTokenLookup.found) ?? .missing
+        await pass("lookup#\(n)")
+        return reply
+    }
+
+    func save(_ token: OAuthToken) async -> OwnTokenSave {
+        saved.append(token.accessToken)
+        own = token
+        await pass("save#\(saved.count)")
+        return .saved
+    }
+
+    func clear() async -> Bool {
+        clears += 1
+        own = nil
+        await pass("clear#\(clears)")
+        return true
+    }
+
+    func readCLI() async -> OAuthToken? {
+        cliReads += 1
+        let reply = cli
+        await pass("cli#\(cliReads)")
+        return reply
+    }
+
+    func renew(_ token: OAuthToken) async throws -> OAuthToken {
+        renewCalls += 1
+        await pass("refresh#\(renewCalls)")
+        guard let renewed = renewals[token.accessToken] else { throw AuthError.invalidGrant("test") }
+        return renewed
+    }
+
+    func fetch(_ token: OAuthToken) async -> UsageSnapshot {
+        fetched.append(token.accessToken)
+        await pass("fetch#\(fetched.count)")
+        return .sample(now: Date())
+    }
+
+    func signIn() throws -> OAuthToken {
+        guard let signInToken else { throw AuthError.cancelled }
+        return signInToken
+    }
+
+    var boundaries: UsageModel.Boundaries {
+        UsageModel.Boundaries(
+            lookupOwnToken: { await self.lookup() },
+            saveOwnToken: { await self.save($0) },
+            clearOwnToken: { await self.clear() },
+            loadClaudeCodeToken: { await self.readCLI() },
+            signIn: { try self.signIn() },
+            refresh: { try await self.renew($0) },
+            fetchUsage: { await self.fetch($0) },
+            notificationsAvailable: { true },
+            requestNotificationAuthorization: {},
+            postNotification: { _, _, _ in },
+            postNotificationAfterAuthorizing: { identifier, _, _ in
+                if identifier == "mongshell-menubar-session-expired" { self.expiryNotices += 1 }
+            },
+            // Threshold notices are pinned in Tests/UsageTests.
+            notifyThresholds: { false },
+            pollIntervalSeconds: { Config.minPollInterval })
+    }
+}
+
+/// Lets the other main-actor tasks run until `done` holds. Every fake reply
+/// is immediate unless held, so this only waits for scheduling.
+@MainActor func until(_ what: String, _ done: () -> Bool) async {
+    for _ in 0..<100_000 {
+        if done() { return }
+        await Task.yield()
+    }
+    check("reached: \(what)", false)
+}
+
+/// Gives queued main-actor tasks (a `refreshNow()` refresh) their turn.
+@MainActor func settle() async {
+    for _ in 0..<1_000 { await Task.yield() }
+}
+
+@MainActor func run() async {
+    // MARK: (a) a sign-out lands while a refresh's read is out
+
+    do {
+        // Removing the generation check right after `lookupOwnToken` in
+        // `performRefresh`: the refresh goes on to read the CLI item, which
+        // can put up a Keychain prompt after the user signed out.
+        let fake = Fake()
+        fake.cli = token("C")
+        fake.holds = ["lookup#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("own read held") { fake.isHeld("lookup#1") }
+        await model.signOut()
+        fake.release("lookup#1")
+        await refresh.value
+        check("(a) sign-out during the own read: no CLI read, no fetch, signed out",
+              fake.cliReads == 0 && fake.fetched.isEmpty && model.loadState == .signedOut,
+              "cliReads=\(fake.cliReads) fetched=\(fake.fetched) state=\(model.loadState)")
+    }
+
+    do {
+        // Removing the check after `currentToken`: the CLI token is polled
+        // and shown after the sign-out.
+        let fake = Fake()
+        fake.cli = token("C")
+        fake.holds = ["cli#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("CLI read held") { fake.isHeld("cli#1") }
+        await model.signOut()
+        fake.release("cli#1")
+        await refresh.value
+        check("(a) sign-out during the CLI read: nothing fetched or shown",
+              fake.fetched.isEmpty && model.loadState == .signedOut && model.accountSource == nil,
+              "fetched=\(fake.fetched) state=\(model.loadState)")
+    }
+
+    do {
+        // Removing the check before `apply`: the numbers fetched with the
+        // signed-out token are shown as loaded.
+        let fake = Fake()
+        fake.own = token("T")
+        fake.holds = ["fetch#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("fetch held") { fake.isHeld("fetch#1") }
+        await model.signOut()
+        fake.release("fetch#1")
+        await refresh.value
+        check("(a) sign-out during the fetch: its numbers are not shown",
+              model.loadState == .signedOut && model.accountSource == nil && fake.saved.isEmpty,
+              "state=\(model.loadState) saved=\(fake.saved)")
+    }
+
+    // MARK: (b) a sign-in lands while a renewal is being adopted
+
+    do {
+        // Removing the check after the save in `adoptRenewed`: the refresh
+        // goes on polling with the renewal the sign-in replaced.
+        let fake = Fake()
+        fake.own = token("T", expired: true)
+        fake.renewals = ["a-T": token("R")]
+        fake.signInToken = token("N")
+        fake.holds = ["save#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("renewal save held") { fake.isHeld("save#1") }
+        await model.signIn()
+        fake.release("save#1")
+        await refresh.value
+        check("(b) sign-in during the renewal's save: the new login stays, the renewal is not used",
+              fake.own?.accessToken == "a-N" && fake.fetched == ["a-N"]
+                  && model.loadState == .loaded(.oauthLogin),
+              "own=\(fake.own?.accessToken ?? "nil") fetched=\(fake.fetched) state=\(model.loadState)")
+    }
+
+    do {
+        // Passing `sameLogin: true` to `adopt` in `adoptRenewed`: the
+        // renewal is saved over the fresh login.
+        let fake = Fake()
+        fake.own = token("T", expired: true)
+        fake.renewals = ["a-T": token("R")]
+        fake.signInToken = token("N")
+        fake.holds = ["lookup#2"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("adopt's Keychain check held") { fake.isHeld("lookup#2") }
+        await model.signIn()
+        fake.release("lookup#2")
+        await refresh.value
+        check("(b) sign-in during adopt's Keychain check: the renewal is dropped, not saved",
+              fake.own?.accessToken == "a-N" && fake.saved == ["a-N"] && fake.fetched == ["a-N"],
+              "own=\(fake.own?.accessToken ?? "nil") saved=\(fake.saved) fetched=\(fake.fetched)")
+    }
+
+    // MARK: (c) a sign-in lands while a lapsed login is being dropped
+
+    do {
+        // Removing the check after the match in `expireSession`: the dead
+        // token's delete runs after the sign-in and deletes the new login.
+        let fake = Fake()
+        fake.own = token("T", expired: true)
+        fake.signInToken = token("N")
+        fake.holds = ["lookup#2"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("expireSession's Keychain check held") { fake.isHeld("lookup#2") }
+        await model.signIn()
+        fake.release("lookup#2")
+        await refresh.value
+        check("(c) sign-in during expireSession's check: the new login is not deleted, no notice",
+              fake.clears == 0 && fake.own?.accessToken == "a-N" && fake.expiryNotices == 0
+                  && model.loadState == .loaded(.oauthLogin),
+              "clears=\(fake.clears) own=\(fake.own?.accessToken ?? "nil") notices=\(fake.expiryNotices) state=\(model.loadState)")
+    }
+
+    do {
+        // Removing the check after the delete in `expireSession`: the
+        // lapsed notice and its notification go up over the new login.
+        let fake = Fake()
+        fake.own = token("T", expired: true)
+        fake.signInToken = token("N")
+        fake.holds = ["clear#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("dead token's delete held") { fake.isHeld("clear#1") }
+        await model.signIn()
+        fake.release("clear#1")
+        await refresh.value
+        check("(c) sign-in during the dead token's delete: its save stands, no lapse notice",
+              fake.own?.accessToken == "a-N" && fake.expiryNotices == 0 && model.loadState == .loaded(.oauthLogin),
+              "own=\(fake.own?.accessToken ?? "nil") notices=\(fake.expiryNotices) state=\(model.loadState)")
+    }
+
+    // MARK: (d) [다시 허용] while a read that the user cancelled is out
+
+    do {
+        // Passing `sameAllowance: true` in `lookupOwnToken`: the cancel from
+        // before [다시 허용] is remembered again, and the next read is
+        // skipped — the button did nothing.
+        let fake = Fake()
+        fake.own = token("T")
+        fake.lookupReplies = [1: .refused(errSecUserCanceled)]
+        fake.holds = ["lookup#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("cancelled read held") { fake.isHeld("lookup#1") }
+        model.refreshNow()
+        await settle()
+        fake.release("lookup#1")
+        await refresh.value
+        await settle()
+        check("(d) [다시 허용] during a cancelled read: the decline is not brought back, the Keychain is read again",
+              !model.keychainDeclined && fake.lookups == 2 && model.loadState == .loaded(.oauthLogin),
+              "declined=\(model.keychainDeclined) lookups=\(fake.lookups) state=\(model.loadState)")
+    }
+
+    // MARK: (e) the same dead token lapses again
+
+    do {
+        // Computing `lapseIsNews` after `session.expired` (no notification
+        // at all), or ignoring the announced tokens (a second one).
+        let fake = Fake()
+        fake.own = token("T", expired: true)
+        fake.cli = token("C")
+        fake.lookupReplies = [
+            2: .unavailable(errSecInteractionNotAllowed), // the lapse cannot be confirmed: item kept
+            3: .refused(errSecAuthFailed),                // not the user: falls to the CLI token
+        ]
+        let model = UsageModel(boundaries: fake.boundaries)
+        await model.refreshOnce()
+        let first = (model.loadState, fake.expiryNotices, fake.clears)
+        await model.refreshOnce()
+        let between = model.loadState
+        await model.refreshOnce()
+        check("(e) first lapse, Keychain cannot say: notice and one notification, item kept",
+              first.0 == .sessionExpired && first.1 == 1 && first.2 == 0,
+              "state=\(first.0) notices=\(first.1) clears=\(first.2)")
+        check("(e) a CLI fetch takes the notice down in between", between == .loaded(.claudeCodeCLI),
+              "state=\(between)")
+        check("(e) the same token lapses again: deleted, notice up, no second notification",
+              fake.expiryNotices == 1 && fake.clears == 1 && model.loadState == .sessionExpired,
+              "notices=\(fake.expiryNotices) clears=\(fake.clears) state=\(model.loadState)")
+    }
+
+    // MARK: (f) refreshes asked for while one is out
+
+    do {
+        // Removing the `refreshInFlight` guard (a second refresh reads
+        // alongside), or the follow-up loop (the request is lost).
+        let fake = Fake()
+        fake.own = token("T")
+        fake.holds = ["lookup#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("first read held") { fake.isHeld("lookup#1") }
+        await model.refreshOnce()
+        await model.refreshOnce()
+        let whileHeld = fake.lookups
+        fake.release("lookup#1")
+        await refresh.value
+        check("(f) refreshes asked for mid-flight do not overlap it", whileHeld == 1, "lookups=\(whileHeld)")
+        check("(f) they fold into one follow-up refresh",
+              fake.lookups == 2 && fake.fetched == ["a-T", "a-T"],
+              "lookups=\(fake.lookups) fetched=\(fake.fetched)")
+    }
+}
+
+await run()
+
+// MARK: result
+
+if failures.isEmpty {
+    print("\nUsage model order tests: all passed")
+    exit(0)
+} else {
+    print("\nUsage model order tests: \(failures.count) failed")
+    failures.forEach { print("  - \($0)") }
+    exit(1)
+}
