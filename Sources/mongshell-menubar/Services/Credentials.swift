@@ -29,7 +29,8 @@ enum OwnTokenLookup: Equatable {
     /// signing identity. It may not pass on its own, so the token choice
     /// treats it as missing (the CLI token is next, and a fresh sign-in
     /// replaces the item) — except while a renewal is held: then the poll
-    /// keeps that token and tries to store it again (#132).
+    /// keeps that token and tries to store it again (#132), unless the user
+    /// cancelled the prompt: then it is only kept in memory.
     case refused(OSStatus)
 
     /// An item that is there but no longer decodes counts as missing: no

@@ -179,7 +179,11 @@ enum UsageRefreshPolicy {
         // `sameLogin`). What is left is another build of the app signing in
         // while its item refuses us — accepted under the single-user,
         // single-account premise. A locked Keychain is still only waited out.
-        if case .refused = own { return .save(pending.token) }
+        // So is a prompt the user cancelled: that refusal was their answer,
+        // and storing again every poll would put the dialog back each time.
+        if case .refused(let status) = own {
+            return status == errSecUserCanceled ? .useInMemory(pending.token) : .save(pending.token)
+        }
         switch keychainMatch(own: own, expects: pending.keychain) {
         case .current: return .save(pending.token)
         case .changed: return .drop

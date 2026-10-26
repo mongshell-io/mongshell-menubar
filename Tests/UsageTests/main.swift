@@ -868,6 +868,8 @@ do {
     check("Keychain locked with a held renewal → still only kept in memory",
           UsageRefreshPolicy.resolvePending(held, own: .unavailable(errSecInteractionNotAllowed))
               == .useInMemory(renewed))
+    check("prompt cancelled with a held renewal → kept in memory, not stored again",
+          UsageRefreshPolicy.resolvePending(held, own: .refused(errSecUserCanceled)) == .useInMemory(renewed))
     check("refused with nothing held → nothing to do",
           UsageRefreshPolicy.resolvePending(nil, own: refused) == PendingResolution.none)
     let cliToken = OAuthToken(accessToken: "c", refreshToken: nil, expiresAt: nil)
