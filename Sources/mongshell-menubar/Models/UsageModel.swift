@@ -7,8 +7,13 @@ import SwiftUI
 final class UsageModel: ObservableObject {
     static let shared = UsageModel()
 
-    // Mirrors of `session`, published one by one so `$snapshot` subscribers
-    // (the status item's width) hear only what changed. See `UsageSession`.
+    // Mirrors of `session`'s visible state. `@Published` sends
+    // `objectWillChange` on every assignment, equal value or not, so the
+    // `didSet` below assigns only what differs: a session change that shows
+    // nothing new (a refresh starting under the same account, a repeated
+    // error, a flag) leaves the views observing this model — the menu bar
+    // icon among them — alone.
+    // See `UsageSession`.
     @Published private(set) var snapshot: UsageSnapshot = .sample(now: Date())
     @Published private(set) var loadState: LoadState = .signedOut
     @Published private(set) var accountSource: DataSource?

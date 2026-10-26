@@ -123,12 +123,6 @@ enum CredentialStore {
         return OwnTokenLookup(status: status, data: out as? Data)
     }
 
-    /// The token, or nil when there is none or it cannot be read right now.
-    static func loadOwnToken() -> OAuthToken? {
-        guard case .found(let token) = lookupOwnToken() else { return nil }
-        return token
-    }
-
     /// Whether the Keychain now holds no own token; a failure is logged.
     static func clearOwnToken() -> Bool {
         let query: [String: Any] = [
