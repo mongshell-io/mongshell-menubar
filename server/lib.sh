@@ -26,7 +26,10 @@ serve_handlers() {
   trimmed="$(tr -d '[:space:]' <<<"$json")"
   [[ -n "$trimmed" ]] || return 0
   if [[ "${trimmed:0:1}" != "{" ]]; then
-    if grep -qiE -- "$SERVE_EMPTY_PATTERN" <<<"$json"; then return 0; fi
+    # 그 문구 한 줄뿐일 때만 — 여러 줄 중 한 줄이 맞는 것으로는 빈 설정이라 볼 수 없다.
+    if [[ "$(grep -c . <<<"$json")" -eq 1 ]] && grep -qiE -- "$SERVE_EMPTY_PATTERN" <<<"$json"; then
+      return 0
+    fi
     printf "'tailscale serve status --json' 출력이 JSON 이 아닙니다: %s\n" \
       "$(head -c "$SERVE_EXCERPT_BYTES" <<<"$json")" >&2
     return 1

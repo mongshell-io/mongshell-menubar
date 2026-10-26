@@ -129,8 +129,9 @@ echo "▸ 스크립트와 에이전트의 같은 값 (#106)"
 # would install options the agent clamps differently, or kickstart a label the
 # agent would not pick.
 AGENT_SRC="$ROOT/Sources/mongshell-openclaw-agent"
-swift_value() { # $1=file, $2=declaration name → the literal, digits' _ dropped and quotes stripped
-  grep -E "static let $2 = " "$1" | head -1 | sed -E 's/.*= *//; s/"//g; s/_//g'
+swift_value() { # $1=file, $2=declaration name → a string literal unquoted, or a number with its _ dropped
+  grep -E "static let $2 = " "$1" | head -1 | sed -E 's/.*= *//; /^"/{s/"//g;b
+}; s/_//g'
 }
 check "기본 주기 = Options.defaultInterval" "$(swift_value "$AGENT_SRC/Options.swift" defaultInterval)" "$DEFAULT_INTERVAL"
 check "주기 하한 = Options.minimumInterval" "$(swift_value "$AGENT_SRC/Options.swift" minimumInterval)" "$MIN_INTERVAL"
@@ -163,6 +164,8 @@ check "빈 출력 → 핸들러 없음" "0|" "$(handlers '')"
 check "'No serve config' 문구 → 핸들러 없음" "0|" "$(handlers 'No serve config')"
 check "그 밖의 비-JSON → 실패 (설정을 숨길 수 있다)" "1|" "$(handlers 'error: something')"
 check "CLI 실패 → 실패" "1|" "$(FAKE_SERVE_FAIL=1 handlers '{}')"
+check "깨진 JSON → 실패 (빈 설정으로 강등하지 않는다)" "1|" "$(handlers '{"Web":')"
+check "여러 줄 중 한 줄만 'No serve config' → 실패" "1|" "$(handlers $'warning: something\nNo serve config')"
 check "우리 포트의 웹 경로" "0|/abc" \
   "$(handlers '{"Web":{"srv.example.ts.net:8443":{"Handlers":{"/abc":{"Path":"/x"}}}}}')"
 check "다른 포트의 경로는 세지 않음" "0|" \

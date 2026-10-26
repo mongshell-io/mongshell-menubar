@@ -168,7 +168,7 @@ $(sed 's/^/  /' <<<"$FOREIGN")
 'tailscale serve status' 로 확인하고 정리한 뒤 다시 실행하세요."
 fi
 
-# ── 4. 빌드·배치 ───────────────────────────────────────────────────────────
+# ── 4. 빌드·게이트웨이 레이블·배치 ───────────────────────────────────────────────────────────
 # swift build 는 터미널이 아니면 진행을 거의 찍지 않고, 조용한 시간의 대부분은
 # "Building for production..." 이전(Package.swift 컴파일·SDK stat 캐시)이다. 그래서 출력은 파일로
 # 받고, 경과 시간·추정 단계·지난번 소요 시간을 직접 보인다. 실패하면 로그 끝을 보인다.
@@ -236,6 +236,18 @@ build_agent
 BUILT="$(swift build -c release --package-path "$ROOT" --show-bin-path)/$PRODUCT"
 [[ -x "$BUILT" ]] || die "빌드 산출물을 찾지 못했습니다: $BUILT"
 
+# 게이트웨이 레이블: 에이전트의 폴백 탐색을 설치 시점에 한 번 돌려 --gateway-label 로
+# 고정한다. 규칙은 방금 빌드한 에이전트에 묻는다 — bash 로 따로 적으면 한쪽만 바뀐다
+# (#106). 실행 중인 에이전트를 내리기 전에 물어, 실패해도 기존 에이전트는 계속 돈다.
+step "게이트웨이 launchd 레이블 탐색"
+GATEWAY_LABEL="$("$BUILT" --print-gateway-label --self-label "$SELF_LABEL")" \
+  || die "에이전트에게 게이트웨이 레이블을 묻지 못했습니다: $BUILT"
+if [[ -z "$GATEWAY_LABEL" ]]; then
+  warn "게이트웨이 plist 를 찾지 못해 기본값 $DEFAULT_GATEWAY_LABEL 을 씁니다."
+  GATEWAY_LABEL="$DEFAULT_GATEWAY_LABEL"
+fi
+echo "  → $GATEWAY_LABEL"
+
 mkdir -p "$DATA_DIR" "$(dirname "$PLIST")" "$(dirname "$LOG_FILE")"
 # 실행 중인 바이너리를 덮어쓰지 않도록 먼저 에이전트를 내린다.
 launchctl bootout "$DOMAIN/$SELF_LABEL" 2>/dev/null || true
@@ -246,19 +258,7 @@ INSTALL_STARTED="$(date +%s)"
 install -m 0755 "$BUILT" "$BIN"
 echo "  → $BIN"
 
-# ── 5. 게이트웨이 레이블 ────────────────────────────────────────────────────
-# 에이전트의 폴백 탐색을 설치 시점에 한 번 돌려 --gateway-label 로 고정한다. 규칙은
-# 방금 빌드한 에이전트에 묻는다 — bash 로 따로 적으면 한쪽만 바뀐다 (#106).
-step "게이트웨이 launchd 레이블 탐색"
-GATEWAY_LABEL="$("$BUILT" --print-gateway-label --self-label "$SELF_LABEL")" \
-  || die "에이전트에게 게이트웨이 레이블을 묻지 못했습니다: $BUILT"
-if [[ -z "$GATEWAY_LABEL" ]]; then
-  warn "게이트웨이 plist 를 찾지 못해 기본값 $DEFAULT_GATEWAY_LABEL 을 씁니다."
-  GATEWAY_LABEL="$DEFAULT_GATEWAY_LABEL"
-fi
-echo "  → $GATEWAY_LABEL"
-
-# ── 6. LaunchAgent ─────────────────────────────────────────────────────────
+# ── 5. LaunchAgent ─────────────────────────────────────────────────────────
 step "LaunchAgent 등록"
 xml_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<<"$1"; }
 
@@ -315,7 +315,7 @@ done
 save_options "$OPTIONS_FILE" "$INTERVAL" "$AUTO_HEAL" \
   || warn "설치 옵션을 저장하지 못했습니다 — 다음 재실행은 옵션을 다시 줘야 합니다: $OPTIONS_FILE"
 
-# ── 7. 첫 상태 파일 대기 ───────────────────────────────────────────────────
+# ── 6. 첫 상태 파일 대기 ───────────────────────────────────────────────────
 step "첫 상태 파일 대기 (최대 ${STATUS_WAIT_SECONDS}s)"
 waited=0
 # 재설치면 이전 실행의 status.json 이 남아 있다. 지우면 그 안의 lastHeal(복구
@@ -332,7 +332,7 @@ until status_written_since_install; do
 done
 echo "  → $STATUS_FILE"
 
-# ── 8. funnel ──────────────────────────────────────────────────────────────
+# ── 7. funnel ──────────────────────────────────────────────────────────────
 # 파일 경로를 대상으로 주면 funnel 이 그 파일 하나를 --set-path 경로에 서빙한다
 # (실기 확인, tailscale 1.102.4). 가정(실기 미확인): --bg 는 설정을 tailscaled 에
 # 영구 저장한다. --yes(확인 프롬프트 생략)는 버전에 따라 없을 수 있어 help 로
@@ -364,7 +364,7 @@ if ! /usr/bin/sudo "$TAILSCALE" "${FUNNEL_ARGS[@]}"; then
 에이전트는 이미 설치돼 돌고 있으니 고친 뒤 다시 실행하면 됩니다."
 fi
 
-# ── 9. 확인 ────────────────────────────────────────────────────────────────
+# ── 8. 확인 ────────────────────────────────────────────────────────────────
 URL="https://$HOST_PORT/$TOKEN"
 step "공개 URL 확인"
 ok=0
