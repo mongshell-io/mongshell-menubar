@@ -19,16 +19,18 @@ non_goals:
 |---|---|
 | 상수·엔드포인트·OAuth 파라미터 | `Config` |
 | Keychain | `Credentials` |
+| HTTPS 전송 공용 (ephemeral 세션·리다이렉트 거부·바이트 캡 — 아래 클라이언트들이 함께 쓴다) | `BoundedHTTP` |
 | 사용량 API | `UsageAPIClient` |
 | OAuth 흐름 (토큰 엔드포인트 요청은 `OAuthTokenClient`) | `AuthService`, `LoopbackServer`, `OAuthTokenClient` |
 | 사용자 설정 파일 | `ClaudeSettingsStore` |
 | openclaw 서버 상태 URL (HTTPS 읽기 전용) — openclaw 판정과 서버 호스트 신호(`host`)를 한 문서에서 읽는다 | `OpenClawStatusClient` |
 | 로그인 항목 (ServiceManagement) | `LoginItemService` |
+| 토큰 경로 진단 로그 (`Config.authDebugLogURL` 에 덧붙여 쓰는 파일 — 토큰·인증 코드는 넣지 않는다) | `AuthDebugLog` |
 | 알림 센터 (UserNotifications — 권한 요청·앱 번들 확인 포함; 보낼지 말지는 호출자가 정한다) | `Notifier` |
 | GitHub 토큰 (자체 PAT 항목 · gh CLI 항목 읽기) | `GitHubCredentials` |
 | GitHub GraphQL (`api.github.com` 단일 호스트 — 폴링 query + 내 PR 의 squash 머지 mutation 하나, Decision #49) | `GitHubAPIClient` |
 
-`TimeText` 는 외부 경계가 아니라 포맷터다 — 위 타입들과 성격이 다르지만, 표시 문자열의 SSOT 을 한 곳에 두려고 여기 있다. 이 예외를 늘리지 않는다.
+외부 경계가 아닌 순수 헬퍼가 넷 있다 — `TimeText`(시간 표기의 SSOT), `DisplayText`(바깥 문자열을 한 줄·유한 길이로), `JSONNumber`(JSON 숫자 읽기 — bool 은 숫자가 아니다), `ResponseDate`(ISO 8601 읽기). 뒤의 셋은 여러 클라이언트가 파싱 경계에서 같은 규칙을 쓰게 하려고 여기 있다 — 복사본이 어긋난 것이 #107·#135·#136 의 원인이었다. 규칙과 적용 범위는 [docs/architecture.md § 응답 읽기 공통 규칙](../../../docs/architecture.md#응답-읽기-공통-규칙) 이 권위다. 순수 헬퍼는 둘 이상의 `Services/` 타입이 같은 규칙을 나눠 써야 할 때만 여기 둔다.
 
 서비스는 **상태를 소유하지 않는다.** `@Published` 를 두지 않고, 호출자(`Models/`)에게 값이나 에러를 돌려준다. 예외는 이벤트를 밀어야 하는 파일 감시(`ClaudeSettingsStore`)이며, 이때도 콜백/스트림으로 넘기고 UI 상태를 직접 만들지 않는다.
 
@@ -92,7 +94,7 @@ non_goals:
 - 토큰·인증 코드를 싣는 요청(`UsageAPIClient`·`OAuthTokenClient`)은 `BoundedHTTP` 세션으로만 보낸다 — 리다이렉트를 따르지 않는다. 사양은 [docs/architecture.md § Auth](../../../docs/architecture.md#auth) 가 권위다.
 - 디버그 로그에 토큰·인증 코드를 남기지 않는다.
 - Claude Code 의 Keychain 항목은 **읽기 전용**으로 취급한다. 우리 것이 아니다.
-- **자체 토큰의 Keychain 실패를 한데 접지 않는다.** 읽기는 없음·잠김(일시)·거부를 타입으로 나눠 올린다(`OwnTokenLookup`). 쓰기는 지우고 새로 쓰지 않고 제자리에서 교체하며, 잠긴 동안이나 사용자가 프롬프트를 취소했을 때는 항목을 건드리지 않는다. 성공 여부를 돌려주고, 실패는 로그에 남긴다. 각 경우가 화면에 어떻게 보이는지는 [docs/architecture.md § Auth](../../../docs/architecture.md#auth) 가 권위다 (#102).
+- **자체 토큰의 Keychain 실패를 한데 접지 않는다.** 읽기는 없음·잠김(일시)·거부를 타입으로 나눠 올린다(`OwnTokenLookup`). 쓰기는 제자리에서 교체하고, 이 빌드가 고칠 수 없는 항목(교체가 거부되는 항목)만 지우고 다시 만든다 — 잠긴 동안이나 사용자가 프롬프트를 취소했을 때는 지우지 않는다(지운 뒤 추가가 실패하면 토큰을 잃는다). 성공 여부를 돌려주고, 실패는 로그에 남긴다. 각 경우가 화면에 어떻게 보이는지는 [docs/architecture.md § Auth](../../../docs/architecture.md#auth) 가 권위다 (#102).
 
 GitHub 토큰(Decision #45)에는 위 "자체 토큰의 Keychain 실패…" 규약을 적용하지 않는다 — 자체 PAT 는 제자리 교체가 아니라 지우고 추가해, 선점 항목에 PAT 가 새지 않게 한다 (Decision #109, #126). GitHub 토큰은 Keychain 에만 두고, `api.github.com` 외 어디에도 보내지 않으며, 로그·에러 문구·배너에 토큰 값을 넣지 않는다 (배너에 쓰는 것은 계정명까지다). gh CLI 의 항목은 Claude Code 의 것과 같이 읽기 전용이다.
 
