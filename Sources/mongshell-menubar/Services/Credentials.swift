@@ -56,6 +56,16 @@ enum OwnTokenLookup: Equatable {
     }
 }
 
+/// How a save of our own token ended.
+enum OwnTokenSave: Equatable {
+    case saved
+    /// The item is as it was before the save.
+    case failed
+    /// The old item was deleted and the new one could not be added — the
+    /// Keychain may now hold nothing (#108).
+    case failedAfterDelete
+}
+
 /// Reads/writes tokens. Priority for reads:
 ///   1. our own OAuth token (Keychain)
 ///   2. Claude Code CLI token (Keychain "Claude Code-credentials", else file)
@@ -65,12 +75,11 @@ enum CredentialStore {
 
     /// Replaces the item in place. Deleting first and adding after lost the
     /// token for good whenever the add failed: the refresh token is single
-    /// use, so the one just spent cannot be asked for again (#102). Returns
-    /// whether the Keychain now holds `token`; a failure is logged. An
-    /// in-place update keeps the item's access list as it was.
-    @discardableResult
-    static func saveOwnToken(_ token: OAuthToken) -> Bool {
-        guard let data = try? JSONEncoder().encode(token) else { return false }
+    /// use, so the one just spent cannot be asked for again (#102). A
+    /// failure is logged. An in-place update keeps the item's access list as
+    /// it was.
+    static func saveOwnToken(_ token: OAuthToken) -> OwnTokenSave {
+        guard let data = try? JSONEncoder().encode(token) else { return .failed }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Config.ownKeychainService,
@@ -79,6 +88,7 @@ enum CredentialStore {
         var attrs = query
         attrs[kSecValueData as String] = data
         var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        var deleted = false
         if status == errSecItemNotFound {
             status = SecItemAdd(attrs as CFDictionary, nil)
         } else if status != errSecSuccess, !OwnTokenLookup.isTransient(status), status != errSecUserCanceled {
@@ -87,14 +97,14 @@ enum CredentialStore {
             // when the user just cancelled the prompt: the delete could land
             // and the add fail.
             AuthDebugLog.write("own token update refused status=\(status); recreating")
-            SecItemDelete(query as CFDictionary)
+            deleted = SecItemDelete(query as CFDictionary) == errSecSuccess
             status = SecItemAdd(attrs as CFDictionary, nil)
         }
         guard status == errSecSuccess else {
-            AuthDebugLog.write("own token save failed status=\(status)")
-            return false
+            AuthDebugLog.write("own token save failed status=\(status)\(deleted ? " after delete" : "")")
+            return deleted ? .failedAfterDelete : .failed
         }
-        return true
+        return .saved
     }
 
     static func lookupOwnToken() -> OwnTokenLookup {
@@ -116,13 +126,19 @@ enum CredentialStore {
         return token
     }
 
-    static func clearOwnToken() {
+    /// Whether the Keychain now holds no own token; a failure is logged.
+    static func clearOwnToken() -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Config.ownKeychainService,
             kSecAttrAccount as String: Config.ownKeychainAccount
         ]
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            AuthDebugLog.write("own token delete failed status=\(status)")
+            return false
+        }
+        return true
     }
 
     // MARK: Claude Code CLI token (read-only fallback)
