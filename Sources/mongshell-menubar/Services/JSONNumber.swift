@@ -24,8 +24,12 @@ enum JSONNumber {
 
     static let countCeiling = Double(Int32.max)
 
-    /// An exact integer of either sign — what `as? Int` used to accept, minus
-    /// the bools. nil for a fraction or a value `Int` can't hold.
+    /// A whole number of either sign; nil for a bool, a fraction or a
+    /// non-number. Read through `Double`, so it is exact only within ±2^53:
+    /// past that the result is the nearest `Double`, not the digits sent, and
+    /// one that rounds out of `Int`'s range is nil — `Int.max` rounds up to
+    /// 2^63 and comes back nil. Its callers read credit amounts (minor units)
+    /// and their exponent, far inside ±2^53, where this matches `as? Int`.
     static func integer(_ any: Any?) -> Int? {
         finite(any).flatMap { Int(exactly: $0) }
     }

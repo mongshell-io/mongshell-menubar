@@ -993,8 +993,19 @@ do {
     check("credits: fractional amount → 0 (integers only, as before)",
           credits(limit: "1.5", exponent: "0") == "크레딧 $0.00 남음")
     check("credits: negative used kept", credits(limit: "100", used: "-50", exponent: "0") == "크레딧 $150.00 남음")
-    check("credits: extreme Ints don't trap",
-          credits(limit: "9223372036854775807", used: "-9223372036854775807", exponent: "0") != nil)
+    // Int.max reads as 2^63 through Double, out of Int's range → nil → 0;
+    // -(Int.max) rounds to -2^63 = Int.min, which Int holds. Subtracting must
+    // not trap either way.
+    let extreme = credits(limit: "9223372036854775807", used: "-9223372036854775807", exponent: "0")
+    check("credits: extreme Ints don't trap — 0 - Int.min as a Double",
+          extreme == "크레딧 $9223372036854775808.00 남음", "\(String(describing: extreme))")
+    check("integer: exact within ±2^53",
+          JSONNumber.integer(NSNumber(value: 1 << 53)) == 1 << 53
+          && JSONNumber.integer(NSNumber(value: -(1 << 53))) == -(1 << 53))
+    check("integer: past 2^53 → nearest Double, not the digits sent",
+          JSONNumber.integer(NSNumber(value: (1 << 53) + 1)) == 1 << 53)
+    check("integer: Int.max rounds to 2^63 → nil", JSONNumber.integer(NSNumber(value: Int.max)) == nil)
+    check("integer: Int.min is -2^63 exactly → kept", JSONNumber.integer(NSNumber(value: Int.min)) == Int.min)
 }
 
 // MARK: result
