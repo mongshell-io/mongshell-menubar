@@ -95,23 +95,51 @@ do {
 
     // A gateway that stalls or drops the connection prints none of the
     // refused/reachable words — unheard, it never healed and the clients sat
-    // on ⚪ forever (#152 follow-up).
+    // on ⚪ forever (#152 follow-up). The line has to name the gateway.
     let lost: [(String, String)] = [
-        ("ETIMEDOUT", "Error: connect ETIMEDOUT 127.0.0.1:18789\n"),
-        ("ECONNRESET", "Error: read ECONNRESET\n"),
-        ("EHOSTUNREACH", "Error: connect EHOSTUNREACH 10.0.0.2:18789\n"),
-        ("ENETUNREACH", "Error: connect ENETUNREACH 10.0.0.2:18789\n"),
-        ("socket hang up", "Error: socket hang up\n"),
+        ("ETIMEDOUT", "gateway connection: ETIMEDOUT\n"),
+        ("ECONNRESET", "Error: gateway read ECONNRESET\n"),
+        ("EHOSTUNREACH", "Error: gateway connect EHOSTUNREACH 10.0.0.2:18789\n"),
+        ("ENETUNREACH", "Error: gateway connect ENETUNREACH 10.0.0.2:18789\n"),
+        ("socket hang up", "Gateway error: socket hang up\n"),
         ("gateway closed", "Error: gateway closed (1006): abnormal closure\n"),
         ("gateway timeout", "Error: gateway timeout\n"),
-        ("timeout after", "Error: request timeout after 10000ms\n"),
+        ("timeout after", "Error: gateway request timeout after 10000ms\n"),
     ]
     for (token, out) in lost {
         let v = verdict(out, exit: 1)
-        check("\(token) + exit≠0 → down", v == .down, "\(String(describing: v))")
+        check("게이트웨이 언급 \(token) + exit≠0 → down", v == .down, "\(String(describing: v))")
     }
     let lostClean = verdict("Error: gateway closed (1006)\n", exit: 0)
     check("gateway closed + exit 0 → down", lostClean == .down, "\(String(describing: lostClean))")
+    let refusedLoopback = verdict("Error: connect ECONNREFUSED 127.0.0.1:18789\n", exit: 1)
+    check("connect ECONNREFUSED 127.0.0.1:<port> → down", refusedLoopback == .down,
+          "\(String(describing: refusedLoopback))")
+
+    // node prints the same socket errors for any request (update check,
+    // plugin fetch). Without the gateway named on the line they say nothing
+    // about it — read as down, every probe kickstarted a healthy gateway.
+    let unrelatedClean = verdict("Gateway reachable.\nupdate check failed: ETIMEDOUT\n", exit: 0)
+    check("exit 0 + reachable + 무관한 ETIMEDOUT → ok", unrelatedClean == .ok(detail: "채널 없음"),
+          "\(String(describing: unrelatedClean))")
+    let unrelatedChannels = verdict("Gateway reachable.\nupdate check failed: ETIMEDOUT\n- Telegram default: running\n")
+    check("exit 0 + reachable + 무관한 ETIMEDOUT + 채널 → 채널 규칙", unrelatedChannels == .ok(detail: "Telegram default"),
+          "\(String(describing: unrelatedChannels))")
+    let unrelatedNoHeader = verdict("update check failed: ETIMEDOUT\n- Telegram default: running\n")
+    check("reachable 없음 + 무관한 ETIMEDOUT + 채널 → 채널 규칙", unrelatedNoHeader == .ok(detail: "Telegram default"),
+          "\(String(describing: unrelatedNoHeader))")
+    let unrelatedFailure = observation("Error: connect ETIMEDOUT 140.82.112.3:443\n", exit: 1)
+    check("게이트웨이 언급 없는 ETIMEDOUT + exit≠0 → 관측 실패",
+          unrelatedFailure == .unobserved(reason: "openclaw CLI 가 게이트웨이 응답 없이 비정상 종료 (exit 1)"),
+          "\(unrelatedFailure)")
+    // A positive "reachable" outranks a gateway-named socket error, but never
+    // an explicit refusal.
+    let reachableBeatsLost = verdict("Gateway reachable.\ngateway connection: ECONNRESET\n", exit: 0)
+    check("reachable + 게이트웨이 연결 끊김 → ok", reachableBeatsLost == .ok(detail: "채널 없음"),
+          "\(String(describing: reachableBeatsLost))")
+    let refusedBeatsReachable = verdict("Gateway reachable.\nconnect ECONNREFUSED 127.0.0.1:18789\n", exit: 0)
+    check("reachable + ECONNREFUSED → down", refusedBeatsReachable == .down,
+          "\(String(describing: refusedBeatsReachable))")
     // A gateway-level drop is down even when channels were listed beside it.
     let lostWithChannels = verdict("- Telegram default: running\ngateway disconnected: socket hang up\n", exit: 1)
     check("채널 줄 밖 socket hang up → down", lostWithChannels == .down, "\(String(describing: lostWithChannels))")
