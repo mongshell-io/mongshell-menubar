@@ -214,9 +214,34 @@ enum Probe {
             return .ok(detail: publicDetail(running.map(channelName), fallback: "정상"))
         }
 
+        // Channels listed but none carries a runtime state: that is openclaw
+        // listing them from config alone, which it does when the gateway gave
+        // it nothing (#157 capture 2). Without "Gateway reachable." it is the
+        // backup to the DOWN wording above — a reworded "not reachable" line
+        // must not turn a stopped gateway green (#159).
+        if !reportsReachable(gateway) && !channelLines.contains(where: lineHasRuntimeState) {
+            return .down
+        }
+
         // Channels listed but only transient states (e.g. `disconnected`): the
         // gateway answered and nothing is degraded, so this is not DOWN.
         return .ok(detail: "정상")
+    }
+
+    /// Words only the gateway's runtime answer puts on a channel line. The
+    /// config-only listing of a stopped gateway carries `enabled`,
+    /// `configured`, `mode:` and credentials, never one of these (#157).
+    static let channelRuntimeStateTokens: Set<String> = [
+        "running", "not-running", "stopped", "connected", "disconnected",
+    ]
+
+    /// A channel line reports a state the gateway observed, not just config.
+    /// `error:` and `health:` count too — `lineIsDegraded`/`isChannelLine`
+    /// read them as state.
+    private static func lineHasRuntimeState(_ line: String) -> Bool {
+        let lower = line.lowercased()
+        if lower.contains("error:") || lower.contains("health:") { return true }
+        return statusTokens(lower).contains { channelRuntimeStateTokens.contains(String($0)) }
     }
 
     /// A line describing a channel: the `- Telegram default: …` shape, or any

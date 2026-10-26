@@ -165,6 +165,25 @@ do {
     let runningNonzero = verdict("- Telegram default: running\n", exit: 2)
     check("- X: running + exit≠0 + reachable 없음 → ok", runningNonzero == .ok(detail: "Telegram default"),
           "\(String(describing: runningNonzero))")
+
+    // Config-only channel lines (no runtime state — #157 capture 2) are what
+    // a stopped gateway leaves: down even when the "not reachable" wording
+    // changes (#159). With "Gateway reachable." the gateway answered, so the
+    // channel rules stand; a transient state alone still counts as an answer.
+    let configOnly = "- Telegram default: enabled, configured, mode:polling, token:***\n"
+        + "- Slack default: enabled, configured, bot:config, app:config\n"
+    let configOnlyBare = verdict("Gateway offline; showing config-only status.\n" + configOnly, exit: 0)
+    check("다운 문구 없이 config-only 채널 줄만 → down", configOnlyBare == .down,
+          "\(String(describing: configOnlyBare))")
+    let configOnlyNonzero = verdict(configOnly, exit: 1)
+    check("config-only 채널 줄만 + exit≠0 → down", configOnlyNonzero == .down,
+          "\(String(describing: configOnlyNonzero))")
+    let configOnlyReachable = verdict("Gateway reachable.\n" + configOnly, exit: 0)
+    check("config-only 채널 줄 + Gateway reachable → ok(정상)", configOnlyReachable == .ok(detail: "정상"),
+          "\(String(describing: configOnlyReachable))")
+    let disconnectedBare = verdict("- Telegram default: enabled, disconnected\n", exit: 0)
+    check("reachable 없음 + disconnected 만 → ok(정상)", disconnectedBare == .ok(detail: "정상"),
+          "\(String(describing: disconnectedBare))")
 }
 
 // MARK: - 실측 출력 (#157)
@@ -191,7 +210,8 @@ do {
           n == .observed(.ok(detail: "Slack default, Telegram default")), "\(n)")
 
     // Stopped gateway: still exit 0, and the config-only channel lines are
-    // listed — the "Gateway not reachable" lines are what say it is down.
+    // listed — the "Gateway not reachable" lines say it is down, and so does
+    // the lack of any runtime state on those lines (#159).
     let stopped = """
         Checking channel status (probe)…
         Gateway not reachable after waiting 15 s.
