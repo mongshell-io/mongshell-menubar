@@ -342,6 +342,8 @@ step "tailscale funnel 설정"
 # 새로 발급한 토큰은 여기까지 형식 검사를 거치지 않았다. 비어 있으면 --set-path=/ 가
 # 되어 상태 파일이 루트에 걸리므로, root 로 넘기기 전에 확인한다.
 [[ "$TOKEN" =~ $TOKEN_PATTERN ]] || die "토큰 형식이 올바르지 않습니다 (32자리 hex 가 아님). '$TOKEN_FILE' 을 지우고 다시 실행하세요."
+# funnel 은 경로를 인자로만 받아 토큰이 sudo 명령줄(감사 로그·ps)에 남는다. 수용 근거와
+# 대안을 쓰지 않은 이유는 README § 7 알려진 한계.
 FUNNEL_ARGS=(funnel --bg --https="$FUNNEL_PORT" --set-path="/$TOKEN")
 # help 를 먼저 변수로 받는다. 'cmd | grep -q' 는 grep 이 일치 즉시 끝나 cmd 가
 # SIGPIPE 로 죽을 수 있고, pipefail 아래에선 그게 "없음" 으로 읽힌다. help 가
