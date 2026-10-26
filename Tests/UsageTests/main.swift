@@ -202,6 +202,14 @@ do {
           noPercent.fiveHourPercent == nil && noPercent.weeklyAllPercent == nil,
           "\(String(describing: noPercent.fiveHourPercent)) \(String(describing: noPercent.weeklyAllPercent))")
 
+    let noPercentWithResets = try UsageAPIClient.parse(body("""
+    {"limits": [{"kind":"session","resets_at":"2026-10-21T06:10:00+00:00"},
+                {"kind":"weekly_all","percent":"23%","resets_at":"2026-10-26T15:00:00+00:00"}]}
+    """))
+    check("row without a number, no flat fallback → its reset is unread too",
+          noPercentWithResets.fiveHourResetAt == nil && noPercentWithResets.weeklyResetAt == nil,
+          "\(String(describing: noPercentWithResets.fiveHourResetAt)) \(String(describing: noPercentWithResets.weeklyResetAt))")
+
     let empty = try UsageAPIClient.parse(body("{}"))
     check("nothing recognisable → both unread", empty.fiveHourPercent == nil && empty.weeklyAllPercent == nil)
 

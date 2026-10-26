@@ -115,10 +115,15 @@ struct UsageAPIClient {
             // under two spellings ("Fable" / "Fable 5") in the same section.
             let scopeModel = scopeModelName(limit).map(prettyModelName)
             switch limit["kind"] as? String {
+            // A row whose percent cannot be read leaves its reset unread too:
+            // the window has no value, so no reset time or countdown is drawn
+            // beside the empty ring (#130).
             case "session":
-                fivePct = percentValue(limit["percent"]); fiveReset = reset
+                fivePct = percentValue(limit["percent"])
+                fiveReset = fivePct == nil ? nil : reset
             case "weekly_all":
-                weeklyPct = percentValue(limit["percent"]); weeklyReset = reset
+                weeklyPct = percentValue(limit["percent"])
+                weeklyReset = weeklyPct == nil ? nil : reset
             case "weekly_scoped":
                 models.append(ModelUsage(name: scopeModel ?? "모델", percent: pct))
             case let rawKind?:
