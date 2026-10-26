@@ -8,23 +8,25 @@ import UserNotifications
 final class UsageModel: ObservableObject {
     static let shared = UsageModel()
 
+    // Mirrors of `session`, published one by one so `$snapshot` subscribers
+    // (the status item's width) hear only what changed. See `UsageSession`.
     @Published private(set) var snapshot: UsageSnapshot = .sample
     @Published private(set) var loadState: LoadState = .signedOut
-    /// Whose token the app is polling with, nil when it has none that works.
-    /// Kept apart from `loadState`, which a 429, an error or a fetch in
-    /// flight replace — the settings' account row read only `.loaded` and
-    /// showed "로그아웃됨" through those (#90).
     @Published private(set) var accountSource: DataSource?
-    /// The access token the last 401 ended on. A stale CLI token is retried
-    /// every poll; naming it as the account for the length of each doomed
-    /// fetch made the settings row flicker back to "사용 중".
-    private var rejectedAccessToken: String?
+
+    /// The one place the state above changes (#103).
+    private var session = UsageSession() {
+        didSet {
+            if snapshot != session.snapshot { snapshot = session.snapshot }
+            if loadState != session.loadState { loadState = session.loadState }
+            if accountSource != session.accountSource { accountSource = session.accountSource }
+        }
+    }
+    private var thresholds = UsageThresholdWatch()
 
     private let api = UsageAPIClient()
     private let auth = AuthService()
     private var pollTask: Task<Void, Never>?
-    private var backoff: Int = 0
-    private var lastNotifiedLevel = 0
     /// The refresh token is single-use and rotates on every refresh, so two
     /// overlapping `refreshOnce` runs (poll loop + the popover's "새로고침")
     /// can each spend it and sign the user out. `@MainActor` makes this plain
@@ -37,12 +39,6 @@ final class UsageModel: ObservableObject {
     /// banner after `signIn()` succeeded mid-poll — so the running refresh
     /// goes round once more instead.
     private var refreshRequested = false
-    /// The "login lapsed" notice is showing and the user has not acted on it.
-    /// Kept apart from `loadState`, which tracks the current connection:
-    /// folding the two into one enum was why a single 429 or transport error
-    /// could overwrite the notice and let the next CLI 401 downgrade it to a
-    /// plain `signedOut`.
-    private var sessionExpiredUnresolved = false
     /// `AuthDebugLog.usageUnknownKey` of the last snapshot whose unknown
     /// limits were logged — the set of unknown things, not their numbers —
     /// so a response that keeps carrying the same ones is logged once.
@@ -73,7 +69,7 @@ final class UsageModel: ObservableObject {
     private func pollLoop() async {
         while !Task.isCancelled {
             await refreshOnce()
-            var wait = TimeInterval(UsageRetryPolicy.pollWait(base: pollBase, backoff: backoff))
+            var wait = TimeInterval(UsageRetryPolicy.pollWait(base: pollBase, backoff: session.backoff))
             if case .rateLimited(let retryAt) = loadState {
                 wait = max(wait, retryAt.timeIntervalSinceNow)
             }
@@ -110,30 +106,30 @@ final class UsageModel: ObservableObject {
         case .token(let found, let foundSource):
             (initialToken, source) = (found, foundSource)
         case .none:
-            markSignedOut()
-            snapshot = .sample
+            session.noToken()
             return
         case .ownUnavailable(let status):
-            // Keeps the account and the numbers; the next poll reads again.
             AuthDebugLog.write("own token unavailable status=\(status)")
-            loadState = .error("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다")
+            session.failed("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다")
             return
         }
         var token = initialToken
-        accountSource = token.accessToken == rejectedAccessToken ? nil : source
-        if case .signedOut = loadState { loadState = .loading }
+        session.begin(accessToken: token.accessToken, source: source)
 
-        // Refresh our own expired token up front.
-        if source == .oauthLogin, token.isExpired {
-            switch await renewOwnToken(token) {
-            case .renewed(let renewed):
+        if UsageRefreshPolicy.shouldRenewUpFront(source: source, tokenExpired: token.isExpired) {
+            let renewal = await renewOwnToken(token)
+            switch (UsageRefreshPolicy.step(afterUpFront: renewal.kind), renewal) {
+            case (.useRenewed, .renewed(let renewed)):
                 guard ownTokenStillCurrent(token) else { return }
                 CredentialStore.saveOwnToken(renewed)
                 token = renewed
-            case .sessionExpired:
+            case (.useRenewed, _):
+                assertionFailure("useRenewed without a renewed token")
+                return
+            case (.expireSession, _):
                 expireSession(token)
                 return
-            case .transientFailure:
+            case (.pollAnyway, _):
                 break
             }
         }
@@ -170,36 +166,18 @@ final class UsageModel: ObservableObject {
     private func apply(_ step: UsageRefreshStep, token: OAuthToken, source: DataSource) {
         switch step {
         case .show(let snap):
-            markLoaded(snap, source: source)
+            session.loaded(snap, source: source)
+            logUnknownLimitsIfChanged(snap)
             maybeNotify(percent: snap.fiveHourPercent)
         case .signOut:
-            rejectedAccessToken = token.accessToken
-            markSignedOut()
+            session.rejected(accessToken: token.accessToken)
         case .expireSession:
             expireSession(token)
         case .rateLimited(let retryAfter):
-            markRateLimited(retryAfter: retryAfter)
+            session.rateLimited(retryAfter: retryAfter, now: Date(), pollBase: pollBase)
         case .failed:
-            loadState = .error("사용량을 불러오지 못했습니다")
+            session.failed("사용량을 불러오지 못했습니다")
         }
-    }
-
-    private func markRateLimited(retryAfter: TimeInterval?) {
-        backoff = min(backoff + 1, 4)
-        loadState = .rateLimited(retryAt: UsageRetryPolicy.retryAt(
-            now: Date(), base: pollBase, backoff: backoff, retryAfter: retryAfter))
-    }
-
-    /// A successful fetch is the one thing that resolves a lapsed login on
-    /// its own: it proves whichever token we hold now works.
-    private func markLoaded(_ snap: UsageSnapshot, source: DataSource) {
-        snapshot = snap
-        loadState = .loaded(source)
-        accountSource = source
-        rejectedAccessToken = nil
-        backoff = 0
-        sessionExpiredUnresolved = false
-        logUnknownLimitsIfChanged(snap)
     }
 
     /// Writes one line when the response starts carrying limits or buckets
@@ -218,9 +196,7 @@ final class UsageModel: ObservableObject {
     func presentForSnapshot(_ snap: UsageSnapshot, state: LoadState) {
         pollTask?.cancel()
         pollTask = nil
-        snapshot = snap
-        loadState = state
-        if case .loaded(let source) = state { accountSource = source } else { accountSource = nil }
+        session.present(snap, state: state)
     }
 
     private enum OwnTokenRenewal {
@@ -230,6 +206,14 @@ final class UsageModel: ObservableObject {
         case sessionExpired
         /// Network or server trouble; the token may still be fine, so keep it.
         case transientFailure
+
+        var kind: UpFrontRenewal {
+            switch self {
+            case .renewed: return .renewed
+            case .sessionExpired: return .sessionExpired
+            case .transientFailure: return .renewalFailed
+            }
+        }
     }
 
     private func renewOwnToken(_ token: OAuthToken) async -> OwnTokenRenewal {
@@ -250,10 +234,7 @@ final class UsageModel: ObservableObject {
         guard ownTokenStillCurrent(token) else { return }
         AuthDebugLog.write("own token discarded (invalid_grant) \(AuthDebugLog.session(token))")
         CredentialStore.clearOwnToken()
-        snapshot = .sample
-        accountSource = nil
-        sessionExpiredUnresolved = true
-        loadState = .sessionExpired
+        session.expired()
         notifySessionExpired()
     }
 
@@ -268,15 +249,6 @@ final class UsageModel: ObservableObject {
         return false
     }
 
-    /// `sessionExpired` outranks `signedOut`: the banner that explains why the
-    /// numbers went back to sample must survive the polls that follow (no
-    /// token at all, or a CLI token that 401s) until the user acts. Only
-    /// restores the state — the notification was sent once in `expireSession`.
-    private func markSignedOut() {
-        accountSource = nil
-        loadState = sessionExpiredUnresolved ? .sessionExpired : .signedOut
-    }
-
     // MARK: Sign in / out
 
     func signIn() async {
@@ -285,22 +257,19 @@ final class UsageModel: ObservableObject {
             // A token that did not reach the Keychain is gone at the next
             // poll, which would then quietly fall back to the CLI token.
             guard CredentialStore.saveOwnToken(token) else {
-                loadState = .error("로그인 정보를 Keychain 에 저장하지 못했습니다")
+                session.failed("로그인 정보를 Keychain 에 저장하지 못했습니다")
                 return
             }
-            sessionExpiredUnresolved = false
+            session.signedIn()
             await refreshOnce()
         } catch {
-            loadState = .error((error as? LocalizedError)?.errorDescription ?? "로그인 실패")
+            session.failed((error as? LocalizedError)?.errorDescription ?? "로그인 실패")
         }
     }
 
     func signOut() {
         CredentialStore.clearOwnToken()
-        sessionExpiredUnresolved = false
-        accountSource = nil
-        loadState = .signedOut
-        snapshot = .sample
+        session.signedOut()
     }
 
     // MARK: Notifications
@@ -332,14 +301,8 @@ final class UsageModel: ObservableObject {
     }
 
     private func maybeNotify(percent: Int) {
-        guard Preferences.shared.notifyThresholds, notificationsAvailable else { return }
-        let thresholds = [90, 75, 50, 25]
-        let level = thresholds.first(where: { percent >= $0 }) ?? 0
-        guard level > lastNotifiedLevel else {
-            if percent < 25 { lastNotifiedLevel = 0 } // reset after window resets
-            return
-        }
-        lastNotifiedLevel = level
+        guard Preferences.shared.notifyThresholds, notificationsAvailable,
+              let level = thresholds.observe(percent: percent) else { return }
         let content = UNMutableNotificationContent()
         content.title = "Claude 사용량 \(level)% 도달"
         content.body = level >= 90 ? "곧 한도에 도달합니다." : "사용량이 \(percent)%입니다."

@@ -19,7 +19,9 @@ import Foundation
 // the backoff or Retry-After (capped) runs out; a 401 refreshes only the
 // own token, only a second 401 signs out, a blip on the refresh or the
 // retry keeps the account behind an error, a 429 on the retry backs off,
-// and a successful retry shows like any success (#92/#93/#95); and the `Meter`
+// and a successful retry shows like any success (#92/#93/#95); the session
+// flags across refreshes (#44, #86, #90) and the threshold notifications;
+// and the `Meter`
 // shows the mode's number with the risk color (or monochrome when color
 // coding is off).
 //
@@ -476,6 +478,117 @@ do {
               == .ownUnavailable(errSecInteractionNotAllowed))
     check("nothing anywhere → none",
           UsageRefreshPolicy.chooseToken(own: .missing, cli: { nil }) == UsageTokenChoice.none)
+}
+
+// MARK: session flags across refreshes (#44, #86, #90, #92, #103)
+
+do {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    var snap = UsageSnapshot.sample
+    snap.fiveHourPercent = 42
+
+    var s = UsageSession()
+    s.begin(accessToken: "own", source: .oauthLogin)
+    check("first refresh: signed-out → loading, account named", s.loadState == .loading && s.accountSource == .oauthLogin)
+    s.loaded(snap, source: .oauthLogin)
+    check("load → numbers and account", s.loadState == .loaded(.oauthLogin) && s.snapshot == snap)
+
+    // #90 — the account row survives 429, error and the next fetch in flight.
+    s.rateLimited(retryAfter: nil, now: now, pollBase: 180)
+    check("429 keeps the account (#90)", s.accountSource == .oauthLogin)
+    s.failed("x")
+    check("error keeps the account and the numbers (#90, #92)", s.accountSource == .oauthLogin && s.snapshot == snap)
+    s.begin(accessToken: "own", source: .oauthLogin)
+    check("a fetch in flight does not go back to loading or drop the account",
+          s.loadState == .error("x") && s.accountSource == .oauthLogin)
+
+    // #86 — backoff climbs per 429, caps, and a load resets it.
+    var b = UsageSession()
+    for _ in 0..<6 { b.rateLimited(retryAfter: nil, now: now, pollBase: 180) }
+    check("backoff caps", b.backoff == UsageSession.backoffCap)
+    if case .rateLimited(let at) = b.loadState {
+        check("retry time follows the capped backoff", at == UsageRetryPolicy.retryAt(now: now, base: 180, backoff: 4, retryAfter: nil))
+    } else { check("retry time follows the capped backoff", false) }
+    b.loaded(snap, source: .claudeCodeCLI)
+    check("a load resets backoff", b.backoff == 0)
+
+    // A rejected CLI token is not named as the account on its next try.
+    var c = UsageSession()
+    c.begin(accessToken: "cli", source: .claudeCodeCLI)
+    c.rejected(accessToken: "cli")
+    check("401 → signed out, no account", c.loadState == .signedOut && c.accountSource == nil)
+    c.begin(accessToken: "cli", source: .claudeCodeCLI)
+    check("the same rejected token is not named again", c.accountSource == nil)
+    var c2 = c
+    c2.loaded(snap, source: .claudeCodeCLI)
+    check("the rejected token working again names the account", c2.accountSource == .claudeCodeCLI)
+    c2.begin(accessToken: "cli", source: .claudeCodeCLI)
+    check("…and it is no longer treated as rejected", c2.accountSource == .claudeCodeCLI)
+    c.begin(accessToken: "cli2", source: .claudeCodeCLI)
+    check("a rotated token is named", c.accountSource == .claudeCodeCLI)
+
+    // #44 — the lapsed-login notice outlives the polls after it.
+    var e = UsageSession()
+    e.loaded(snap, source: .oauthLogin)
+    e.expired()
+    check("invalid_grant → lapsed notice, sample numbers",
+          e.loadState == .sessionExpired && e.snapshot == .sample && e.accountSource == nil)
+    e.noToken()
+    check("no token afterwards → notice kept (#44)", e.loadState == .sessionExpired)
+    e.begin(accessToken: "cli", source: .claudeCodeCLI)
+    e.rejected(accessToken: "cli")
+    check("CLI 401 afterwards → notice kept, not plain signed-out (#44)", e.loadState == .sessionExpired)
+    e.rateLimited(retryAfter: nil, now: now, pollBase: 180)
+    e.noToken()
+    check("a 429 in between does not wear the notice off (#44)", e.loadState == .sessionExpired)
+    var e2 = e
+    e2.loaded(snap, source: .claudeCodeCLI)
+    e2.noToken()
+    check("a successful fetch resolves the notice", e2.loadState == .signedOut)
+    var e3 = e
+    e3.signedIn()
+    e3.noToken()
+    check("signing in resolves the notice", e3.loadState == .signedOut)
+    var e4 = e
+    e4.signedOut()
+    check("signing out resolves the notice", e4.loadState == .signedOut && e4.snapshot == .sample)
+    e4.noToken()
+    check("…and it stays resolved", e4.loadState == .signedOut)
+
+    var p = UsageSession()
+    p.present(snap, state: .loaded(.oauthLogin))
+    check("snapshot hook names the account only for a loaded state", p.accountSource == .oauthLogin)
+    p.present(snap, state: .rateLimited(retryAt: now))
+    check("snapshot hook clears the account otherwise", p.accountSource == nil)
+}
+
+// MARK: expired own token refreshed before polling (#103)
+
+do {
+    check("only an expired own token is refreshed up front",
+          UsageRefreshPolicy.shouldRenewUpFront(source: .oauthLogin, tokenExpired: true)
+          && !UsageRefreshPolicy.shouldRenewUpFront(source: .oauthLogin, tokenExpired: false)
+          && !UsageRefreshPolicy.shouldRenewUpFront(source: .claudeCodeCLI, tokenExpired: true))
+    check("up-front refresh worked → poll with the new token",
+          UsageRefreshPolicy.step(afterUpFront: .renewed) == .useRenewed)
+    check("up-front refresh rejected for good → lapsed login",
+          UsageRefreshPolicy.step(afterUpFront: .sessionExpired) == .expireSession)
+    check("up-front refresh blip → poll anyway",
+          UsageRefreshPolicy.step(afterUpFront: .renewalFailed) == .pollAnyway)
+}
+
+// MARK: usage threshold notifications (#95, #103)
+
+do {
+    var w = UsageThresholdWatch()
+    check("under 25% → nothing", w.observe(percent: 10) == nil)
+    check("crossing 25% → 25", w.observe(percent: 30) == 25)
+    check("same level again → nothing", w.observe(percent: 40) == nil)
+    check("jump past two levels → the highest only", w.observe(percent: 80) == 75)
+    check("falling back within the window → nothing", w.observe(percent: 60) == nil)
+    check("90% → 90", w.observe(percent: 95) == 90)
+    check("window reset (under 25%) → nothing, but rearmed", w.observe(percent: 5) == nil && w.lastNotifiedLevel == 0)
+    check("after the reset 25% fires again", w.observe(percent: 26) == 25)
 }
 
 // MARK: result
