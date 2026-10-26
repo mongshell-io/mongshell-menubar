@@ -94,6 +94,7 @@ swift build && MONGSHELL_SNAPSHOT=/tmp/mongshell_snaps ./.build/debug/mongshell-
 | `popover_extra_limit` | 팝오버 — 로그인된 상태(샘플 배너 없음)에서 7일 한도 아래에 앱이 모르는 `kind` 의 한도(설정 화면의 제한 초기화/보너스) 한 줄이 위험도 색 막대와 초기화 캡션으로 붙은 상태. `popover` 에는 없다 |
 | `popover_usage_rate_limited` / `popover_usage_session_expired` / `popover_usage_error` / `popover_usage_cli_account` | 팝오버 — 사용량 배너가 상태마다 다른 모습: 요청 제한(N분 후 자동 재시도, 버튼 없음) / 로그인 만료(로그인 버튼) / 오류(재시도 버튼) / Claude Code 계정 사용 중. 숫자는 샘플이다 |
 | `popover_usage_keychain_declined_cli_account` / `popover_usage_keychain_declined_held_login` / `popover_usage_keychain_declined_sample` | 팝오버 — 자체 토큰 대화상자 취소를 기억하는 동안(#143)의 배너 (#146): "Keychain 접근을 취소했어요 — " 뒤에 그 대신 보이는 것(Claude Code 계정 사용 중 / 저장 못 한 로그인으로 사용 중 / 샘플 데이터 표시 중)과 [다시 허용] 버튼. 숫자는 샘플이다 |
+| `popover_usage_keychain_declined_unread_cli_account` / `popover_usage_keychain_declined_unread_held_login` | 팝오버 — 취소를 기억하는 동안 응답에서 5시간 한도를 읽지 못한 상태 (#146): 취소 배너가 형식 배너를 가리지 않고 " · 한도 형식 오류" 를 덧붙여 두 줄로 보이며 [다시 허용] 버튼은 그대로다. 게이지는 `popover_usage_unread_limits` 처럼 점선 회색 링과 "—" |
 | `popover_usage_no_values` | 팝오버 — 5시간·7일 한도를 모두 읽지 못하고 초기화 시각도 없는 상태 (#133): 회색 링·"—" 아래에 "곧 초기화" 같은 초기화 문구가 없다 |
 | `hover` / `hover_no_values` | Claude 영역 hover 요약 — 5시간·7일 두 줄(퍼센트 · 초기화 문구) / 값도 초기화 시각도 없어 "—" 만 남은 상태 (#133). 5시간 초기화 문구는 그릴 때 만들어지며, 스냅샷은 샘플의 초기화 시각을 렌더 시계에 고정해 "3시간 8분" 으로 그린다 |
 | `popover_usage_unread_limits` | 팝오버 — 응답에서 5시간 한도를 읽지 못한 상태 (#130): 머리말·본 게이지가 점선 회색 링과 "—", "사용량 형식을 읽지 못했습니다" 배너(버튼 없음). 읽힌 7일 한도는 그대로 보인다 |

@@ -74,6 +74,14 @@ enum SnapshotRenderer {
             UsageModel.shared.presentForSnapshot(sample, state: state, keychainDeclined: true)
             write(PopoverPreview(), to: base, "popover_usage_keychain_declined_\(name)", scale: 2)
         }
+        // The remembered decline with a 5-hour row gone missing: the format
+        // problem is added to the declined banner, not hidden by it (#146).
+        for (state, name) in [(LoadState.loaded(.claudeCodeCLI), "cli_account"), (.loaded(.oauthLogin), "held_login")] {
+            var unread = sample
+            unread.fiveHourPercent = nil
+            UsageModel.shared.presentForSnapshot(unread, state: state, keychainDeclined: true)
+            write(PopoverPreview(), to: base, "popover_usage_keychain_declined_unread_\(name)", scale: 2)
+        }
         // A response whose 5-hour row went missing: grey ring and the format
         // banner, the weekly limit still read (#130).
         var unread = sample
