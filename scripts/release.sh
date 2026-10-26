@@ -24,6 +24,11 @@ DMG="$ROOT/mongshell-menubar.dmg"
 DEV_ID="${DEV_ID:?set DEV_ID to your 'Developer ID Application: …' identity}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-mongshell-menubar-notary}"
 
+# Nothing gets signed and handed out that the regression tests fail on —
+# there is no CI to have caught it first.
+echo "▶ running tests"
+"$ROOT/scripts/test.sh"
+
 echo "▶ building release bundle"
 "$ROOT/scripts/make_app.sh" release   # produces mongshell-menubar.app (locally signed); we re-sign below
 

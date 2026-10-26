@@ -373,7 +373,7 @@ struct GitHubAPIClient: Sendable {
               let cost = int(dict["cost"]), let remaining = int(dict["remaining"]),
               let limit = int(dict["limit"]) else { return nil }
         return GitHubRateLimit(cost: cost, remaining: remaining, limit: limit,
-                               resetAt: isoDate(dict["resetAt"]))
+                               resetAt: ResponseDate.parse(dict["resetAt"]))
     }
 
     private static func pullRequests(_ any: Any?) -> [GitHubPullRequest] {
@@ -401,8 +401,8 @@ struct GitHubAPIClient: Sendable {
             checksRollup: checksRollup(rollup),
             checks: latestRuns(withoutSupersededRuns(contexts.runs)),
             checksListComplete: contexts.complete,
-            updatedAt: isoDate(node["updatedAt"]),
-            mergedAt: isoDate(node["mergedAt"]),
+            updatedAt: ResponseDate.parse(node["updatedAt"]),
+            mergedAt: ResponseDate.parse(node["mergedAt"]),
             nodeID: nonEmptyString(node["id"]),
             headSHA: nonEmptyString(node["headRefOid"])
         )
@@ -551,8 +551,8 @@ struct GitHubAPIClient: Sendable {
             let run = PRCheck(name: name,
                               outcome: checkRunOutcome(status: node["status"] as? String,
                                                        conclusion: node["conclusion"] as? String),
-                              startedAt: isoDate(node["startedAt"]),
-                              completedAt: isoDate(node["completedAt"]),
+                              startedAt: ResponseDate.parse(node["startedAt"]),
+                              completedAt: ResponseDate.parse(node["completedAt"]),
                               url: httpsURL(node["detailsUrl"]))
             return (workflowRun(node["checkSuite"]),
                     (checkSuiteName(node["checkSuite"]).map { .checkRun(suite: $0, name: name) }, run))
@@ -657,10 +657,4 @@ struct GitHubAPIClient: Sendable {
         return s
     }
 
-    private static func isoDate(_ any: Any?) -> Date? {
-        guard let s = any as? String else { return nil }
-        let withFrac = ISO8601DateFormatter()
-        withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return withFrac.date(from: s) ?? ISO8601DateFormatter().date(from: s)
-    }
 }

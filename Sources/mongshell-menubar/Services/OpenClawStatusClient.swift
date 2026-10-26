@@ -168,7 +168,7 @@ struct OpenClawStatusClient: Sendable {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             throw .badResponse
         }
-        guard let checkedAt = isoDate(root["checkedAt"]) else { throw .missingCheckedAt }
+        guard let checkedAt = ResponseDate.parse(root["checkedAt"]) else { throw .missingCheckedAt }
 
         return OpenClawStatus(
             checkedAt: checkedAt,
@@ -213,7 +213,7 @@ struct OpenClawStatusClient: Sendable {
     }
 
     private static func healEvent(_ any: Any?) -> OpenClawHealEvent? {
-        guard let dict = any as? [String: Any], let at = isoDate(dict["at"]) else { return nil }
+        guard let dict = any as? [String: Any], let at = ResponseDate.parse(dict["at"]) else { return nil }
         // A missing `ok` reads as success: announcing a failure we can't
         // confirm would be a false alarm.
         return OpenClawHealEvent(at: at,
@@ -334,10 +334,4 @@ struct OpenClawStatusClient: Sendable {
         return Int(value)
     }
 
-    private static func isoDate(_ any: Any?) -> Date? {
-        guard let s = any as? String else { return nil }
-        let withFrac = ISO8601DateFormatter()
-        withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return withFrac.date(from: s) ?? ISO8601DateFormatter().date(from: s)
-    }
 }

@@ -364,7 +364,7 @@ final class UsageModel: ObservableObject {
               let level = thresholds.observe(percent: percent) else { return }
         let content = UNMutableNotificationContent()
         content.title = "Claude 사용량 \(level)% 도달"
-        content.body = level >= 90 ? "곧 한도에 도달합니다." : "사용량이 \(percent)%입니다."
+        content.body = level >= UsageThresholdWatch.critical ? "곧 한도에 도달합니다." : "사용량이 \(percent)%입니다."
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: "mongshell-menubar-\(level)", content: content, trigger: nil)
         )

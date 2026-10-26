@@ -25,25 +25,25 @@ echo "▶ running settings tests"
 # value inherited from the shell can never point them at the real settings file.
 env -u MONGSHELL_CLAUDE_SETTINGS "$OUT/tests"
 
-# The agent's main.swift is its entry point, so it's left out — the test file
-# supplies the top-level code instead.
+# Every agent source but main.swift, the entry point — the test file supplies
+# the top-level code instead. Globbed: the agent has no AppKit, Keychain or
+# @main to leave out, so a new file needs no list entry here (#107).
 AGENT="$ROOT/Sources/mongshell-openclaw-agent"
+AGENT_SOURCES=()
+while IFS= read -r f; do AGENT_SOURCES+=("$f"); done \
+  < <(find "$AGENT" -name '*.swift' ! -name main.swift | LC_ALL=C sort)
 echo "▶ compiling openclaw agent tests"
 swiftc -o "$OUT/agent-tests" \
-  "$AGENT/AgentCycle.swift" \
-  "$AGENT/Options.swift" \
-  "$AGENT/Probe.swift" \
-  "$AGENT/ProcessRunner.swift" \
-  "$AGENT/Heal.swift" \
-  "$AGENT/HostProbe.swift" \
-  "$AGENT/StatusFile.swift" \
+  "${AGENT_SOURCES[@]}" \
   "$ROOT/Tests/OpenClawAgentTests/main.swift"
 
 echo "▶ running openclaw agent tests"
 "$OUT/agent-tests"
 
 # The app client is compiled together with the agent's encoder so the
-# round-trip case catches any key-name drift between the two targets. The
+# round-trip case catches any key-name drift between the two targets. Both
+# land in one module here, so the app and the agent must not share a
+# top-level type name — each target builds alone, but this bundle would not. The
 # @MainActor model (polling, notifications) is left out — its rules live in
 # the pure types listed here, plus the TimeText clock it displays.
 APP="$ROOT/Sources/mongshell-menubar"
@@ -57,6 +57,7 @@ swiftc -o "$OUT/client-tests" \
   "$APP/Services/BoundedHTTP.swift" \
   "$APP/Services/DisplayText.swift" \
   "$APP/Services/OpenClawStatusClient.swift" \
+  "$APP/Services/ResponseDate.swift" \
   "$APP/Services/TimeText.swift" \
   "$AGENT/Probe.swift" \
   "$AGENT/ProcessRunner.swift" \
@@ -102,6 +103,7 @@ swiftc -o "$OUT/github-tests" \
   "$APP/Services/Config.swift" \
   "$APP/Services/GitHubAPIClient.swift" \
   "$APP/Services/GitHubCredentials.swift" \
+  "$APP/Services/ResponseDate.swift" \
   "$APP/Services/TimeText.swift" \
   "$ROOT/Tests/GitHubTests/main.swift"
 
@@ -130,6 +132,7 @@ swiftc -o "$OUT/usage-tests" \
   "$APP/Services/Config.swift" \
   "$APP/Services/Credentials.swift" \
   "$APP/Services/DisplayText.swift" \
+  "$APP/Services/ResponseDate.swift" \
   "$APP/Services/TimeText.swift" \
   "$APP/Services/UsageAPIClient.swift" \
   "$ROOT/Tests/UsageTests/main.swift"

@@ -34,22 +34,10 @@ struct MenuBarIconView: View {
     /// Pulse always keys off risk (consumed) of the riskier window,
     /// regardless of display mode.
     private var shouldPulse: Bool {
-        prefs.pulseWhenCritical && max(fiveHourUsed, weeklyUsed) >= 90
+        prefs.pulseWhenCritical && max(fiveHourUsed, weeklyUsed) >= UsageThresholdWatch.critical
     }
 
-    /// openclaw traffic-light color for the unified indicator, or nil when it
-    /// shouldn't show (`Preferences.showsOpenClaw` → app looks exactly like the
-    /// plain build).
-    private var openClawDotColor: Color? {
-        prefs.showsOpenClaw ? openClaw.health.dotColor : nil
-    }
-
-    /// Server host traffic-light color, stacked under the openclaw one. nil
-    /// when the server sends no host signals — the bar then looks exactly as
-    /// it did without them.
-    private var serverHostDotColor: Color? {
-        prefs.showsOpenClaw ? openClaw.hostHealth.dotColor : nil
-    }
+    private var dots: OpenClawDots { OpenClawDots(prefs: prefs, openClaw: openClaw) }
 
     var body: some View {
         MenuBarContent(fiveHourUsed: fiveHourUsed, weeklyUsed: weeklyUsed,
@@ -58,8 +46,8 @@ struct MenuBarIconView: View {
                        showPercent: prefs.showPercent,
                        fiveHourReset: TimeText.clockShort(model.snapshot.fiveHourResetAt),
                        pulsing: pulsing,
-                       openClawDotColor: openClawDotColor,
-                       serverHostDotColor: serverHostDotColor)
+                       openClawDotColor: dots.openClaw,
+                       serverHostDotColor: dots.serverHost)
         .animation(shouldPulse
                    ? .easeInOut(duration: 0.55).repeatForever(autoreverses: true)
                    : .default,
@@ -134,7 +122,7 @@ struct MenuBarContent: View {
     /// A tiny ring gauge for one window (no number). Fill follows the display
     /// mode (consumed vs remaining); color always tracks risk (consumed).
     private func ring(_ used: Int) -> some View {
-        let display = showRemaining ? 100 - used : used
+        let display = Meter(usedPercent: used, showRemaining: showRemaining, colorCoding: colorCoding).displayPercent
         let color = colorCoding ? Palette.statusColor(for: used, colorCoding: true) : Color.primary
         return MenuRing(percent: display, color: color)
             .frame(width: 13, height: 13)
@@ -217,5 +205,21 @@ private struct MenuRing: View {
                 .stroke(color, style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         }
+    }
+}
+
+/// The menu bar's openclaw and server dots — one rule for the bar and the
+/// settings preview (#107). Each is nil when it shouldn't show: nothing at all
+/// unless `Preferences.showsOpenClaw` (the app then looks exactly like the
+/// plain build), and no server dot when the server sends no host signals.
+@MainActor
+struct OpenClawDots {
+    let openClaw: Color?
+    /// Stacked under the openclaw one.
+    let serverHost: Color?
+
+    init(prefs: Preferences, openClaw model: OpenClawModel) {
+        openClaw = prefs.showsOpenClaw ? model.health.dotColor : nil
+        serverHost = prefs.showsOpenClaw ? model.hostHealth.dotColor : nil
     }
 }
