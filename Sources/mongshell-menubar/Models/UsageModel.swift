@@ -19,6 +19,9 @@ final class UsageModel: ObservableObject {
     @Published private(set) var snapshot: UsageSnapshot = .sample(now: Date())
     @Published private(set) var loadState: LoadState = .signedOut
     @Published private(set) var accountSource: DataSource?
+    /// Every own-token read folds its answer into this flag (#146), so it
+    /// too is assigned only when it differs.
+    @Published private(set) var keychainDeclined = false
 
     /// The one place the state above changes (#103).
     private var session = UsageSession() {
@@ -26,6 +29,7 @@ final class UsageModel: ObservableObject {
             if snapshot != session.snapshot { snapshot = session.snapshot }
             if loadState != session.loadState { loadState = session.loadState }
             if accountSource != session.accountSource { accountSource = session.accountSource }
+            if keychainDeclined != session.keychainDeclined { keychainDeclined = session.keychainDeclined }
         }
     }
     private var thresholds = UsageThresholdWatch()
@@ -34,12 +38,6 @@ final class UsageModel: ObservableObject {
     /// Bumped by every sign-in and sign-out. A refresh that started under an
     /// older value must not adopt or show what it got (#108).
     private var loginGeneration = 0
-    /// The user declined the own-token Keychain prompt this session. Polls
-    /// then neither read nor store the own item — each try put the dialog
-    /// back (#143). Lifted only where the user acts: `signIn()` and
-    /// `refreshNow()`; a relaunch starts without it, like GitHub's
-    /// `ghKeychainDenied`.
-    private var ownKeychainDeclined = false
 
     private let api = UsageAPIClient()
     private let auth = AuthService()
@@ -69,12 +67,12 @@ final class UsageModel: ObservableObject {
         pollTask = Task { [weak self] in await self?.pollLoop() }
     }
 
-    /// The popover's "새로고침" and "재시도". Does nothing inside a rate
+    /// The popover's "새로고침", "재시도" and "다시 허용". Does nothing inside a rate
     /// limit — the poll loop asks again once it is over (#86). Asking for it
     /// is the user acting, so a declined Keychain prompt may show again.
     func refreshNow() {
         guard manualRefreshBlockedUntil == nil else { return }
-        ownKeychainDeclined = false
+        session.allowKeychainAgain()
         Task { await refreshOnce() }
     }
 
@@ -86,7 +84,7 @@ final class UsageModel: ObservableObject {
     /// What the usage surfaces show and offer right now (#104).
     var presentation: UsagePresentation {
         UsagePresentation(loadState: loadState, accountSource: accountSource,
-                          limitsUnread: snapshot.hasUnreadLimit, now: Date())
+                          limitsUnread: snapshot.hasUnreadLimit, keychainDeclined: keychainDeclined, now: Date())
     }
 
     private var pollBase: Int { max(Config.minPollInterval, Preferences.shared.pollIntervalSeconds) }
@@ -109,29 +107,31 @@ final class UsageModel: ObservableObject {
     /// (#141), so the answer is folded into the flag as it stands when the
     /// read comes back — a save the user cancelled meanwhile keeps it set.
     private func lookupOwnToken() async -> OwnTokenLookup {
-        if let remembered = UsageRefreshPolicy.ownLookup(declined: ownKeychainDeclined) { return remembered }
-        let generation = loginGeneration
+        if let remembered = UsageRefreshPolicy.ownLookup(declined: session.keychainDeclined) { return remembered }
+        let generation = loginGeneration, lifts = session.declineLifts
         let own = await CredentialStore.lookupOwnToken()
         if case .refused(let status) = own { AuthDebugLog.write("own token refused status=\(status)") }
-        rememberDecline(UsageRefreshPolicy.declined(ownKeychainDeclined, after: own,
-                                                    sameLogin: generation == loginGeneration))
+        rememberDecline(UsageRefreshPolicy.declined(session.keychainDeclined, after: own,
+                                                    sameLogin: generation == loginGeneration,
+                                                    sameAllowance: lifts == session.declineLifts))
         return own
     }
 
     /// Every own-token save goes through here, for the same reason.
     private func saveOwnToken(_ token: OAuthToken) async -> OwnTokenSave {
-        let generation = loginGeneration
+        let generation = loginGeneration, lifts = session.declineLifts
         let result = await CredentialStore.saveOwnToken(token)
-        rememberDecline(UsageRefreshPolicy.declined(ownKeychainDeclined, afterSaving: result,
-                                                    sameLogin: generation == loginGeneration))
+        rememberDecline(UsageRefreshPolicy.declined(session.keychainDeclined, afterSaving: result,
+                                                    sameLogin: generation == loginGeneration,
+                                                    sameAllowance: lifts == session.declineLifts))
         return result
     }
 
     private func rememberDecline(_ declined: Bool) {
-        if declined, !ownKeychainDeclined {
+        if declined, !session.keychainDeclined {
             AuthDebugLog.write("own token prompt declined; not asked again until the user acts")
         }
-        ownKeychainDeclined = declined
+        session.setKeychainDeclined(declined)
     }
 
     /// Stores or drops the held renewal as `resolution` says. Returns false
@@ -200,7 +200,7 @@ final class UsageModel: ObservableObject {
             return
         case .ownUnavailable(let status):
             AuthDebugLog.write("own token unavailable status=\(status)")
-            session.failed("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다", now: Date())
+            session.ownTokenUnreadable("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다", now: Date())
             return
         }
         var token = initialToken
@@ -283,10 +283,10 @@ final class UsageModel: ObservableObject {
 
     /// Snapshot hook: shows a given snapshot and state without any network,
     /// so reference images are deterministic and never carry real usage.
-    func presentForSnapshot(_ snap: UsageSnapshot, state: LoadState) {
+    func presentForSnapshot(_ snap: UsageSnapshot, state: LoadState, keychainDeclined: Bool = false) {
         pollTask?.cancel()
         pollTask = nil
-        session.present(snap, state: state)
+        session.present(snap, state: state, keychainDeclined: keychainDeclined)
     }
 
     private func renewOwnToken(_ token: OAuthToken) async -> OwnTokenRenewal {
@@ -300,23 +300,37 @@ final class UsageModel: ObservableObject {
     }
 
     /// Drops the dead own token so the next poll falls through to the CLI
-    /// token (or to signed-out), and tells the user once. No repeat guard is
-    /// needed: with the token gone, nothing can reach this path again until
-    /// the user signs in anew. A sign-in or sign-out that lands while the
-    /// Keychain is asked wins: before the delete, nothing is deleted; after
-    /// it, its save was queued behind the delete and stands, and the lapsed
-    /// notice is not shown over it.
+    /// token (or to signed-out), and tells the user once. When the Keychain
+    /// cannot say whether it still holds that token, the notice goes up all
+    /// the same but the item is left (#147); once it reads again the dead
+    /// token lapses again, and `lapseIsNews` keeps that from notifying twice
+    /// — even when a CLI fetch took the notice down in between.
+    /// A sign-in or sign-out that lands while the Keychain is asked wins:
+    /// before the delete, nothing is deleted; after it, its save was queued
+    /// behind the delete and stands, and the lapsed notice is not shown over
+    /// it.
     private func expireSession(_ token: OAuthToken, generation: Int) async {
-        let match = await keychainMatch(UsageRefreshPolicy.expectation(pending: pendingOwnToken, polling: token))
+        let expected = UsageRefreshPolicy.expectation(pending: pendingOwnToken, polling: token)
+        let match = await keychainMatch(expected)
         guard generation == loginGeneration else { return }
         // The token is dead either way; a held renewal of it is too.
         pendingOwnToken = nil
-        guard match == .current else { return }
-        AuthDebugLog.write("own token discarded (invalid_grant) \(AuthDebugLog.session(token))")
-        _ = await CredentialStore.clearOwnToken()
-        guard generation == loginGeneration else { return }
-        session.expired(now: Date())
-        notifySessionExpired()
+        let step = UsageRefreshPolicy.lapse(match: match)
+        switch step {
+        case .leave:
+            return
+        case .noticeOnly:
+            AuthDebugLog.write("own token lapsed (invalid_grant), Keychain cannot say; item kept \(AuthDebugLog.session(token))")
+        case .discard:
+            AuthDebugLog.write("own token discarded (invalid_grant) \(AuthDebugLog.session(token))")
+            _ = await CredentialStore.clearOwnToken()
+            guard generation == loginGeneration else { return }
+        }
+        let isNews = session.lapseIsNews(refreshToken: token.refreshToken)
+        session.expired(refreshTokens: UsageRefreshPolicy.announcedRefreshTokens(lapsed: token, expected: expected,
+                                                                                 step: step),
+                        now: Date())
+        if isNews { notifySessionExpired() }
     }
 
     /// Takes a renewed own token: stores it, or holds it in memory when the
@@ -367,7 +381,7 @@ final class UsageModel: ObservableObject {
             let generation = loginGeneration
             pendingOwnToken = nil
             // Signing in is the user acting: the save below may ask again.
-            ownKeychainDeclined = false
+            session.allowKeychainAgain()
             let save = await saveOwnToken(token)
             // A sign-out or another sign-in while the save was out wins.
             guard generation == loginGeneration else { return }
@@ -384,7 +398,8 @@ final class UsageModel: ObservableObject {
         }
     }
 
-    /// Shows signed-out at once; the Keychain delete follows off the main
+    /// Shows signed-out at once, and lifts a remembered decline with it
+    /// (`UsageSession.signedOut`); the Keychain delete follows off the main
     /// thread (#141). A refresh that reads after it was queued behind the
     /// delete, so it does not bring the token back.
     func signOut() async {

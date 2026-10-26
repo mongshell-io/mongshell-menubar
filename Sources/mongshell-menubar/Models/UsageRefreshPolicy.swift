@@ -63,6 +63,18 @@ enum KeychainMatch: Equatable {
     case unknown
 }
 
+/// What an `invalid_grant` on the own token does, by what the Keychain says.
+enum LapseStep: Equatable {
+    /// The Keychain holds the dead token: delete it and show the notice.
+    case discard
+    /// The Keychain cannot say (locked, refused, a declined prompt): show
+    /// the notice, but leave the item — it may hold another login (#147).
+    case noticeOnly
+    /// A sign-in, a sign-out or another instance moved it on: that stands,
+    /// and no notice goes up over it.
+    case leave
+}
+
 /// What to do with a pending own token at the start of a refresh.
 enum PendingResolution: Equatable {
     case none
@@ -168,6 +180,36 @@ enum UsageRefreshPolicy {
         pending(after: result, renewed: held.token, expected: held.keychain)
     }
 
+    /// The login lapsed whatever the Keychain says — the server turned its
+    /// refresh token away — so a Keychain that cannot answer does not hide
+    /// that from the user. It only keeps the item from being deleted: a read
+    /// that did not happen cannot show the item still holds that login. Left
+    /// quiet, the next poll fell through to the CLI token or the sample with
+    /// no word of why (#147); with a decline remembered (#143), that was
+    /// every `invalid_grant`.
+    static func lapse(match: KeychainMatch) -> LapseStep {
+        switch match {
+        case .current: return .discard
+        case .unknown: return .noticeOnly
+        case .changed: return .leave
+        }
+    }
+
+    /// The refresh tokens a lapse announces: the dead one, and — when the
+    /// item is left (`noticeOnly`) while a held renewal was the one polled —
+    /// the token the item still holds. That one was spent by the renewal, so
+    /// it fails the same way once the Keychain reads again; without it here
+    /// the second lapse after a CLI fetch took the notice down was news, and
+    /// the same notification went out twice.
+    static func announcedRefreshTokens(lapsed token: OAuthToken, expected: KeychainExpectation,
+                                       step: LapseStep) -> [String] {
+        var tokens = token.refreshToken.map { [$0] } ?? []
+        if step == .noticeOnly, case .holds(let kept?) = expected, kept != token.refreshToken {
+            tokens.append(kept)
+        }
+        return tokens
+    }
+
     static func resolvePending(_ pending: PendingOwnToken?, own: OwnTokenLookup) -> PendingResolution {
         guard let pending else { return .none }
         // A refusal may not pass on its own, but a save can clear it — it
@@ -208,8 +250,8 @@ enum UsageRefreshPolicy {
     }
 
     /// Whether the decline stands after this read. It is only lifted by the
-    /// user acting (sign-in, a manual refresh) or a relaunch — never by a
-    /// poll, which is what kept the dialog coming back.
+    /// user acting (sign-in, sign-out, a manual refresh — [다시 허용]) or a
+    /// relaunch — never by a poll, which is what kept the dialog coming back.
     ///
     /// `declined` is the flag as it is when the read comes back, not as it
     /// was when the read went out: the read runs off the main thread (#141),
@@ -217,17 +259,22 @@ enum UsageRefreshPolicy {
     /// from the read must not lift that. `sameLogin` is false when a sign-in
     /// or sign-out came while the read was out: that lifted the flag (or
     /// stands on its own), and an answer about the item before it does not
-    /// set it again.
-    static func declined(_ declined: Bool, after own: OwnTokenLookup, sameLogin: Bool) -> Bool {
-        guard sameLogin else { return declined }
+    /// set it again. `sameAllowance` is false when the user lifted the
+    /// decline while the read was out (`UsageSession.declineLifts`): a
+    /// cancel from before the lift setting the flag again made [다시 허용]
+    /// do nothing once (#146).
+    static func declined(_ declined: Bool, after own: OwnTokenLookup, sameLogin: Bool,
+                         sameAllowance: Bool) -> Bool {
+        guard sameLogin, sameAllowance else { return declined }
         if case .refused(let status) = own, OwnTokenLookup.isUserRefusal(status) { return true }
         return declined
     }
 
     /// Whether the decline stands after this save — under the same rules
     /// as after a read.
-    static func declined(_ declined: Bool, afterSaving result: OwnTokenSave, sameLogin: Bool) -> Bool {
-        guard sameLogin else { return declined }
+    static func declined(_ declined: Bool, afterSaving result: OwnTokenSave, sameLogin: Bool,
+                         sameAllowance: Bool) -> Bool {
+        guard sameLogin, sameAllowance else { return declined }
         return result == .cancelled || declined
     }
 

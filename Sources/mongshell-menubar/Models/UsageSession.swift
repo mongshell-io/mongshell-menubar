@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// What the usage side shows, and the flags that decide it. Every change goes
@@ -28,8 +29,43 @@ struct UsageSession: Equatable {
     /// Tracked by event rather than read off the snapshot: nothing in a
     /// snapshot's values marks it as the sample for certain.
     private var showsSample = true
+    /// Fingerprints of the refresh tokens whose lapse the user has been
+    /// shown, for the life of the app. A lapse the Keychain could not
+    /// confirm leaves the dead token in place (#147); it lapses again once
+    /// the item reads, and by then a CLI fetch may have taken the notice
+    /// down — so the notice being up is not enough to tell it is old news.
+    /// Digests, not the tokens: nothing here needs to spend them.
+    private var announcedLapses: Set<SHA256Digest> = []
+    /// The user declined the own-token Keychain prompt this session. Polls
+    /// then neither read nor store the own item — each try put the dialog
+    /// back (#143). Set from what each read or save answered
+    /// (`UsageRefreshPolicy.declined`), lifted only where the user acts
+    /// (`allowKeychainAgain()`, `signedOut`); a relaunch starts without it,
+    /// like GitHub's `ghKeychainDenied`. The popover's banner reads it (#146).
+    private(set) var keychainDeclined = false
+    /// Bumped wherever the user lifts the decline. A read or save that went
+    /// out before the lift answers for the dialog the user acted past, so it
+    /// does not set the flag again (`UsageRefreshPolicy.declined`). Kept
+    /// apart from the model's login generation: [다시 허용] is no new login,
+    /// and a refresh under it still adopts what it gets.
+    private(set) var declineLifts = 0
 
     static let backoffCap = 4
+
+    /// Whether a lapse of the token with this refresh token is news to the
+    /// user: false while the notice from an earlier lapse is still up, and
+    /// false for a refresh token whose lapse was already announced this
+    /// session, notice up or not. Another token's lapse is news once the
+    /// notice is down.
+    func lapseIsNews(refreshToken: String?) -> Bool {
+        guard !expiredUnresolved else { return false }
+        guard let refreshToken else { return true }
+        return !announcedLapses.contains(Self.fingerprint(refreshToken))
+    }
+
+    private static func fingerprint(_ refreshToken: String) -> SHA256Digest {
+        SHA256.hash(data: Data(refreshToken.utf8))
+    }
 
     // MARK: Refresh events
 
@@ -62,8 +98,11 @@ struct UsageSession: Equatable {
         markSignedOut(now: now)
     }
 
-    /// The own token was discarded after `invalid_grant`.
-    mutating func expired(now: Date) {
+    /// The own token lapsed on `invalid_grant` and the notice goes up; the
+    /// refresh tokens this lapse covers are remembered as announced (see
+    /// `lapseIsNews`, `UsageRefreshPolicy.announcedRefreshTokens`).
+    mutating func expired(refreshTokens: [String], now: Date) {
+        for refreshToken in refreshTokens { announcedLapses.insert(Self.fingerprint(refreshToken)) }
         snapshot = .sample(now: now)
         showsSample = true
         accountSource = nil
@@ -88,7 +127,31 @@ struct UsageSession: Equatable {
         rebuildSampleIfShowing(now: now)
     }
 
+    /// The flag as `UsageRefreshPolicy.declined` folded the Keychain's
+    /// answer into it.
+    mutating func setKeychainDeclined(_ declined: Bool) {
+        keychainDeclined = declined
+    }
+
+    /// The own item would not read (a locked Keychain); the next poll
+    /// reads again. Like `failed`, except under the lapsed-login notice: a
+    /// lapse the Keychain could not confirm leaves the item (#147), and the
+    /// locked read that follows would swap the notice and its login button
+    /// for an error banner that stays for as long as the Keychain does.
+    mutating func ownTokenUnreadable(_ message: String, now: Date) {
+        guard expiredUnresolved else { return failed(message, now: now) }
+        loadState = .sessionExpired
+        rebuildSampleIfShowing(now: now)
+    }
+
     // MARK: User events
+
+    /// Signing in or a manual refresh: the user acting, so a declined
+    /// Keychain prompt may show again.
+    mutating func allowKeychainAgain() {
+        keychainDeclined = false
+        declineLifts += 1
+    }
 
     /// A new login reached the Keychain; the lapsed-login notice has done
     /// its job.
@@ -96,8 +159,13 @@ struct UsageSession: Equatable {
         expiredUnresolved = false
     }
 
+    /// Signing out is the user acting too, and it deletes the item the
+    /// declined prompt was for: a decline left standing would keep saying
+    /// "Keychain 접근을 취소했어요" with [다시 허용] over the login banner.
     mutating func signedOut(now: Date) {
         expiredUnresolved = false
+        keychainDeclined = false
+        declineLifts += 1
         accountSource = nil
         loadState = .signedOut
         snapshot = .sample(now: now)
@@ -106,8 +174,9 @@ struct UsageSession: Equatable {
 
     /// Snapshot hook: a given snapshot and state, nothing else carried over.
     /// A signed-out state is taken to be showing the sample, as it would be.
-    mutating func present(_ snap: UsageSnapshot, state: LoadState) {
+    mutating func present(_ snap: UsageSnapshot, state: LoadState, keychainDeclined: Bool = false) {
         snapshot = snap
+        self.keychainDeclined = keychainDeclined
         showsSample = state == .signedOut || state == .sessionExpired
         loadState = state
         if case .loaded(let source) = state { accountSource = source } else { accountSource = nil }

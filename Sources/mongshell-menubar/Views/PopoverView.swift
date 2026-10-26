@@ -251,6 +251,21 @@ struct PopoverView: View {
         case .unreadLimits:
             banner(text: "사용량 형식을 읽지 못했습니다 — 읽지 못한 한도는 비워 둡니다",
                    tint: Palette.red) { bannerButton(action) }
+        case .keychainDeclined(let fallback, let limitsUnread):
+            // The format notice it stands in for rides along (#130); the lead
+            // is cut short then so the banner stays within two lines.
+            banner(text: limitsUnread
+                       ? "Keychain 접근 취소 — \(declinedFallbackText(fallback)) · 한도 형식 오류"
+                       : "Keychain 접근을 취소했어요 — \(declinedFallbackText(fallback))",
+                   tint: Palette.amber) { bannerButton(action) }
+        }
+    }
+
+    private func declinedFallbackText(_ fallback: UsagePresentation.DeclinedFallback) -> String {
+        switch fallback {
+        case .cliAccount: return "Claude Code 계정 사용 중"
+        case .heldLogin:  return "저장 못 한 로그인으로 사용 중"
+        case .sample:     return "샘플 데이터 표시 중"
         }
     }
 
@@ -264,6 +279,9 @@ struct PopoverView: View {
                 .controlSize(.small)
         case .retry:
             Button("재시도") { model.refreshNow() }
+                .controlSize(.small)
+        case .allowKeychain:
+            Button("다시 허용") { model.refreshNow() }
                 .controlSize(.small)
         }
     }

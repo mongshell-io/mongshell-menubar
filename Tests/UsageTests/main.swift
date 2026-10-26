@@ -614,7 +614,7 @@ do {
     // #44 — the lapsed-login notice outlives the polls after it.
     var e = UsageSession()
     e.loaded(snap, source: .oauthLogin)
-    e.expired(now: now)
+    e.expired(refreshTokens: ["r1"], now: now)
     check("invalid_grant → lapsed notice, sample numbers",
           e.loadState == .sessionExpired && e.snapshot == .sample(now: now) && e.accountSource == nil)
     e.noToken(now: now)
@@ -638,6 +638,28 @@ do {
     check("signing out resolves the notice", e4.loadState == .signedOut && e4.snapshot == .sample(now: now))
     e4.noToken(now: now)
     check("…and it stays resolved", e4.loadState == .signedOut)
+
+    // #143 — the remembered decline is lifted only where the user acts.
+    var d = UsageSession()
+    d.loaded(snap, source: .claudeCodeCLI)
+    d.setKeychainDeclined(true)
+    d.noToken(now: now)
+    d.rejected(accessToken: "cli", now: now)
+    d.failed("x", now: now)
+    d.rateLimited(retryAfter: nil, now: now, pollBase: 180)
+    d.expired(refreshTokens: ["r1"], now: now)
+    d.loaded(snap, source: .claudeCodeCLI)
+    check("polls do not lift a remembered decline", d.keychainDeclined)
+    var d1 = d
+    d1.allowKeychainAgain()
+    check("signing in or a manual refresh lifts it", !d1.keychainDeclined)
+    var d2 = d
+    d2.signedOut(now: now)
+    check("signing out lifts it — the login banner, not 다시 허용, after the item is gone",
+          !d2.keychainDeclined
+          && UsagePresentation(loadState: d2.loadState, accountSource: d2.accountSource,
+                               limitsUnread: false, keychainDeclined: d2.keychainDeclined, now: now).banner
+              == .signedOut)
 
     var p = UsageSession()
     p.present(snap, state: .loaded(.oauthLogin))
@@ -781,8 +803,10 @@ do {
 do {
     let now = Date(timeIntervalSince1970: 1_790_000_000)
     let retryAt = now.addingTimeInterval(600)
-    func p(_ state: LoadState, _ source: DataSource?, limitsUnread: Bool = false) -> UsagePresentation {
-        UsagePresentation(loadState: state, accountSource: source, limitsUnread: limitsUnread, now: now)
+    func p(_ state: LoadState, _ source: DataSource?, limitsUnread: Bool = false,
+           declined: Bool = false) -> UsagePresentation {
+        UsagePresentation(loadState: state, accountSource: source, limitsUnread: limitsUnread,
+                          keychainDeclined: declined, now: now)
     }
 
     // #90 — the own login keeps "로그아웃" and never gets a login button
@@ -832,6 +856,36 @@ do {
     check("unread limit does not hide an error or a rate limit",
           p(.error("x"), .oauthLogin, limitsUnread: true).banner == .failed("x")
           && p(.rateLimited(retryAt: retryAt), .oauthLogin, limitsUnread: true).banner == .rateLimited(retryAt: retryAt))
+
+    // #146 — a remembered decline (#143) says so, and what is shown instead.
+    check("declined, CLI account shown → the declined banner names the CLI account, 다시 허용",
+          p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).banner == .keychainDeclined(.cliAccount, limitsUnread: false)
+          && p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).bannerAction == .allowKeychain)
+    check("declined, polling with the held renewal → the declined banner says so (not a clean 'no banner')",
+          p(.loaded(.oauthLogin), .oauthLogin, declined: true).banner == .keychainDeclined(.heldLogin, limitsUnread: false)
+          && p(.loaded(.oauthLogin), .oauthLogin, declined: true).bannerAction == .allowKeychain)
+    check("declined, nothing to poll with → the declined banner on the sample, 다시 허용 rather than 로그인",
+          p(.signedOut, nil, declined: true).banner == .keychainDeclined(.sample, limitsUnread: false)
+          && p(.signedOut, nil, declined: true).bannerAction == .allowKeychain)
+    check("declined outranks the format notice but carries it (a grey gauge keeps its reason)",
+          p(.loaded(.claudeCodeCLI), .claudeCodeCLI, limitsUnread: true, declined: true).banner
+              == .keychainDeclined(.cliAccount, limitsUnread: true)
+          && p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true, declined: true).banner
+              == .keychainDeclined(.heldLogin, limitsUnread: true)
+          && p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true, declined: true).bannerAction == .allowKeychain)
+    check("declined does not hide a lapsed login, loading, a rate limit or an error",
+          p(.sessionExpired, nil, declined: true).banner == .sessionExpired
+          && p(.sessionExpired, nil, declined: true).bannerAction == .signIn
+          && p(.loading, nil, declined: true).banner == .loading
+          && p(.rateLimited(retryAt: retryAt), .claudeCodeCLI, declined: true).banner == .rateLimited(retryAt: retryAt)
+          && p(.error("x"), .claudeCodeCLI, declined: true).banner == .failed("x"))
+    check("declined leaves the badge and the account row alone",
+          p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).badge == .connected
+          && p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).account == .cliAccount
+          && p(.signedOut, nil, declined: true).badge == .sample)
+    check("not declined → the banners as before",
+          p(.loaded(.claudeCodeCLI), .claudeCodeCLI).banner == .cliAccount
+          && p(.signedOut, nil).banner == .signedOut)
 }
 
 // MARK: #134 — a 401 sign-out drops the last real numbers like every other sign-out
@@ -852,7 +906,7 @@ do {
     let paths: [(String, (inout UsageSession) -> Void)] = [
         ("noToken", { $0.noToken(now: now) }),
         ("rejected", { $0.rejected(accessToken: "cli", now: now) }),
-        ("expired", { $0.expired(now: now) }),
+        ("expired", { $0.expired(refreshTokens: ["r1"], now: now) }),
         ("signedOut", { $0.signedOut(now: now) }),
     ]
     for (name, event) in paths {
@@ -878,7 +932,7 @@ do {
     let paths: [(String, (inout UsageSession) -> Void)] = [
         ("noToken", { $0.noToken(now: later) }),
         ("rejected", { $0.rejected(accessToken: "cli", now: later) }),
-        ("expired", { $0.expired(now: later) }),
+        ("expired", { $0.expired(refreshTokens: ["r1"], now: later) }),
         ("signedOut", { $0.signedOut(now: later) }),
     ]
     for (name, event) in paths {
@@ -995,22 +1049,22 @@ do {
           OwnTokenSave(status: refusedDelete.status, deletedFirst: refusedDelete.deleted) == .failed)
 
     // Remembering the decline.
-    check("read cancelled → decline remembered", UsageRefreshPolicy.declined(false, after: cancelled, sameLogin: true))
+    check("read cancelled → decline remembered", UsageRefreshPolicy.declined(false, after: cancelled, sameLogin: true, sameAllowance: true))
     check("read refused otherwise → no decline (the #132 store retry stays)",
-          !UsageRefreshPolicy.declined(false, after: .refused(errSecAuthFailed), sameLogin: true))
+          !UsageRefreshPolicy.declined(false, after: .refused(errSecAuthFailed), sameLogin: true, sameAllowance: true))
     check("read found / missing / locked → no decline",
-          !UsageRefreshPolicy.declined(false, after: .found(old), sameLogin: true)
-          && !UsageRefreshPolicy.declined(false, after: .missing, sameLogin: true)
-          && !UsageRefreshPolicy.declined(false, after: .unavailable(errSecInteractionNotAllowed), sameLogin: true))
-    check("save cancelled → decline remembered", UsageRefreshPolicy.declined(false, afterSaving: .cancelled, sameLogin: true))
+          !UsageRefreshPolicy.declined(false, after: .found(old), sameLogin: true, sameAllowance: true)
+          && !UsageRefreshPolicy.declined(false, after: .missing, sameLogin: true, sameAllowance: true)
+          && !UsageRefreshPolicy.declined(false, after: .unavailable(errSecInteractionNotAllowed), sameLogin: true, sameAllowance: true))
+    check("save cancelled → decline remembered", UsageRefreshPolicy.declined(false, afterSaving: .cancelled, sameLogin: true, sameAllowance: true))
     check("save failed / saved → no decline",
-          !UsageRefreshPolicy.declined(false, afterSaving: .failed, sameLogin: true)
-          && !UsageRefreshPolicy.declined(false, afterSaving: .saved, sameLogin: true)
-          && !UsageRefreshPolicy.declined(false, afterSaving: .failedAfterDelete, sameLogin: true))
+          !UsageRefreshPolicy.declined(false, afterSaving: .failed, sameLogin: true, sameAllowance: true)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .saved, sameLogin: true, sameAllowance: true)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .failedAfterDelete, sameLogin: true, sameAllowance: true))
     check("a poll does not lift a standing decline, whatever it reads or saves",
-          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: true)
-          && UsageRefreshPolicy.declined(true, after: .missing, sameLogin: true)
-          && UsageRefreshPolicy.declined(true, afterSaving: .saved, sameLogin: true))
+          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: true, sameAllowance: true)
+          && UsageRefreshPolicy.declined(true, after: .missing, sameLogin: true, sameAllowance: true)
+          && UsageRefreshPolicy.declined(true, afterSaving: .saved, sameLogin: true, sameAllowance: true))
 
     // While declined, a poll reads nothing from the Keychain…
     var reads = 0
@@ -1053,16 +1107,35 @@ do {
     // is now (true), the decline stands; folded into the value captured when
     // the read went out (false), it would be lifted and the dialog come back.
     check("save cancelled while a poll read was out → the read's .found keeps the decline",
-          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: true)
-          && !UsageRefreshPolicy.declined(false, after: .found(old), sameLogin: true))
+          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: true, sameAllowance: true)
+          && !UsageRefreshPolicy.declined(false, after: .found(old), sameLogin: true, sameAllowance: true))
     // A read or save that went out before a sign-in or sign-out: the sign-in
     // lifted the flag, and an answer about the item before it sets nothing.
     check("answer from before a sign-in → does not set the decline again",
-          !UsageRefreshPolicy.declined(false, after: cancelled, sameLogin: false)
-          && !UsageRefreshPolicy.declined(false, afterSaving: .cancelled, sameLogin: false))
+          !UsageRefreshPolicy.declined(false, after: cancelled, sameLogin: false, sameAllowance: true)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .cancelled, sameLogin: false, sameAllowance: true))
     check("answer from before a sign-in → does not lift a decline set since",
-          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: false)
-          && UsageRefreshPolicy.declined(true, afterSaving: .saved, sameLogin: false))
+          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: false, sameAllowance: true)
+          && UsageRefreshPolicy.declined(true, afterSaving: .saved, sameLogin: false, sameAllowance: true))
+    // [다시 허용] while a read was out: same login, but the user acted past
+    // the dialog that read put up. Its cancel must not bring the decline
+    // back, or the button does nothing once (#146).
+    var lifted = UsageSession()
+    lifted.setKeychainDeclined(true)
+    let liftsBefore = lifted.declineLifts
+    lifted.allowKeychainAgain()
+    var liftedBySignOut = UsageSession()
+    liftedBySignOut.signedOut(now: Date())
+    check("a manual refresh or sign-out counts as a lift",
+          lifted.declineLifts != liftsBefore && liftedBySignOut.declineLifts != UsageSession().declineLifts)
+    check("cancel from a read that went out before [다시 허용] → the decline stays lifted",
+          !UsageRefreshPolicy.declined(lifted.keychainDeclined, after: cancelled, sameLogin: true,
+                                       sameAllowance: liftsBefore == lifted.declineLifts)
+          && !UsageRefreshPolicy.declined(lifted.keychainDeclined, afterSaving: .cancelled, sameLogin: true,
+                                          sameAllowance: liftsBefore == lifted.declineLifts))
+    check("…and a cancel from a read after it is remembered again",
+          UsageRefreshPolicy.declined(lifted.keychainDeclined, after: cancelled, sameLogin: true,
+                                      sameAllowance: lifted.declineLifts == lifted.declineLifts))
 
     // The CLI token (another Keychain read, which can prompt) is read only
     // when the choice falls through to it.
@@ -1172,6 +1245,31 @@ do {
     check("Keychain queue: drain gives up at the cap while a job hangs (a prompt left up)",
           cappedAt.map { (0.15..<2).contains($0.timeIntervalSince(cappedStart)) } ?? false,
           "\(String(describing: cappedAt.map { $0.timeIntervalSince(cappedStart) }))")
+
+    // Quitting from inside a main-queue block (a `Task @MainActor`, a
+    // `DispatchQueue.main.async`) leaves AppKit waiting for the reply in a run
+    // loop nested in that block. The serial main queue cannot start another
+    // block there, so a reply sent through it never arrives and the app never
+    // quits; one handed to the run loop does.
+    final class InBlock: @unchecked Sendable {
+        var replied = false
+        var finished = false
+    }
+    let inBlock = InBlock()
+    DispatchQueue.main.async {
+        KeychainQueue.whenDrained(timeout: 5) { inBlock.replied = true }
+        let nestedDeadline = Date().addingTimeInterval(2)
+        while !inBlock.replied, Date() < nestedDeadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        inBlock.finished = true
+    }
+    let inBlockDeadline = Date().addingTimeInterval(5)
+    while !inBlock.finished, Date() < inBlockDeadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    }
+    check("Keychain queue: drain reply reaches a run loop nested in a main-queue block (quit from a Task)",
+          inBlock.replied)
 }
 
 // MARK: #133 — reset phrases are made at draw time; flat fallbacks are logged
@@ -1252,6 +1350,96 @@ do {
           JSONNumber.integer(NSNumber(value: (1 << 53) + 1)) == 1 << 53)
     check("integer: Int.max rounds to 2^63 → nil", JSONNumber.integer(NSNumber(value: Int.max)) == nil)
     check("integer: Int.min is -2^63 exactly → kept", JSONNumber.integer(NSNumber(value: Int.min)) == Int.min)
+}
+
+// MARK: #147 — a lapse the Keychain cannot confirm is still told
+
+do {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    let dead = OAuthToken(accessToken: "a1", refreshToken: "r1", expiresAt: nil)
+    let holdsR1 = KeychainExpectation.holds(refreshToken: "r1")
+    let snap = UsageSnapshot(fiveHourPercent: 10, fiveHourResetAt: nil,
+                             weeklyAllPercent: 20, weeklyResetAt: nil, models: [], extraLimits: [],
+                             unknownTopLevel: [], creditsText: nil, lastUpdated: now)
+    func lapse(_ own: OwnTokenLookup) -> LapseStep {
+        UsageRefreshPolicy.lapse(match: UsageRefreshPolicy.keychainMatch(own: own, expects: holdsR1))
+    }
+
+    check("lapse, Keychain holds the dead token → delete it and tell",
+          lapse(.found(dead)) == .discard)
+    // A remembered decline (#143) answers every read with this refusal — so
+    // this is every invalid_grant while the decline stands.
+    check("lapse, prompt declined → told, item kept (it may be another login)",
+          lapse(UsageRefreshPolicy.rememberedRefusal) == .noticeOnly)
+    check("lapse, Keychain locked or refused → told, item kept",
+          lapse(.unavailable(errSecInteractionNotAllowed)) == .noticeOnly
+          && lapse(.refused(errSecAuthFailed)) == .noticeOnly)
+    check("lapse, Keychain moved on (another login, a sign-out) → nothing over it",
+          lapse(.found(OAuthToken(accessToken: "b", refreshToken: "rb", expiresAt: nil))) == .leave
+          && lapse(.missing) == .leave)
+
+    // The kept item lapses again once it reads: one notification, not two.
+    var s = UsageSession()
+    s.loaded(snap, source: .oauthLogin)
+    check("first lapse is news", s.lapseIsNews(refreshToken: "r1"))
+    s.expired(refreshTokens: ["r1"], now: now)
+    check("a second lapse under the notice is not news (no second notification)",
+          !s.lapseIsNews(refreshToken: "r1"))
+    s.noToken(now: now)
+    check("…nor after the polls that follow it", !s.lapseIsNews(refreshToken: "r1"))
+    var resolved = s
+    resolved.loaded(snap, source: .claudeCodeCLI)
+    check("the same dead token lapsing after a CLI fetch took the notice down is not news",
+          !resolved.lapseIsNews(refreshToken: "r1"))
+    resolved.expired(refreshTokens: ["r1"], now: now)
+    check("…but its notice still goes up", resolved.loadState == .sessionExpired)
+    check("another token lapsing under the notice is not news", !s.lapseIsNews(refreshToken: "r2"))
+    var other = s
+    other.loaded(snap, source: .claudeCodeCLI)
+    check("another token lapsing after the notice was resolved is news", other.lapseIsNews(refreshToken: "r2"))
+    // A locked Keychain is what left the item; the read that follows must
+    // not put an error banner over the notice.
+    var locked = s
+    locked.ownTokenUnreadable("locked", now: now)
+    check("locked own item under the lapsed notice → the notice and its login button stay",
+          locked.loadState == .sessionExpired && locked.snapshot == .sample(now: now)
+          && UsagePresentation(loadState: locked.loadState, accountSource: locked.accountSource,
+                               limitsUnread: false, keychainDeclined: false, now: now).bannerAction == .signIn)
+    var lockedPlain = UsageSession()
+    lockedPlain.loaded(snap, source: .oauthLogin)
+    lockedPlain.ownTokenUnreadable("locked", now: now)
+    check("locked own item otherwise → the error banner, numbers kept",
+          lockedPlain.loadState == .error("locked") && lockedPlain.snapshot == snap)
+    var signedIn = s
+    signedIn.signedIn()
+    check("a new login lapsing after signing in again is news", signedIn.lapseIsNews(refreshToken: "r2"))
+    check("…the old dead token is still not", !signedIn.lapseIsNews(refreshToken: "r1"))
+    check("a token with no refresh token is news once the notice is down",
+          signedIn.lapseIsNews(refreshToken: nil) && !s.lapseIsNews(refreshToken: nil))
+
+    // A held renewal lapses while the decline is remembered: the item still
+    // holds the token the renewal spent. Once a CLI fetch took the notice
+    // down and [다시 허용] reads that one, it lapses too — the same login,
+    // so the same notification must not go out again.
+    let heldRenewal = OAuthToken(accessToken: "a2", refreshToken: "r2", expiresAt: nil)
+    let heldStep = UsageRefreshPolicy.lapse(match: UsageRefreshPolicy.keychainMatch(
+        own: UsageRefreshPolicy.rememberedRefusal, expects: holdsR1))
+    let heldAnnounced = UsageRefreshPolicy.announcedRefreshTokens(lapsed: heldRenewal, expected: holdsR1,
+                                                                   step: heldStep)
+    check("held renewal lapses, item kept → the token the item holds is announced with it",
+          heldStep == .noticeOnly && Set(heldAnnounced) == ["r2", "r1"])
+    var held = UsageSession()
+    held.loaded(snap, source: .oauthLogin)
+    check("held renewal lapsing is news", held.lapseIsNews(refreshToken: "r2"))
+    held.expired(refreshTokens: heldAnnounced, now: now)
+    held.loaded(snap, source: .claudeCodeCLI)
+    check("…the item's older token lapsing after a CLI fetch took the notice down is not news",
+          !held.lapseIsNews(refreshToken: "r1"))
+    check("a lapse that deletes the item or polled the item's own token announces only that token",
+          UsageRefreshPolicy.announcedRefreshTokens(lapsed: heldRenewal, expected: holdsR1, step: .discard) == ["r2"]
+          && UsageRefreshPolicy.announcedRefreshTokens(lapsed: dead, expected: holdsR1, step: .noticeOnly) == ["r1"]
+          && UsageRefreshPolicy.announcedRefreshTokens(lapsed: heldRenewal, expected: .maybeEmpty,
+                                                       step: .noticeOnly) == ["r2"])
 }
 
 // MARK: result

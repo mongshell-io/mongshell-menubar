@@ -18,6 +18,7 @@ private final class OffscreenWindow: NSWindow {
 enum SnapshotRenderer {
     static func runIfRequested() -> Bool {
         guard let dir = ProcessInfo.processInfo.environment["MONGSHELL_SNAPSHOT"] else { return false }
+        failUnlessQuitInTime()
         let base = URL(fileURLWithPath: dir)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
 
@@ -62,6 +63,24 @@ enum SnapshotRenderer {
         ] {
             UsageModel.shared.presentForSnapshot(sample, state: state)
             write(PopoverPreview(), to: base, "popover_usage_\(name)", scale: 2)
+        }
+        // A declined own-token prompt, remembered (#143): one banner, worded
+        // by what is shown in its stead, with "다시 허용" (#146).
+        for (state, name) in [
+            (LoadState.loaded(.claudeCodeCLI), "cli_account"),
+            (.loaded(.oauthLogin), "held_login"),
+            (.signedOut, "sample"),
+        ] {
+            UsageModel.shared.presentForSnapshot(sample, state: state, keychainDeclined: true)
+            write(PopoverPreview(), to: base, "popover_usage_keychain_declined_\(name)", scale: 2)
+        }
+        // The remembered decline with a 5-hour row gone missing: the format
+        // problem is added to the declined banner, not hidden by it (#146).
+        for (state, name) in [(LoadState.loaded(.claudeCodeCLI), "cli_account"), (.loaded(.oauthLogin), "held_login")] {
+            var unread = sample
+            unread.fiveHourPercent = nil
+            UsageModel.shared.presentForSnapshot(unread, state: state, keychainDeclined: true)
+            write(PopoverPreview(), to: base, "popover_usage_keychain_declined_unread_\(name)", scale: 2)
         }
         // A response whose 5-hour row went missing: grey ring and the format
         // banner, the weekly limit still read (#130).
@@ -247,6 +266,23 @@ enum SnapshotRenderer {
             try png.write(to: dir.appendingPathComponent("\(name).png"))
         } catch {
             report("\(name): \(error)")
+        }
+    }
+
+    /// The run quits through `applicationShouldTerminate`, whose reply can be
+    /// held up — #141 once left every PNG written and the process running
+    /// forever. Past this deadline the run exits non-zero, so a hang reads as
+    /// a failure instead of a command that never returns. The clock starts
+    /// with the run, so it also bounds rendering (~5s).
+    private nonisolated static let quitDeadlineSeconds: TimeInterval = 30
+
+    /// Off the main queue on purpose: a held-up quit is the main queue that
+    /// stopped being serviced.
+    private nonisolated static func failUnlessQuitInTime() {
+        DispatchQueue.global().asyncAfter(deadline: .now() + quitDeadlineSeconds) {
+            FileHandle.standardError.write(Data(
+                "snapshot: did not quit within \(Int(quitDeadlineSeconds))s — exiting 1\n".utf8))
+            exit(1)
         }
     }
 

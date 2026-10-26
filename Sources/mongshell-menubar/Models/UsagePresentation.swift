@@ -22,10 +22,27 @@ struct UsagePresentation: Equatable {
         /// Loaded, but the 5-hour or weekly limit was missing from the
         /// response — its gauge is grey, not 0% (#130).
         case unreadLimits
+        /// The user declined the own-token Keychain prompt and the app
+        /// remembers it (#143): says so, and what is shown meanwhile (#146).
+        /// `limitsUnread` carries the format notice it takes the place of,
+        /// so a grey gauge keeps its reason.
+        case keychainDeclined(DeclinedFallback, limitsUnread: Bool)
+    }
+
+    /// What the popover shows while the own item goes unread (#146).
+    enum DeclinedFallback: Equatable {
+        /// The Claude Code CLI account — possibly not the app's login.
+        case cliAccount
+        /// The renewal the Keychain did not take, held in memory (#108).
+        case heldLogin
+        case sample
     }
 
     enum BannerAction: Equatable {
         case none, signIn, retry
+        /// Ask the Keychain again — the manual refresh, which lifts the
+        /// remembered decline (#143).
+        case allowKeychain
     }
 
     /// The settings' account row.
@@ -44,6 +61,7 @@ struct UsagePresentation: Equatable {
         switch banner {
         case .signedOut, .sessionExpired: return .signIn
         case .failed: return .retry
+        case .keychainDeclined: return .allowKeychain
         // Asking again would read the same shape; the next poll does anyway.
         case .none, .loading, .rateLimited, .cliAccount, .unreadLimits: return .none
         }
@@ -56,7 +74,18 @@ struct UsagePresentation: Equatable {
     /// `limitsUnread` is `UsageSnapshot.hasUnreadLimit` of the snapshot on
     /// screen. It outranks the CLI-account notice — a gauge with no value is
     /// what needs explaining — but not the states that have their own banner.
-    init(loadState: LoadState, accountSource: DataSource?, limitsUnread: Bool, now: Date) {
+    ///
+    /// `keychainDeclined` is the remembered decline (#143). Its banner takes
+    /// the place of what is shown in its stead — the sample, the CLI
+    /// account, a held renewal — and of the format notice: whose numbers
+    /// these are, and the button that ends it, come first (#146); the format
+    /// notice rides along on it rather than going unsaid. It stays
+    /// under the states that already speak for this poll: a lapsed login
+    /// (signing in also asks again), loading, a rate limit (the manual
+    /// refresh behind its button is blocked until then) and an error (its
+    /// retry is that same refresh).
+    init(loadState: LoadState, accountSource: DataSource?, limitsUnread: Bool,
+         keychainDeclined: Bool, now: Date) {
         switch loadState {
         case .loaded:                     badge = .connected
         case .loading:                    badge = .syncing
@@ -65,11 +94,20 @@ struct UsagePresentation: Equatable {
         case .error:                      badge = .failed
         }
         switch loadState {
+        case .signedOut where keychainDeclined: banner = .keychainDeclined(.sample, limitsUnread: false)
         case .signedOut:                  banner = .signedOut
         case .sessionExpired:             banner = .sessionExpired
         case .loading:                    banner = .loading
         case .rateLimited(let retryAt):   banner = .rateLimited(retryAt: retryAt)
         case .error(let message):         banner = .failed(message)
+        case .loaded(let source) where keychainDeclined:
+            let fallback: DeclinedFallback
+            switch source {
+            case .claudeCodeCLI:          fallback = .cliAccount
+            case .oauthLogin:             fallback = .heldLogin
+            case .sample:                 fallback = .sample
+            }
+            banner = .keychainDeclined(fallback, limitsUnread: limitsUnread)
         case .loaded where limitsUnread:  banner = .unreadLimits
         case .loaded(.claudeCodeCLI):     banner = .cliAccount
         case .loaded:                     banner = .none
