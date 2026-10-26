@@ -50,8 +50,9 @@ struct GitHubPresentation: Equatable {
     let badge: Badge
     let banner: Banner
     let token: Token
-    /// When the popover's 새로고침 opens again, nil while it is open — the
-    /// usage side's rule (#86, #154).
+    /// When the popover's 새로고침 opens again, nil while it is open. Not
+    /// the banner's automatic retry time: a server-named wait shorter than
+    /// the backoff opens the button first (#154).
     let manualRefreshBlockedUntil: Date?
 
     var bannerAction: BannerAction {
@@ -89,7 +90,7 @@ struct GitHubPresentation: Equatable {
         case .loaded(.pat):                  banner = .pat
         case .noToken:                       banner = .noToken
         case .keychainDenied:                banner = .keychainDenied
-        case .rateLimited(let retryAt):      banner = .rateLimited(retryAt: retryAt)
+        case .rateLimited(let retryAt, _):   banner = .rateLimited(retryAt: retryAt)
         case .unauthorized:                  banner = .unauthorized
         case .patSaveFailed(let status):     banner = .patSaveFailed(status)
         case .error(let message):            banner = .failed(message)

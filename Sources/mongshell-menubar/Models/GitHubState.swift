@@ -23,7 +23,10 @@ enum GitHubLoadState: Equatable, Sendable {
     case loading
     case loaded(GitHubTokenSource)
     /// 403/429/`RATE_LIMITED`, or the remaining budget fell under the reserve.
-    case rateLimited(retryAt: Date)
+    /// `retryAt` is when the next automatic poll goes; `manualRetryAt` when
+    /// the popover's 새로고침 opens again — earlier when the server named a
+    /// time shorter than the backoff (#154). nil means it follows `retryAt`.
+    case rateLimited(retryAt: Date, manualRetryAt: Date? = nil)
     /// 401 — the token was rejected.
     case unauthorized
     /// The pasted PAT could not be stored. Whatever the Keychain holds now
@@ -136,7 +139,7 @@ enum GitHubPollPolicy {
             return Config.githubFastPollSeconds
         }
         let wait = nextWait(base: base, backoff: backoff)
-        guard case .rateLimited(let retryAt) = state else { return wait }
+        guard case .rateLimited(let retryAt, _) = state else { return wait }
         return max(wait, secondsUntil(retryAt, now: now))
     }
 
@@ -150,12 +153,23 @@ enum GitHubPollPolicy {
         return now.addingTimeInterval(TimeInterval(max(nextWait(base: base, backoff: backoff), serverWait)))
     }
 
+    /// When the popover's 새로고침 may go out again after a rate-limited
+    /// answer: the time the server named, or the backoff's `retryAt` when
+    /// it named none. Not the automatic wait's max of the two — that held a
+    /// `retry-after: 30` behind a backoff of up to `maxBackoffWait` (#154).
+    /// Capped like `retryAt`, so a hostile value parks it no longer.
+    static func manualRetryAt(now: Date, serverRetryAt: Date?, retryAt: Date) -> Date {
+        guard let serverRetryAt else { return retryAt }
+        return now.addingTimeInterval(TimeInterval(secondsUntil(serverRetryAt, now: now)))
+    }
+
     /// nil when the popover's manual refresh may go out now; otherwise when
-    /// it may. Same rule as the usage side (#86): while rate-limited, not
-    /// before `retryAt`.
+    /// it may: while rate-limited, not before `manualRetryAt` (or `retryAt`
+    /// when the state carries none).
     static func manualRefreshBlocked(until state: GitHubLoadState, now: Date) -> Date? {
-        guard case .rateLimited(let retryAt) = state, now < retryAt else { return nil }
-        return retryAt
+        guard case .rateLimited(let retryAt, let manualRetryAt) = state else { return nil }
+        let until = manualRetryAt ?? retryAt
+        return now < until ? until : nil
     }
 
     /// Whole seconds from `now` to `date`, rounded up so a wait never ends

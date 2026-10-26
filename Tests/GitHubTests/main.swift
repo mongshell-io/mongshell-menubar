@@ -692,6 +692,45 @@ do {
     check("retryAt 이 되면 → 열림", blocked(.rateLimited(retryAt: retry), at: retry) == nil)
     check("한도 초과 아님 → 열림",
           [GitHubLoadState.loaded(.pat), .error("x"), .loading, .unauthorized, .noToken].allSatisfy { blocked($0) == nil })
+    // The automatic wait is max(backoff, server); the button only waits for
+    // the server — `retry-after: 30` once held it behind a 48-minute backoff.
+    let auto = now.addingTimeInterval(2880)
+    let server = now.addingTimeInterval(30)
+    check("수동 시각이 따로 있으면 → 그 시각까지만 막힘 (자동 시각 아님)",
+          blocked(.rateLimited(retryAt: auto, manualRetryAt: server)) == server)
+    check("수동 시각이 지나면 → 자동 시각 전이어도 열림",
+          blocked(.rateLimited(retryAt: auto, manualRetryAt: server), at: server) == nil)
+}
+
+print("▸ GitHubPollPolicy.manualRetryAt (#154)")
+do {
+    func manual(_ server: Date?, backoff: Int) -> Date {
+        let retryAt = GitHubPollPolicy.retryAt(now: now, serverRetryAt: server, base: 180, backoff: backoff)
+        return GitHubPollPolicy.manualRetryAt(now: now, serverRetryAt: server, retryAt: retryAt)
+    }
+    check("2차 한도 retry-after 30 + 백오프 48분 → 수동은 30초 뒤",
+          manual(now.addingTimeInterval(30), backoff: 4) == now.addingTimeInterval(30))
+    check("1차 한도 reset 50분 뒤 → 수동도 그 시각",
+          manual(now.addingTimeInterval(3000), backoff: 1) == now.addingTimeInterval(3000))
+    check("서버가 시각을 안 줌 → 수동은 백오프 시각", manual(nil, backoff: 1) == now.addingTimeInterval(360))
+    check("서버 시각이 과거 → 수동은 지금 (막지 않음)", manual(now.addingTimeInterval(-60), backoff: 1) == now)
+    check("터무니없는 서버 시각 → 수동도 상한 3600",
+          manual(now.addingTimeInterval(3 * 86_400), backoff: 1) == now.addingTimeInterval(3600))
+
+    // Header → state → banner and button, as the model chains them: the two
+    // times differ, and each surface shows its own.
+    var header: Date?
+    if case .rateLimited(let at)? = try? GitHubAPIClient.interpret(
+        statusCode: 429, headers: ["Retry-After": "30"], data: Data(), now: now) { header = at }
+    check("429 + retry-after 30 → 서버 시각 30초 뒤", header == now.addingTimeInterval(30))
+    let retryAt = GitHubPollPolicy.retryAt(now: now, serverRetryAt: header, base: 180, backoff: 4)
+    let state = GitHubLoadState.rateLimited(retryAt: retryAt, manualRetryAt: GitHubPollPolicy.manualRetryAt(
+        now: now, serverRetryAt: header, retryAt: retryAt))
+    let shown = GitHubPresentation(loadState: state, tokenSource: .pat, now: now)
+    check("429 retry-after 30 + 백오프 → 배너는 자동 시각(48분 뒤)",
+          shown.banner == .rateLimited(retryAt: now.addingTimeInterval(2880)))
+    check("429 retry-after 30 + 백오프 → 새로고침은 30초 뒤 가능",
+          shown.manualRefreshBlockedUntil == now.addingTimeInterval(30))
 }
 
 print("▸ GitHubPollPolicy.backsOff")
@@ -1360,8 +1399,12 @@ do {
     check("배지: noToken → 토큰 없음", p(.noToken).badge == .noToken)
     check("배지: keychainDenied → 거부됨", p(.keychainDenied).badge == .denied)
     check("배지: rateLimited → 제한됨", p(.rateLimited(retryAt: retryAt)).badge == .limited)
-    check("새로고침: rateLimited → retryAt 까지 막힘 (배너의 자동 재시도 시각과 같다)",
+    check("새로고침: rateLimited (수동 시각 없음) → retryAt 까지 막힘",
           p(.rateLimited(retryAt: retryAt)).manualRefreshBlockedUntil == retryAt)
+    let sooner = now.addingTimeInterval(30)
+    check("새로고침: 수동 시각이 따로 있으면 → 버튼은 그 시각, 배너는 자동 시각",
+          p(.rateLimited(retryAt: retryAt, manualRetryAt: sooner)).manualRefreshBlockedUntil == sooner
+              && p(.rateLimited(retryAt: retryAt, manualRetryAt: sooner)).banner == B.rateLimited(retryAt: retryAt))
     check("새로고침: 그 밖의 상태 → 열림",
           [GitHubLoadState.loaded(gh), .error("x"), .unauthorized].allSatisfy { p($0).manualRefreshBlockedUntil == nil })
     check("배지: unauthorized → 권한 부족", p(.unauthorized).badge == .unauthorized)

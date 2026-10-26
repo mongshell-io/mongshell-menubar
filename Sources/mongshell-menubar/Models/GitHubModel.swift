@@ -131,8 +131,9 @@ final class GitHubModel: ObservableObject {
         }
     }
 
-    /// The popover's 새로고침. While rate-limited it waits for `retryAt`, as
-    /// the usage side's does (#86) — the button says so; a token swap or a
+    /// The popover's 새로고침. While rate-limited it waits for the time the
+    /// server named (the backoff's when it named none, #154) — the button
+    /// says so; a token swap or a
     /// retry from another banner still goes through `refreshNow()`.
     func refreshManually() {
         guard GitHubPollPolicy.manualRefreshBlocked(until: loadState, now: Date()) == nil else { return }
@@ -467,10 +468,12 @@ final class GitHubModel: ObservableObject {
             // the rejected token once more without the user asking.
             refreshRequested = false
             loadState = .unauthorized
-        case .success(.rateLimited(let retryAt)):
+        case .success(.rateLimited(let serverRetryAt)):
             backOff()
-            loadState = .rateLimited(retryAt: GitHubPollPolicy.retryAt(
-                now: now, serverRetryAt: retryAt, base: prefs.githubPollSeconds, backoff: backoff))
+            let retryAt = GitHubPollPolicy.retryAt(
+                now: now, serverRetryAt: serverRetryAt, base: prefs.githubPollSeconds, backoff: backoff)
+            loadState = .rateLimited(retryAt: retryAt, manualRetryAt: GitHubPollPolicy.manualRetryAt(
+                now: now, serverRetryAt: serverRetryAt, retryAt: retryAt))
         case .failure(.cancelled):
             return
         case .failure(let error):
