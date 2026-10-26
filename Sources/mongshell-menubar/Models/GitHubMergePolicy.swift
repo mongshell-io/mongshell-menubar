@@ -55,6 +55,15 @@ enum GitHubMergePolicy {
         }
     }
 
+    /// Whether a click on a PR's merge button may read the token. The read
+    /// runs off the main thread and can put up the gh Keychain prompt
+    /// (#141); a second click on the same PR while the first one's read is
+    /// out — or once its merge is out or done — would queue a second read
+    /// and a second prompt. `reading` holds the PR ids whose read is out.
+    static func startsTokenRead(for id: String, reading: Set<String>, activity: PRMergeActivity?) -> Bool {
+        !reading.contains(id) && activity != .merging && activity != .merged
+    }
+
     /// What the model does with a click on the merge button.
     enum Gate: Equatable, Sendable {
         case send(nodeID: String)

@@ -26,6 +26,9 @@ final class GitHubModel: ObservableObject {
     /// Merges asked for from the popover, by `GitHubPullRequest.id`
     /// (Decision #49). What a refresh keeps is `GitHubMergePolicy.carryOver`.
     @Published private(set) var mergeActivity: [String: PRMergeActivity] = [:]
+    /// PR ids whose merge click is reading the token (#141) — see
+    /// `GitHubMergePolicy.startsTokenRead`.
+    private var mergeTokenReads: Set<String> = []
 
     private let prefs: Preferences
     private let credentials: GitHubCredentialStore
@@ -208,11 +211,15 @@ final class GitHubModel: ObservableObject {
         // its source with the list's. A stopped state is turned away first
         // so it reads no Keychain and isn't overwritten by what that read
         // finds — the gate would refuse it anyway.
-        guard prefs.githubEnabled, GitHubMergePolicy.allowsMerge(in: loadState) else { return }
+        guard prefs.githubEnabled, GitHubMergePolicy.allowsMerge(in: loadState),
+              GitHubMergePolicy.startsTokenRead(for: id, reading: mergeTokenReads,
+                                                activity: mergeActivity[id]) else { return }
         // The read runs off the main thread (#141); the gate below is judged
         // on the list, state and activity as they are once it is back.
         let readIn = generation
+        mergeTokenReads.insert(id)
         let resolution = await resolveToken()
+        mergeTokenReads.remove(id)
         guard prefs.githubEnabled else { return }
         let token: String
         let source: GitHubTokenSource

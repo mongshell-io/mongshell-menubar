@@ -1163,6 +1163,21 @@ do {
     check("실패 사유 → 다음 성공 갱신에서 지움", after[pr("mongshell/bookdam", 60).id] == nil)
 }
 
+print("▸ 머지 클릭의 토큰 읽기 중복 막기 (GitHubMergePolicy.startsTokenRead, #141)")
+do {
+    check("처음 클릭 → 토큰을 읽는다",
+          GitHubMergePolicy.startsTokenRead(for: "a", reading: [], activity: nil))
+    check("같은 PR 의 읽기가 나가 있는 동안 다시 클릭 → 읽지 않음 (대화상자 두 번 방지)",
+          !GitHubMergePolicy.startsTokenRead(for: "a", reading: ["a"], activity: nil))
+    check("다른 PR 의 읽기가 나가 있어도 → 이 PR 은 읽는다",
+          GitHubMergePolicy.startsTokenRead(for: "b", reading: ["a"], activity: nil))
+    check("머지가 나가 있거나 끝남 → 읽지 않음",
+          !GitHubMergePolicy.startsTokenRead(for: "a", reading: [], activity: .merging)
+          && !GitHubMergePolicy.startsTokenRead(for: "a", reading: [], activity: .merged))
+    check("실패 후 재시도 → 읽는다",
+          GitHubMergePolicy.startsTokenRead(for: "a", reading: [], activity: .failed("x")))
+}
+
 print("▸ 머지 요청 판정 (GitHubMergePolicy.gate)")
 do {
     let ready = pr("mongshell/bookdam", 57, merge: .clean, nodeID: "PR_57", headSHA: "abc")
