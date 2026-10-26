@@ -92,10 +92,11 @@ struct UsageSession: Equatable {
         markSignedOut(now: now)
     }
 
-    /// The own token lapsed on `invalid_grant` and the notice goes up; its
-    /// refresh token is remembered as announced (see `lapseIsNews`).
-    mutating func expired(refreshToken: String?, now: Date) {
-        if let refreshToken { announcedLapses.insert(Self.fingerprint(refreshToken)) }
+    /// The own token lapsed on `invalid_grant` and the notice goes up; the
+    /// refresh tokens this lapse covers are remembered as announced (see
+    /// `lapseIsNews`, `UsageRefreshPolicy.announcedRefreshTokens`).
+    mutating func expired(refreshTokens: [String], now: Date) {
+        for refreshToken in refreshTokens { announcedLapses.insert(Self.fingerprint(refreshToken)) }
         snapshot = .sample(now: now)
         showsSample = true
         accountSource = nil

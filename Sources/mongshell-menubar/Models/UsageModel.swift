@@ -308,11 +308,13 @@ final class UsageModel: ObservableObject {
     /// behind the delete and stands, and the lapsed notice is not shown over
     /// it.
     private func expireSession(_ token: OAuthToken, generation: Int) async {
-        let match = await keychainMatch(UsageRefreshPolicy.expectation(pending: pendingOwnToken, polling: token))
+        let expected = UsageRefreshPolicy.expectation(pending: pendingOwnToken, polling: token)
+        let match = await keychainMatch(expected)
         guard generation == loginGeneration else { return }
         // The token is dead either way; a held renewal of it is too.
         pendingOwnToken = nil
-        switch UsageRefreshPolicy.lapse(match: match) {
+        let step = UsageRefreshPolicy.lapse(match: match)
+        switch step {
         case .leave:
             return
         case .noticeOnly:
@@ -323,7 +325,9 @@ final class UsageModel: ObservableObject {
             guard generation == loginGeneration else { return }
         }
         let isNews = session.lapseIsNews(refreshToken: token.refreshToken)
-        session.expired(refreshToken: token.refreshToken, now: Date())
+        session.expired(refreshTokens: UsageRefreshPolicy.announcedRefreshTokens(lapsed: token, expected: expected,
+                                                                                 step: step),
+                        now: Date())
         if isNews { notifySessionExpired() }
     }
 

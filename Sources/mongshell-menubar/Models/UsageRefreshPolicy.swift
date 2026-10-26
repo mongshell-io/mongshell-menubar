@@ -195,6 +195,21 @@ enum UsageRefreshPolicy {
         }
     }
 
+    /// The refresh tokens a lapse announces: the dead one, and — when the
+    /// item is left (`noticeOnly`) while a held renewal was the one polled —
+    /// the token the item still holds. That one was spent by the renewal, so
+    /// it fails the same way once the Keychain reads again; without it here
+    /// the second lapse after a CLI fetch took the notice down was news, and
+    /// the same notification went out twice.
+    static func announcedRefreshTokens(lapsed token: OAuthToken, expected: KeychainExpectation,
+                                       step: LapseStep) -> [String] {
+        var tokens = token.refreshToken.map { [$0] } ?? []
+        if step == .noticeOnly, case .holds(let kept?) = expected, kept != token.refreshToken {
+            tokens.append(kept)
+        }
+        return tokens
+    }
+
     static func resolvePending(_ pending: PendingOwnToken?, own: OwnTokenLookup) -> PendingResolution {
         guard let pending else { return .none }
         // A refusal may not pass on its own, but a save can clear it — it

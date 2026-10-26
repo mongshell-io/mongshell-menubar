@@ -614,7 +614,7 @@ do {
     // #44 — the lapsed-login notice outlives the polls after it.
     var e = UsageSession()
     e.loaded(snap, source: .oauthLogin)
-    e.expired(refreshToken: "r1", now: now)
+    e.expired(refreshTokens: ["r1"], now: now)
     check("invalid_grant → lapsed notice, sample numbers",
           e.loadState == .sessionExpired && e.snapshot == .sample(now: now) && e.accountSource == nil)
     e.noToken(now: now)
@@ -647,7 +647,7 @@ do {
     d.rejected(accessToken: "cli", now: now)
     d.failed("x", now: now)
     d.rateLimited(retryAfter: nil, now: now, pollBase: 180)
-    d.expired(refreshToken: "r1", now: now)
+    d.expired(refreshTokens: ["r1"], now: now)
     d.loaded(snap, source: .claudeCodeCLI)
     check("polls do not lift a remembered decline", d.keychainDeclined)
     var d1 = d
@@ -906,7 +906,7 @@ do {
     let paths: [(String, (inout UsageSession) -> Void)] = [
         ("noToken", { $0.noToken(now: now) }),
         ("rejected", { $0.rejected(accessToken: "cli", now: now) }),
-        ("expired", { $0.expired(refreshToken: "r1", now: now) }),
+        ("expired", { $0.expired(refreshTokens: ["r1"], now: now) }),
         ("signedOut", { $0.signedOut(now: now) }),
     ]
     for (name, event) in paths {
@@ -932,7 +932,7 @@ do {
     let paths: [(String, (inout UsageSession) -> Void)] = [
         ("noToken", { $0.noToken(now: later) }),
         ("rejected", { $0.rejected(accessToken: "cli", now: later) }),
-        ("expired", { $0.expired(refreshToken: "r1", now: later) }),
+        ("expired", { $0.expired(refreshTokens: ["r1"], now: later) }),
         ("signedOut", { $0.signedOut(now: later) }),
     ]
     for (name, event) in paths {
@@ -1363,7 +1363,7 @@ do {
     var s = UsageSession()
     s.loaded(snap, source: .oauthLogin)
     check("first lapse is news", s.lapseIsNews(refreshToken: "r1"))
-    s.expired(refreshToken: "r1", now: now)
+    s.expired(refreshTokens: ["r1"], now: now)
     check("a second lapse under the notice is not news (no second notification)",
           !s.lapseIsNews(refreshToken: "r1"))
     s.noToken(now: now)
@@ -1372,7 +1372,7 @@ do {
     resolved.loaded(snap, source: .claudeCodeCLI)
     check("the same dead token lapsing after a CLI fetch took the notice down is not news",
           !resolved.lapseIsNews(refreshToken: "r1"))
-    resolved.expired(refreshToken: "r1", now: now)
+    resolved.expired(refreshTokens: ["r1"], now: now)
     check("…but its notice still goes up", resolved.loadState == .sessionExpired)
     check("another token lapsing under the notice is not news", !s.lapseIsNews(refreshToken: "r2"))
     var other = s
@@ -1397,6 +1397,30 @@ do {
     check("…the old dead token is still not", !signedIn.lapseIsNews(refreshToken: "r1"))
     check("a token with no refresh token is news once the notice is down",
           signedIn.lapseIsNews(refreshToken: nil) && !s.lapseIsNews(refreshToken: nil))
+
+    // A held renewal lapses while the decline is remembered: the item still
+    // holds the token the renewal spent. Once a CLI fetch took the notice
+    // down and [다시 허용] reads that one, it lapses too — the same login,
+    // so the same notification must not go out again.
+    let heldRenewal = OAuthToken(accessToken: "a2", refreshToken: "r2", expiresAt: nil)
+    let heldStep = UsageRefreshPolicy.lapse(match: UsageRefreshPolicy.keychainMatch(
+        own: UsageRefreshPolicy.rememberedRefusal, expects: holdsR1))
+    let heldAnnounced = UsageRefreshPolicy.announcedRefreshTokens(lapsed: heldRenewal, expected: holdsR1,
+                                                                   step: heldStep)
+    check("held renewal lapses, item kept → the token the item holds is announced with it",
+          heldStep == .noticeOnly && Set(heldAnnounced) == ["r2", "r1"])
+    var held = UsageSession()
+    held.loaded(snap, source: .oauthLogin)
+    check("held renewal lapsing is news", held.lapseIsNews(refreshToken: "r2"))
+    held.expired(refreshTokens: heldAnnounced, now: now)
+    held.loaded(snap, source: .claudeCodeCLI)
+    check("…the item's older token lapsing after a CLI fetch took the notice down is not news",
+          !held.lapseIsNews(refreshToken: "r1"))
+    check("a lapse that deletes the item or polled the item's own token announces only that token",
+          UsageRefreshPolicy.announcedRefreshTokens(lapsed: heldRenewal, expected: holdsR1, step: .discard) == ["r2"]
+          && UsageRefreshPolicy.announcedRefreshTokens(lapsed: dead, expected: holdsR1, step: .noticeOnly) == ["r1"]
+          && UsageRefreshPolicy.announcedRefreshTokens(lapsed: heldRenewal, expected: .maybeEmpty,
+                                                       step: .noticeOnly) == ["r2"])
 }
 
 // MARK: result
