@@ -743,12 +743,16 @@ do {
               == .useInMemory(renewed))
     check("held sign-in renewed → the renewal expects what the sign-in did",
           UsageRefreshPolicy.expectation(pending: heldSignIn, polling: renewed) == .replacesAny)
-    check("sign-in save cancelled or failed → held over anything; lost the item → maybe empty",
+    check("sign-in save cancelled, failed or lost the item → still held over anything",
           UsageRefreshPolicy.pending(after: .cancelled, token: renewed, expected: .replacesAny) == heldSignIn
           && UsageRefreshPolicy.pending(after: .failed, token: renewed, expected: .replacesAny) == heldSignIn
           && UsageRefreshPolicy.pending(after: .failedAfterDelete, token: renewed, expected: .replacesAny)
-              == PendingOwnToken(token: renewed, keychain: .maybeEmpty)
+              == heldSignIn
           && UsageRefreshPolicy.pending(after: .saved, token: renewed, expected: .replacesAny) == nil)
+    let lostSignIn = UsageRefreshPolicy.pending(afterSaving: heldSignIn, result: .failedAfterDelete)
+    check("held sign-in lost the item, another build wrote there → still stored over it, not dropped",
+          lostSignIn.map { UsageRefreshPolicy.resolvePending($0, own: .found(other)) } == .save(renewed),
+          "\(String(describing: lostSignIn))")
 
     let pending = PendingOwnToken(token: renewed, keychain: holdsR1)
     check("nothing held → nothing to do",

@@ -172,13 +172,17 @@ enum UsageRefreshPolicy {
 
     /// What stays held after a new own token — a renewal, or a sign-in
     /// (#151) — was stored (`save`) or held without trying (`save` nil).
-    /// `expected` is what the Keychain held before.
+    /// `expected` is what the Keychain held before. A save that deleted the
+    /// item narrows it to `maybeEmpty` — except for a held sign-in, which
+    /// already stands in for whatever the item holds: narrowed, another
+    /// build's write there would turn `.changed` and drop the login (#151).
     static func pending(after save: OwnTokenSave?, token: OAuthToken,
                         expected: KeychainExpectation) -> PendingOwnToken? {
         switch save {
         case .saved: return nil
         case .failed, .cancelled, nil: return PendingOwnToken(token: token, keychain: expected)
-        case .failedAfterDelete: return PendingOwnToken(token: token, keychain: .maybeEmpty)
+        case .failedAfterDelete:
+            return PendingOwnToken(token: token, keychain: expected == .replacesAny ? .replacesAny : .maybeEmpty)
         }
     }
 
