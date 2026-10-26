@@ -591,6 +591,39 @@ do {
     check("after the reset 25% fires again", w.observe(percent: 26) == 25)
 }
 
+// MARK: a renewal the Keychain could not take is held, not dropped (#108)
+
+do {
+    let old = OAuthToken(accessToken: "a1", refreshToken: "r1", expiresAt: nil)
+    let renewed = OAuthToken(accessToken: "a2", refreshToken: "r2", expiresAt: nil)
+    let other = OAuthToken(accessToken: "b", refreshToken: "rb", expiresAt: nil)
+    let locked = OwnTokenLookup.unavailable(errSecInteractionNotAllowed)
+
+    check("Keychain holds the token we started from → current",
+          UsageRefreshPolicy.keychainMatch(own: .found(old), expects: "r1") == .current)
+    check("Keychain holds another login → changed",
+          UsageRefreshPolicy.keychainMatch(own: .found(other), expects: "r1") == .changed)
+    check("Keychain emptied (signed out elsewhere) → changed",
+          UsageRefreshPolicy.keychainMatch(own: .missing, expects: "r1") == .changed)
+    check("Keychain locked or refused → unknown, not changed",
+          UsageRefreshPolicy.keychainMatch(own: locked, expects: "r1") == .unknown
+          && UsageRefreshPolicy.keychainMatch(own: .refused(errSecAuthFailed), expects: "r1") == .unknown)
+
+    let pending = PendingOwnToken(token: renewed, replaces: "r1")
+    check("nothing held → nothing to do",
+          UsageRefreshPolicy.resolvePending(nil, own: .found(old)) == PendingResolution.none)
+    check("Keychain back, still holding the spent token → store the held one",
+          UsageRefreshPolicy.resolvePending(pending, own: .found(old)) == .save(renewed))
+    check("Keychain still locked → keep polling with the held one",
+          UsageRefreshPolicy.resolvePending(pending, own: locked) == .useInMemory(renewed))
+    check("Keychain moved on to another login → drop, never overwrite it",
+          UsageRefreshPolicy.resolvePending(pending, own: .found(other)) == .drop)
+    check("Keychain emptied by a sign-out → drop, never resurrect the login",
+          UsageRefreshPolicy.resolvePending(pending, own: .missing) == .drop)
+    check("Keychain already holds the held one (another instance stored it) → drop the copy",
+          UsageRefreshPolicy.resolvePending(pending, own: .found(renewed)) == .drop)
+}
+
 // MARK: result
 
 if failures.isEmpty {

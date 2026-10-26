@@ -23,6 +23,8 @@ final class UsageModel: ObservableObject {
         }
     }
     private var thresholds = UsageThresholdWatch()
+    /// A renewed own token the Keychain has not taken yet (#108).
+    private var pendingOwnToken: PendingOwnToken?
 
     private let api = UsageAPIClient()
     private let auth = AuthService()
@@ -32,7 +34,7 @@ final class UsageModel: ObservableObject {
     /// can each spend it and sign the user out. `@MainActor` makes this plain
     /// flag a sufficient guard within this process only; a race with another
     /// instance (a stale dev build left running after `make_app.sh`) is
-    /// stopped by `ownTokenStillCurrent` instead.
+    /// stopped by `keychainMatch` instead.
     private var refreshInFlight = false
     /// A refresh asked for while one was running. Dropping it would leave
     /// stale state on screen until the next poll — e.g. the expired-session
@@ -82,6 +84,18 @@ final class UsageModel: ObservableObject {
     private func currentToken() -> UsageTokenChoice {
         let own = CredentialStore.lookupOwnToken()
         if case .refused(let status) = own { AuthDebugLog.write("own token refused status=\(status)") }
+        switch UsageRefreshPolicy.resolvePending(pendingOwnToken, own: own) {
+        case .none:
+            break
+        case .drop:
+            AuthDebugLog.write("own token changed elsewhere; held renewal dropped")
+            pendingOwnToken = nil
+        case .useInMemory(let token):
+            return .token(token, .oauthLogin)
+        case .save(let token):
+            if CredentialStore.saveOwnToken(token) { pendingOwnToken = nil }
+            return .token(token, .oauthLogin)
+        }
         return UsageRefreshPolicy.chooseToken(own: own, cli: CredentialStore.loadClaudeCodeToken)
     }
 
@@ -120,8 +134,7 @@ final class UsageModel: ObservableObject {
             let renewal = await renewOwnToken(token)
             switch (UsageRefreshPolicy.step(afterUpFront: renewal.kind), renewal) {
             case (.useRenewed, .renewed(let renewed)):
-                guard ownTokenStillCurrent(token) else { return }
-                CredentialStore.saveOwnToken(renewed)
+                guard adoptRenewed(renewed, replacing: token) else { return }
                 token = renewed
             case (.useRenewed, _):
                 assertionFailure("useRenewed without a renewed token")
@@ -140,8 +153,7 @@ final class UsageModel: ObservableObject {
         if UsageRefreshPolicy.shouldRenew(after: first, source: source) {
             switch await renewOwnToken(token) {
             case .renewed(let renewed):
-                guard ownTokenStillCurrent(token) else { return }
-                CredentialStore.saveOwnToken(renewed)
+                guard adoptRenewed(renewed, replacing: token) else { return }
                 token = renewed
                 retry = .refetched(await fetchUsage(renewed))
             case .sessionExpired:
@@ -231,22 +243,52 @@ final class UsageModel: ObservableObject {
     /// needed: with the token gone, nothing can reach this path again until
     /// the user signs in anew.
     private func expireSession(_ token: OAuthToken) {
-        guard ownTokenStillCurrent(token) else { return }
+        let match = keychainMatch(token)
+        // The token is dead either way; a held renewal of it is too.
+        pendingOwnToken = nil
+        guard match == .current else { return }
         AuthDebugLog.write("own token discarded (invalid_grant) \(AuthDebugLog.session(token))")
         CredentialStore.clearOwnToken()
         session.expired()
         notifySessionExpired()
     }
 
+    /// Takes a renewed own token: stores it, or holds it in memory when the
+    /// Keychain cannot say or cannot take it now — the server has already
+    /// spent the old one (#108). Returns false when the Keychain has moved
+    /// on (a sign-in, a sign-out or another instance of this app): the
+    /// caller drops the renewal rather than overwrite the fresh login.
+    private func adoptRenewed(_ renewed: OAuthToken, replacing token: OAuthToken) -> Bool {
+        let replaces = keychainRefreshToken(whilePollingWith: token)
+        switch keychainMatch(token) {
+        case .changed:
+            pendingOwnToken = nil
+            return false
+        case .current where CredentialStore.saveOwnToken(renewed):
+            pendingOwnToken = nil
+        case .current, .unknown:
+            AuthDebugLog.write("renewed own token held in memory until the Keychain takes it")
+            pendingOwnToken = PendingOwnToken(token: renewed, replaces: replaces)
+        }
+        return true
+    }
+
     /// Guards every write to the own token. The poll may be renewing or
     /// discarding a token that `signIn()` — or another instance of this app —
     /// has replaced in the meantime; acting on the stale one would overwrite
-    /// or delete the fresh login. When the Keychain has moved on the caller
-    /// leaves it alone and the next poll re-reads it.
-    private func ownTokenStillCurrent(_ token: OAuthToken) -> Bool {
-        if CredentialStore.loadOwnToken()?.refreshToken == token.refreshToken { return true }
-        AuthDebugLog.write("own token changed elsewhere; kept")
-        return false
+    /// or delete the fresh login.
+    private func keychainMatch(_ token: OAuthToken) -> KeychainMatch {
+        let match = UsageRefreshPolicy.keychainMatch(
+            own: CredentialStore.lookupOwnToken(), expects: keychainRefreshToken(whilePollingWith: token))
+        if match == .changed { AuthDebugLog.write("own token changed elsewhere; kept") }
+        return match
+    }
+
+    /// While polling with a held renewal, the Keychain still holds the token
+    /// that renewal replaces.
+    private func keychainRefreshToken(whilePollingWith token: OAuthToken) -> String? {
+        if let pending = pendingOwnToken, pending.token == token { return pending.replaces }
+        return token.refreshToken
     }
 
     // MARK: Sign in / out
@@ -260,6 +302,7 @@ final class UsageModel: ObservableObject {
                 session.failed("로그인 정보를 Keychain 에 저장하지 못했습니다")
                 return
             }
+            pendingOwnToken = nil
             session.signedIn()
             await refreshOnce()
         } catch {
@@ -269,6 +312,7 @@ final class UsageModel: ObservableObject {
 
     func signOut() {
         CredentialStore.clearOwnToken()
+        pendingOwnToken = nil
         session.signedOut()
     }
 

@@ -27,6 +27,36 @@ enum UsageTokenChoice: Equatable {
     case ownUnavailable(OSStatus)
 }
 
+/// A renewed own token the Keychain has not taken yet (#108). The refresh
+/// token is single use: once renewed, the one in the Keychain is spent, and
+/// dropping the new one would end the login at the next expiry.
+struct PendingOwnToken: Equatable {
+    let token: OAuthToken
+    /// The refresh token the Keychain item still holds — the one `token`
+    /// replaces.
+    let replaces: String?
+}
+
+/// Whether the Keychain still holds the own token a refresh started from.
+enum KeychainMatch: Equatable {
+    case current
+    /// Another sign-in, a sign-out or another instance has moved it on.
+    case changed
+    /// Locked or refused — it cannot say.
+    case unknown
+}
+
+/// What to do with a pending own token at the start of a refresh.
+enum PendingResolution: Equatable {
+    case none
+    /// The Keychain is back and still holds the spent token: store this one.
+    case save(OAuthToken)
+    /// The Keychain still cannot say: poll with this one, keep it pending.
+    case useInMemory(OAuthToken)
+    /// The Keychain moved on: the pending token must not overwrite it.
+    case drop
+}
+
 /// What came of refreshing an expired own token before polling with it.
 enum UpFrontRenewal: Equatable {
     case renewed
@@ -71,6 +101,24 @@ enum UsageRefreshStep: Equatable {
 /// tied to the Keychain and the network, so the rules are kept here where
 /// `scripts/test.sh` can pin them (#97).
 enum UsageRefreshPolicy {
+    /// `expects` is the refresh token the Keychain item should hold.
+    static func keychainMatch(own: OwnTokenLookup, expects refreshToken: String?) -> KeychainMatch {
+        switch own {
+        case .found(let token): return token.refreshToken == refreshToken ? .current : .changed
+        case .missing: return .changed
+        case .unavailable, .refused: return .unknown
+        }
+    }
+
+    static func resolvePending(_ pending: PendingOwnToken?, own: OwnTokenLookup) -> PendingResolution {
+        guard let pending else { return .none }
+        switch keychainMatch(own: own, expects: pending.replaces) {
+        case .current: return .save(pending.token)
+        case .changed: return .drop
+        case .unknown: return .useInMemory(pending.token)
+        }
+    }
+
     static func shouldRenewUpFront(source: DataSource, tokenExpired: Bool) -> Bool {
         source == .oauthLogin && tokenExpired
     }
