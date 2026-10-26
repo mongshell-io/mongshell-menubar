@@ -94,10 +94,22 @@ enum Probe {
 
     /// Explicit gateway-unreachable signals — the output means DOWN.
     static let gatewayDownTokens = ["not reachable", "unreachable", "connection refused", "econnrefused"]
+    /// A connection to the gateway was made or attempted and then failed — a
+    /// stalled or dropped gateway, not a CLI that never started. Node's
+    /// socket errors (`ETIMEDOUT`, `ECONNRESET`, `EHOSTUNREACH`/`ENETUNREACH`,
+    /// `socket hang up`) and the CLI's own wording for a gateway that hung up
+    /// or never answered. Kept narrow: a bare `timeout`/`closed` would also
+    /// match the CLI failing on its own (#152). Only read off non-bullet
+    /// lines — on a `- channel:` line the same words are that channel's own
+    /// upstream error, which the gateway reported (🟡, not a restart).
+    static let gatewayConnectionLostTokens = [
+        "etimedout", "econnreset", "ehostunreach", "enetunreach", "socket hang up",
+        "gateway closed", "gateway timeout", "timeout after",
+    ]
     /// Substrings that only show up when openclaw got as far as talking about
     /// the gateway. Built on the DOWN tokens so a real outage is always heard,
     /// never dodged as unobserved.
-    static let gatewaySignalTokens = gatewayDownTokens + ["reachable"]
+    static let gatewaySignalTokens = gatewayDownTokens + gatewayConnectionLostTokens + ["reachable"]
 
     /// Why a probe that printed something still went unheard, or nil when
     /// its output is the gateway's answer. The reason is logged — it never
@@ -109,6 +121,9 @@ enum Probe {
         if result.termination == .exited(status: 0) { return nil }
         let lower = result.stdout.lowercased()
         if gatewaySignalTokens.contains(where: lower.contains) { return nil }
+        // A channel line can only come from the gateway's answer, so the
+        // channel rules judge it whatever the exit code says.
+        if result.stdout.split(whereSeparator: \.isNewline).contains(where: isChannelAnswerLine) { return nil }
         switch result.termination {
         case .exited(let status): return "openclaw CLI 가 게이트웨이 응답 없이 비정상 종료 (exit \(status))"
         case .signaled(let signal): return "openclaw CLI 가 게이트웨이 응답 없이 신호 \(signal)번으로 종료"
@@ -135,10 +150,19 @@ enum Probe {
         // both contain the substring "reachable".)
         if gatewayDownTokens.contains(where: lower.contains) { return .down }
 
-        let channelLines = text
+        let lines = text
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter(isChannelLine)
+
+        // The gateway stalled or dropped the connection. Checked on non-bullet
+        // lines only: the same words on a channel line are that channel's
+        // upstream error, reported by a gateway that did answer.
+        let connectionLost = lines
+            .filter { !$0.hasPrefix("-") }
+            .contains { line in gatewayConnectionLostTokens.contains(where: line.lowercased().contains) }
+        if connectionLost { return .down }
+
+        let channelLines = lines.filter(isChannelLine)
 
         // No parseable channel state. A clean exit that still reports the
         // gateway as reachable (real output: "Gateway reachable.") but lists no
@@ -181,6 +205,16 @@ enum Probe {
             || lower.contains("stopped")
             || lower.contains("health:")
             || lower.contains("disconnected")
+    }
+
+    /// A `- <name>: <state>` line, the shape openclaw lists channels in. The
+    /// name must not hold a `/`: node's `Require stack:` lists module paths
+    /// as `- /opt/…` bullets, and those come from a CLI that never ran.
+    private static func isChannelAnswerLine<S: StringProtocol>(_ raw: S) -> Bool {
+        let line = raw.trimmingCharacters(in: .whitespaces)
+        guard line.hasPrefix("- "), let colon = line.firstIndex(of: ":") else { return false }
+        let name = line[line.index(line.startIndex, offsetBy: 2)..<colon].trimmingCharacters(in: .whitespaces)
+        return !name.isEmpty && !name.contains("/")
     }
 
     /// The stopped/not-running/errored signals that make a channel 🟡.
