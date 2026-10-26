@@ -118,15 +118,18 @@ final class UsageModel: ObservableObject {
 
         if UsageRefreshPolicy.shouldRenewUpFront(source: source, tokenExpired: token.isExpired) {
             let renewal = await renewOwnToken(token)
-            switch UsageRefreshPolicy.step(afterUpFront: renewal.kind) {
-            case .useRenewed:
-                guard case .renewed(let renewed) = renewal, ownTokenStillCurrent(token) else { return }
+            switch (UsageRefreshPolicy.step(afterUpFront: renewal.kind), renewal) {
+            case (.useRenewed, .renewed(let renewed)):
+                guard ownTokenStillCurrent(token) else { return }
                 CredentialStore.saveOwnToken(renewed)
                 token = renewed
-            case .expireSession:
+            case (.useRenewed, _):
+                assertionFailure("useRenewed without a renewed token")
+                return
+            case (.expireSession, _):
                 expireSession(token)
                 return
-            case .pollAnyway:
+            case (.pollAnyway, _):
                 break
             }
         }
