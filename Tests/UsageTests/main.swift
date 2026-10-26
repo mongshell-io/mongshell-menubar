@@ -1350,6 +1350,19 @@ do {
     var other = s
     other.loaded(snap, source: .claudeCodeCLI)
     check("another token lapsing after the notice was resolved is news", other.lapseIsNews(refreshToken: "r2"))
+    // A locked Keychain is what left the item; the read that follows must
+    // not put an error banner over the notice.
+    var locked = s
+    locked.ownTokenUnreadable("locked", now: now)
+    check("locked own item under the lapsed notice → the notice and its login button stay",
+          locked.loadState == .sessionExpired && locked.snapshot == .sample(now: now)
+          && UsagePresentation(loadState: locked.loadState, accountSource: locked.accountSource,
+                               limitsUnread: false, keychainDeclined: false, now: now).bannerAction == .signIn)
+    var lockedPlain = UsageSession()
+    lockedPlain.loaded(snap, source: .oauthLogin)
+    lockedPlain.ownTokenUnreadable("locked", now: now)
+    check("locked own item otherwise → the error banner, numbers kept",
+          lockedPlain.loadState == .error("locked") && lockedPlain.snapshot == snap)
     var signedIn = s
     signedIn.signedIn()
     check("a new login lapsing after signing in again is news", signedIn.lapseIsNews(refreshToken: "r2"))

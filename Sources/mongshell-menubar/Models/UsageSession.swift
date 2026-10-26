@@ -126,6 +126,17 @@ struct UsageSession: Equatable {
         keychainDeclined = declined
     }
 
+    /// The own item would not read (a locked Keychain); the next poll
+    /// reads again. Like `failed`, except under the lapsed-login notice: a
+    /// lapse the Keychain could not confirm leaves the item (#147), and the
+    /// locked read that follows would swap the notice and its login button
+    /// for an error banner that stays for as long as the Keychain does.
+    mutating func ownTokenUnreadable(_ message: String, now: Date) {
+        guard expiredUnresolved else { return failed(message, now: now) }
+        loadState = .sessionExpired
+        rebuildSampleIfShowing(now: now)
+    }
+
     // MARK: User events
 
     /// Signing in or a manual refresh: the user acting, so a declined

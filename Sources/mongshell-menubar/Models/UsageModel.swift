@@ -198,7 +198,7 @@ final class UsageModel: ObservableObject {
             return
         case .ownUnavailable(let status):
             AuthDebugLog.write("own token unavailable status=\(status)")
-            session.failed("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다", now: Date())
+            session.ownTokenUnreadable("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다", now: Date())
             return
         }
         var token = initialToken
