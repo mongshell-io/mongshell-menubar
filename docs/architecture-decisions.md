@@ -450,7 +450,7 @@
 
 ## Decision #100: 서버 에이전트를 이 repo 의 두 번째 제품으로 인정한다
 
-- **도입**: 미정 (#100)
+- **도입**: v1.4.0 (#100)
 - **컨텍스트**: 서버 에이전트는 openclaw 감시용으로 들어온 뒤(#25) 서버 호스트 신호(#31), CI 러너(#75), 시간 초과 판정(#79), 자기 버전(#81)까지 맡으며 커졌다. 그런데 [PHILOSOPHY.md](PHILOSOPHY.md) 는 메뉴바 앱의 철학만 다루고, 에이전트는 Admission Criteria 5 하나로 걸쳐 있었다. 에이전트의 규칙은 결정 기록 여러 곳에 흩어져 있어, 새 에이전트 기능의 정합성을 판단할 출발점이 없었다.
 - **결정**:
   - 서버 에이전트를 메뉴바 앱과 나란한 두 번째 제품으로 둔다. 메뉴바 앱이 주 제품이다.
@@ -468,7 +468,7 @@
 
 ## Decision #109: 자체 Keychain 항목을 같은 사용자 프로세스가 선점할 수 있음을 수용한다
 
-- **도입**: 미정 (#109)
+- **도입**: v1.4.0 (#109)
 - **컨텍스트**: 자체 OAuth 토큰은 파일 기반 login 키체인(레거시 키체인)에 있고, #102 이후 `saveOwnToken` 은 `SecItemUpdate` 로 기존 항목의 접근 목록을 둔 채 값만 바꾼다. #102 보안 리뷰는 다른 프로세스가 같은 service/account 로 항목을 미리 만들어 두면 새 토큰이 그 항목에 기록될 수 있다고 추론했다. 2026-10-26 macOS 27.0.1 에서 실험용 서비스 이름으로 재현했다: `security add-generic-password` 로 만든 항목에 별도 ad-hoc 서명 바이너리의 `SecItemUpdate` 가 프롬프트 없이 성공했고, 만든 쪽이 `security find-generic-password -w` 로 새 값을 프롬프트 없이 읽었다. 레거시 키체인의 접근 목록은 값 쓰기를 아무 앱에나 허용하고 읽기는 만든 쪽에 남긴다.
 - **결정**: 이 노출을 수용하고 저장 방식을 바꾸지 않는다.
 - **이유**: 대안은 둘이었다. (a) 선점 항목을 지우고 다시 만들기 — 다른 바이너리가 만든 항목의 `SecItemDelete` 는 `errSecInvalidOwnerEdit`(-25244)로 거부되고, update 가 성공하므로 그 분기에 들어가지도 않는다. (b) Data Protection 키체인(`kSecUseDataProtectionKeychain`) — `keychain-access-groups` 엔타이틀먼트와 이를 허가하는 프로비저닝 프로파일이 필요하다 (ad-hoc 서명에서 `errSecMissingEntitlement` -34018). 서명 흐름(#68)과 "Xcode 없이 빌드" 전제(Decision 3·#11-1)에 프로파일 관리가 더해지고, Claude Code·gh CLI 항목은 여전히 레거시 키체인에 남는다 (#68 의 대안 (b) 와 같은 이유).
