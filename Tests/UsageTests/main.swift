@@ -1005,6 +1005,12 @@ do {
     check("credits: fractional amount → 0 (integers only, as before)",
           credits(limit: "1.5", exponent: "0") == "크레딧 $0.00 남음")
     check("credits: negative used kept", credits(limit: "100", used: "-50", exponent: "0") == "크레딧 $150.00 남음")
+    check("credits: exponent 6 (top of range) kept", credits(limit: "5000000", exponent: "6") == "크레딧 $5.00 남음")
+    for bad in ["-1", "7", "-400", "400"] {
+        let text = credits(limit: "500", exponent: bad)
+        check("credits: exponent \(bad) out of range → no credits line, not $inf / $0.00",
+              text == nil, "\(String(describing: text))")
+    }
     // Int.max reads as 2^63 through Double, out of Int's range → nil → 0;
     // -(Int.max) rounds to -2^63 = Int.min, which Int holds. Subtracting must
     // not trap either way.

@@ -194,6 +194,13 @@ struct UsageAPIClient {
         return Array(buckets.prefix(Config.usageUnknownTopLevelCap))
     }
 
+    /// Cents: the exponent is the currency's minor-unit count (ISO 4217),
+    /// 2 for USD, which is what an absent one has always meant here.
+    private static let defaultCreditsExponent = 2
+    /// ISO 4217 minor units run 0 (JPY) to 4 (CLF); a little headroom past
+    /// that, nothing negative.
+    private static let creditsExponentRange = 0...6
+
     /// Usage-credits balance — shown ONLY when the user has the pay-as-you-go
     /// credits feature enabled (amounts are minor units, e.g. cents). We
     /// deliberately don't surface the "disabled/out_of_credits" state, since
@@ -203,7 +210,11 @@ struct UsageAPIClient {
               (spend["enabled"] as? Bool) == true,
               let limit = spend["limit"] as? [String: Any],
               let used = spend["used"] as? [String: Any] else { return nil }
-        let exp = JSONNumber.integer(limit["exponent"]) ?? 2
+        let exp = JSONNumber.integer(limit["exponent"]) ?? defaultCreditsExponent
+        // A wrong figure is worse than none: an exponent past any currency's
+        // minor-unit count misreads the amount, and at the extremes 10^exp
+        // becomes 0 or inf and the line reads "$inf", "$nan" or a false "$0.00".
+        guard creditsExponentRange.contains(exp) else { return nil }
         let divisor = pow(10.0, Double(exp))
         // Subtracted as Doubles: two extreme Ints would trap on overflow.
         let remaining = (Double(JSONNumber.integer(limit["amount_minor"]) ?? 0)
