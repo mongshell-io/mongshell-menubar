@@ -618,7 +618,7 @@ print("▸ GitHubPollPolicy.nextAutoWait")
 do {
     func auto(_ state: GitHubLoadState, base: Int = 180, backoff: Int = 0, running: Bool = false) -> Int? {
         GitHubPollPolicy.nextAutoWait(after: state, base: base, backoff: backoff,
-                                      hasFreshRunningChecks: running)
+                                      hasFreshRunningChecks: running, now: now)
     }
     check("401 이후 자동 대기 없음 (무효 토큰 재전송 정지)", auto(.unauthorized) == nil)
     check("401 이후엔 진행중이어도 자동 대기 없음", auto(.unauthorized, running: true) == nil)
@@ -639,6 +639,59 @@ do {
     check("Keychain 거부 + 지난 스냅샷 진행중 → base", auto(.keychainDenied, running: true) == 180)
     check("오류 + 지난 스냅샷 진행중 → base", auto(.error("x"), running: true) == 180)
     check("확인 중 + 지난 스냅샷 진행중 → base", auto(.loading, running: true) == 180)
+    // #154: while rate-limited the loop never asks before `retryAt`.
+    check("한도 초과 + reset 50분 뒤 → 백오프(6분)가 아니라 reset 까지",
+          auto(.rateLimited(retryAt: now.addingTimeInterval(3000)), backoff: 1) == 3000)
+    check("한도 초과 + reset 이 백오프보다 이르면 → 백오프 대기",
+          auto(.rateLimited(retryAt: now.addingTimeInterval(100)), backoff: 1) == 360)
+    check("한도 초과 + reset 이 지났으면 → 백오프 대기",
+          auto(.rateLimited(retryAt: now.addingTimeInterval(-60)), backoff: 1) == 360)
+    check("한도 초과 + 소수 초 → 올려서 reset 전에 깨지 않음",
+          auto(.rateLimited(retryAt: now.addingTimeInterval(1000.2)), backoff: 1) == 1001)
+    check("한도 초과 + 터무니없는 reset → 상한 3600 (트랩 없음)",
+          auto(.rateLimited(retryAt: .distantFuture), backoff: 1) == 3600)
+    check("reset 바닥은 한도 초과 상태에서만 (오류·성공엔 없음)",
+          auto(.error("x"), backoff: 1) == 360 && auto(.loaded(.pat), backoff: 1) == 360)
+}
+
+print("▸ GitHubPollPolicy.retryAt (#154)")
+do {
+    func at(_ server: Date?, base: Int = 180, backoff: Int = 1) -> Date {
+        GitHubPollPolicy.retryAt(now: now, serverRetryAt: server, base: base, backoff: backoff)
+    }
+    check("1차 한도: x-ratelimit-reset 50분 뒤 → 그 시각",
+          at(now.addingTimeInterval(3000)) == now.addingTimeInterval(3000))
+    check("2차 한도: retry-after 30초 < 백오프 6분 → 백오프 시각",
+          at(now.addingTimeInterval(30)) == now.addingTimeInterval(360))
+    check("서버가 시각을 안 줌 → 백오프 시각", at(nil) == now.addingTimeInterval(360))
+    check("서버 시각이 과거 → 백오프 시각", at(now.addingTimeInterval(-600)) == now.addingTimeInterval(360))
+    check("터무니없는 서버 시각 → 상한 3600", at(now.addingTimeInterval(3 * 86_400)) == now.addingTimeInterval(3600))
+    // Header → state → wait, both limits, as the model chains them.
+    func waitAfter(_ code: Int, _ headers: [String: String]) -> Int? {
+        guard case .rateLimited(let server)? = try? GitHubAPIClient.interpret(
+            statusCode: code, headers: headers, data: Data(), now: now) else { return nil }
+        let state = GitHubLoadState.rateLimited(retryAt: at(server))
+        return GitHubPollPolicy.nextAutoWait(after: state, base: 180, backoff: 1,
+                                             hasFreshRunningChecks: false, now: now)
+    }
+    check("1차 한도 403 (remaining 0, reset 50분 뒤) → 3000초 대기",
+          waitAfter(403, ["x-ratelimit-remaining": "0", "x-ratelimit-reset": "1790003000"]) == 3000)
+    check("2차 한도 403 (retry-after 1200) → 1200초 대기",
+          waitAfter(403, ["retry-after": "1200"]) == 1200)
+    check("2차 한도 429 (retry-after 30) → 백오프 360초 대기",
+          waitAfter(429, ["Retry-After": "30"]) == 360)
+}
+
+print("▸ GitHubPollPolicy.manualRefreshBlocked (#154, 사용량 #86 과 같은 규칙)")
+do {
+    func blocked(_ state: GitHubLoadState, at time: Date = now) -> Date? {
+        GitHubPollPolicy.manualRefreshBlocked(until: state, now: time)
+    }
+    let retry = now.addingTimeInterval(600)
+    check("한도 초과 중 → retryAt 까지 막힘", blocked(.rateLimited(retryAt: retry)) == retry)
+    check("retryAt 이 되면 → 열림", blocked(.rateLimited(retryAt: retry), at: retry) == nil)
+    check("한도 초과 아님 → 열림",
+          [GitHubLoadState.loaded(.pat), .error("x"), .loading, .unauthorized, .noToken].allSatisfy { blocked($0) == nil })
 }
 
 print("▸ GitHubPollPolicy.backsOff")
@@ -653,7 +706,7 @@ do {
     let state403 = GitHubLoadState.error(GitHubAPIError.http(403).detail)
     check("헤더 없는 403 뒤 → base·2 대기 (최소 1분 넘김, 진행중이어도 30 아님)",
           GitHubPollPolicy.nextAutoWait(after: state403, base: 60, backoff: after403,
-                                        hasFreshRunningChecks: true) == 120)
+                                        hasFreshRunningChecks: true, now: now) == 120)
     check("헤더 없는 403 뒤 → 팝오버를 열어도 요청 안 함 (머지 성공 뒤 갱신도 같은 판정)",
           !GitHubPollPolicy.refreshesOnOpen(after: state403, backoff: after403))
 }
@@ -1292,7 +1345,7 @@ do {
 
 do {
     func p(_ state: GitHubLoadState, _ source: GitHubTokenSource? = nil) -> GitHubPresentation {
-        GitHubPresentation(loadState: state, tokenSource: source)
+        GitHubPresentation(loadState: state, tokenSource: source, now: now)
     }
     typealias B = GitHubPresentation.Banner
     typealias A = GitHubPresentation.BannerAction
@@ -1307,6 +1360,10 @@ do {
     check("배지: noToken → 토큰 없음", p(.noToken).badge == .noToken)
     check("배지: keychainDenied → 거부됨", p(.keychainDenied).badge == .denied)
     check("배지: rateLimited → 제한됨", p(.rateLimited(retryAt: retryAt)).badge == .limited)
+    check("새로고침: rateLimited → retryAt 까지 막힘 (배너의 자동 재시도 시각과 같다)",
+          p(.rateLimited(retryAt: retryAt)).manualRefreshBlockedUntil == retryAt)
+    check("새로고침: 그 밖의 상태 → 열림",
+          [GitHubLoadState.loaded(gh), .error("x"), .unauthorized].allSatisfy { p($0).manualRefreshBlockedUntil == nil })
     check("배지: unauthorized → 권한 부족", p(.unauthorized).badge == .unauthorized)
     check("배지: patSaveFailed → 오류", p(.patSaveFailed(-25300)).badge == .failed)
     check("배지: error → 오류", p(.error("x")).badge == .failed)

@@ -82,7 +82,7 @@ final class GitHubModel: ObservableObject {
 
     /// What the connection surfaces show and offer right now (#117).
     var presentation: GitHubPresentation {
-        GitHubPresentation(loadState: loadState, tokenSource: tokenSource)
+        GitHubPresentation(loadState: loadState, tokenSource: tokenSource, now: frozenNow ?? Date())
     }
 
     // MARK: Lifecycle
@@ -129,6 +129,14 @@ final class GitHubModel: ObservableObject {
         } else {
             napTask?.cancel()
         }
+    }
+
+    /// The popover's 새로고침. While rate-limited it waits for `retryAt`, as
+    /// the usage side's does (#86) — the button says so; a token swap or a
+    /// retry from another banner still goes through `refreshNow()`.
+    func refreshManually() {
+        guard GitHubPollPolicy.manualRefreshBlocked(until: loadState, now: Date()) == nil else { return }
+        refreshNow()
     }
 
     /// From AppDelegate on open and on `NSPopover.didCloseNotification`.
@@ -345,7 +353,7 @@ final class GitHubModel: ObservableObject {
     private func autoWait() -> Int? {
         GitHubPollPolicy.nextAutoWait(
             after: loadState, base: prefs.githubPollSeconds, backoff: backoff,
-            hasFreshRunningChecks: hasFreshRunningChecks)
+            hasFreshRunningChecks: hasFreshRunningChecks, now: Date())
     }
 
     /// Sleeps in a task of its own so `refreshNow()` can cut it short while
@@ -461,7 +469,8 @@ final class GitHubModel: ObservableObject {
             loadState = .unauthorized
         case .success(.rateLimited(let retryAt)):
             backOff()
-            loadState = .rateLimited(retryAt: retryAt ?? now.addingTimeInterval(Double(nextWait())))
+            loadState = .rateLimited(retryAt: GitHubPollPolicy.retryAt(
+                now: now, serverRetryAt: retryAt, base: prefs.githubPollSeconds, backoff: backoff))
         case .failure(.cancelled):
             return
         case .failure(let error):
@@ -473,10 +482,6 @@ final class GitHubModel: ObservableObject {
 
     private func backOff() {
         backoff = min(backoff + 1, Self.maxBackoff)
-    }
-
-    private func nextWait() -> Int {
-        GitHubPollPolicy.nextWait(base: prefs.githubPollSeconds, backoff: backoff)
     }
 
     /// Read through the hidden repositories, as the hover is: a check the

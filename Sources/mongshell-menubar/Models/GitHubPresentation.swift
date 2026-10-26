@@ -50,6 +50,9 @@ struct GitHubPresentation: Equatable {
     let badge: Badge
     let banner: Banner
     let token: Token
+    /// When the popover's 새로고침 opens again, nil while it is open — the
+    /// usage side's rule (#86, #154).
+    let manualRefreshBlockedUntil: Date?
 
     var bannerAction: BannerAction {
         switch banner {
@@ -70,7 +73,7 @@ struct GitHubPresentation: Equatable {
         }
     }
 
-    init(loadState: GitHubLoadState, tokenSource: GitHubTokenSource?) {
+    init(loadState: GitHubLoadState, tokenSource: GitHubTokenSource?, now: Date) {
         switch loadState {
         case .off, .loading:         badge = .syncing
         case .loaded:                badge = .connected
@@ -101,5 +104,6 @@ struct GitHubPresentation: Equatable {
         case (nil, .loading):                       token = .checking
         case (nil, _):                              token = .none
         }
+        manualRefreshBlockedUntil = GitHubPollPolicy.manualRefreshBlocked(until: loadState, now: now)
     }
 }
