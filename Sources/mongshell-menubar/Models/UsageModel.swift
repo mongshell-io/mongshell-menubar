@@ -9,7 +9,7 @@ final class UsageModel: ObservableObject {
 
     // Mirrors of `session`, published one by one so `$snapshot` subscribers
     // (the status item's width) hear only what changed. See `UsageSession`.
-    @Published private(set) var snapshot: UsageSnapshot = .sample
+    @Published private(set) var snapshot: UsageSnapshot = .sample(now: Date())
     @Published private(set) var loadState: LoadState = .signedOut
     @Published private(set) var accountSource: DataSource?
 
@@ -140,7 +140,7 @@ final class UsageModel: ObservableObject {
         case .token(let found, let foundSource):
             (initialToken, source) = (found, foundSource)
         case .none:
-            session.noToken()
+            session.noToken(now: Date())
             return
         case .ownUnavailable(let status):
             AuthDebugLog.write("own token unavailable status=\(status)")
@@ -203,7 +203,7 @@ final class UsageModel: ObservableObject {
             // watch from re-arming and repeating a level already sent (#130).
             if let five = snap.fiveHourPercent { maybeNotify(percent: five) }
         case .signOut:
-            session.rejected(accessToken: token.accessToken)
+            session.rejected(accessToken: token.accessToken, now: Date())
         case .expireSession:
             expireSession(token)
         case .rateLimited(let retryAfter):
@@ -253,7 +253,7 @@ final class UsageModel: ObservableObject {
         guard match == .current else { return }
         AuthDebugLog.write("own token discarded (invalid_grant) \(AuthDebugLog.session(token))")
         _ = CredentialStore.clearOwnToken()
-        session.expired()
+        session.expired(now: Date())
         notifySessionExpired()
     }
 
@@ -315,7 +315,7 @@ final class UsageModel: ObservableObject {
         loginGeneration += 1
         pendingOwnToken = nil
         let cleared = CredentialStore.clearOwnToken()
-        session.signedOut()
+        session.signedOut(now: Date())
         // The token is still there and the next poll would show it again.
         if !cleared { session.failed("Keychain 에서 로그인 정보를 지우지 못했습니다") }
     }

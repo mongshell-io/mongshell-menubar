@@ -251,7 +251,7 @@ let bonusReset = iso("2026-11-05T07:59:00+00:00")
 
 func unknownSnapshot(percent: Int = 12, kind: String = "bonus", resetAt: Date? = bonusReset,
                      utilization: Int? = 100) -> UsageSnapshot {
-    var snap = UsageSnapshot.sample
+    var snap = UsageSnapshot.sample(now: Date())
     snap.extraLimits = [ExtraLimit(id: kind, kind: kind, scopeModel: nil, percent: percent,
                                    resetAt: resetAt, isActive: true)]
     snap.unknownTopLevel = [UnknownBucket(key: "iguana_necktie", utilization: utilization, resetAt: nil)]
@@ -259,8 +259,8 @@ func unknownSnapshot(percent: Int = 12, kind: String = "bonus", resetAt: Date? =
 }
 
 do {
-    check("sample → log line nil", AuthDebugLog.usageUnknownLine(.sample) == nil)
-    check("sample → dedupe key nil", AuthDebugLog.usageUnknownKey(.sample) == nil)
+    check("sample → log line nil", AuthDebugLog.usageUnknownLine(.sample(now: Date())) == nil)
+    check("sample → dedupe key nil", AuthDebugLog.usageUnknownKey(.sample(now: Date())) == nil)
 
     let snap = unknownSnapshot()
     let line = AuthDebugLog.usageUnknownLine(snap) ?? ""
@@ -468,7 +468,7 @@ do {
 // MARK: 401 → refresh → retry (#92, #93, #95)
 
 do {
-    let snap = UsageSnapshot.sample
+    let snap = UsageSnapshot.sample(now: Date())
     let none: OwnTokenRetry? = nil
     check("error mapping: 401 / 429 / anything else",
           UsageFetchResult(.failure(APIError.unauthorized)) == .unauthorized
@@ -532,7 +532,7 @@ do {
 
 do {
     let now = Date(timeIntervalSince1970: 1_790_000_000)
-    var snap = UsageSnapshot.sample
+    var snap = UsageSnapshot.sample(now: now)
     snap.fiveHourPercent = 42
 
     var s = UsageSession()
@@ -563,7 +563,7 @@ do {
     // A rejected CLI token is not named as the account on its next try.
     var c = UsageSession()
     c.begin(accessToken: "cli", source: .claudeCodeCLI)
-    c.rejected(accessToken: "cli")
+    c.rejected(accessToken: "cli", now: now)
     check("401 → signed out, no account", c.loadState == .signedOut && c.accountSource == nil)
     c.begin(accessToken: "cli", source: .claudeCodeCLI)
     check("the same rejected token is not named again", c.accountSource == nil)
@@ -578,29 +578,29 @@ do {
     // #44 — the lapsed-login notice outlives the polls after it.
     var e = UsageSession()
     e.loaded(snap, source: .oauthLogin)
-    e.expired()
+    e.expired(now: now)
     check("invalid_grant → lapsed notice, sample numbers",
-          e.loadState == .sessionExpired && e.snapshot == .sample && e.accountSource == nil)
-    e.noToken()
+          e.loadState == .sessionExpired && e.snapshot == .sample(now: now) && e.accountSource == nil)
+    e.noToken(now: now)
     check("no token afterwards → notice kept (#44)", e.loadState == .sessionExpired)
     e.begin(accessToken: "cli", source: .claudeCodeCLI)
-    e.rejected(accessToken: "cli")
+    e.rejected(accessToken: "cli", now: now)
     check("CLI 401 afterwards → notice kept, not plain signed-out (#44)", e.loadState == .sessionExpired)
     e.rateLimited(retryAfter: nil, now: now, pollBase: 180)
-    e.noToken()
+    e.noToken(now: now)
     check("a 429 in between does not wear the notice off (#44)", e.loadState == .sessionExpired)
     var e2 = e
     e2.loaded(snap, source: .claudeCodeCLI)
-    e2.noToken()
+    e2.noToken(now: now)
     check("a successful fetch resolves the notice", e2.loadState == .signedOut)
     var e3 = e
     e3.signedIn()
-    e3.noToken()
+    e3.noToken(now: now)
     check("signing in resolves the notice", e3.loadState == .signedOut)
     var e4 = e
-    e4.signedOut()
-    check("signing out resolves the notice", e4.loadState == .signedOut && e4.snapshot == .sample)
-    e4.noToken()
+    e4.signedOut(now: now)
+    check("signing out resolves the notice", e4.loadState == .signedOut && e4.snapshot == .sample(now: now))
+    e4.noToken(now: now)
     check("…and it stays resolved", e4.loadState == .signedOut)
 
     var p = UsageSession()
@@ -801,29 +801,57 @@ do {
 // MARK: #134 — a 401 sign-out drops the last real numbers like every other sign-out
 
 do {
-    var snap = UsageSnapshot.sample
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    var snap = UsageSnapshot.sample(now: now)
     snap.fiveHourPercent = 42
 
     var r = UsageSession()
     r.begin(accessToken: "cli", source: .claudeCodeCLI)
     r.loaded(snap, source: .claudeCodeCLI)
-    r.rejected(accessToken: "cli")
+    r.rejected(accessToken: "cli", now: now)
     check("401 after real numbers → sample, signed out (#134)",
-          r.snapshot == .sample && r.loadState == .signedOut && r.accountSource == nil)
+          r.snapshot == .sample(now: now) && r.loadState == .signedOut && r.accountSource == nil)
 
     // Every sign-out path agrees on what the user sees after real numbers.
     let paths: [(String, (inout UsageSession) -> Void)] = [
-        ("noToken", { $0.noToken() }),
-        ("rejected", { $0.rejected(accessToken: "cli") }),
-        ("expired", { $0.expired() }),
-        ("signedOut", { $0.signedOut() }),
+        ("noToken", { $0.noToken(now: now) }),
+        ("rejected", { $0.rejected(accessToken: "cli", now: now) }),
+        ("expired", { $0.expired(now: now) }),
+        ("signedOut", { $0.signedOut(now: now) }),
     ]
     for (name, event) in paths {
         var x = UsageSession()
         x.loaded(snap, source: .claudeCodeCLI)
         event(&x)
         check("\(name) after real numbers → sample, no account (#134)",
-              x.snapshot == .sample && x.accountSource == nil)
+              x.snapshot == .sample(now: now) && x.accountSource == nil)
+    }
+}
+
+// MARK: #133 — the sample countdown is counted from the latest sign-out, not launch
+
+do {
+    let launch = Date(timeIntervalSince1970: 1_790_000_000)
+    let later = launch.addingTimeInterval(10 * 3600)
+    let samplePhrase = "3시간 8분 후 초기화"
+    check("sample built at a moment reads 3시간 8분 then",
+          TimeText.resetsIn(UsageSnapshot.sample(now: later).fiveHourResetAt, now: later) == samplePhrase)
+
+    // Signed out at launch, still signed out ten hours on: a sample pinned to
+    // launch would read 곧 초기화 by now and stay there.
+    let paths: [(String, (inout UsageSession) -> Void)] = [
+        ("noToken", { $0.noToken(now: later) }),
+        ("rejected", { $0.rejected(accessToken: "cli", now: later) }),
+        ("expired", { $0.expired(now: later) }),
+        ("signedOut", { $0.signedOut(now: later) }),
+    ]
+    for (name, event) in paths {
+        var x = UsageSession()
+        x.present(.sample(now: launch), state: .signedOut)
+        event(&x)
+        let phrase = TimeText.resetsIn(x.snapshot.fiveHourResetAt, now: later)
+        check("\(name) ten hours after launch → sample still reads 3시간 8분 (#133)",
+              phrase == samplePhrase, phrase)
     }
 }
 

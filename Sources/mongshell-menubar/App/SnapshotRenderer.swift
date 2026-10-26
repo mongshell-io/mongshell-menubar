@@ -47,7 +47,7 @@ enum SnapshotRenderer {
         }
         // Every usage state is set explicitly: an image must not lean on
         // whatever the one before it left behind (#104).
-        let sample = UsageSnapshot.snapshotSample(now: now)
+        let sample = UsageSnapshot.sample(now: now)
         UsageModel.shared.presentForSnapshot(sample, state: .signedOut)
         write(PopoverPreview(), to: base, "popover", scale: 2)
         write(HoverPreview(), to: base, "hover", scale: 2)
@@ -578,23 +578,12 @@ private struct GitHubSectionPreview: View {
 }
 
 private extension UsageSnapshot {
-    /// `.sample` with its 5-hour reset pinned to the render's clock. The
-    /// countdown is phrased at draw time (#133), so `.sample`'s own instant —
-    /// fixed whenever it was first read — would let the minutes drift. The
-    /// half-minute of slack keeps "3시간 8분" through the seconds a run takes.
-    static func snapshotSample(now: Date) -> UsageSnapshot {
-        let fiveHourLeft: TimeInterval = 3 * 3600 + 8 * 60 + 30
-        var snapshot = UsageSnapshot.sample
-        snapshot.fiveHourResetAt = now.addingTimeInterval(fiveHourLeft)
-        return snapshot
-    }
-
     /// The sample plus one limit of a kind the app does not know — what a
     /// reset/bonus from the settings page would look like. Kept out of
-    /// `.sample` itself: the signed-out popover must not show a fake bonus.
+    /// `.sample(now:)` itself: the signed-out popover must not show a fake bonus.
     static func snapshotExtraLimit(now: Date) -> UsageSnapshot {
-        var snapshot = UsageSnapshot.snapshotSample(now: now)
-        // Pinned to a weekday + clock like `.sample.weeklyResetAt`, so the
+        var snapshot = UsageSnapshot.sample(now: now)
+        // Pinned to a weekday + clock like the sample's `weeklyResetAt`, so the
         // caption reads "수요일 21:59 초기화" whenever the render runs.
         let resetAt = Calendar.current.nextDate(
             after: now,

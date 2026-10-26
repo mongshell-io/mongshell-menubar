@@ -81,20 +81,30 @@ struct UsageSnapshot: Equatable {
     /// The 5-hour or the weekly limit could not be read from the response.
     var hasUnreadLimit: Bool { fiveHourPercent == nil || weeklyAllPercent == nil }
 
-    static let sample = UsageSnapshot(
-        fiveHourPercent: 19,
-        fiveHourResetAt: Date().addingTimeInterval(3 * 3600 + 8 * 60),
-        weeklyAllPercent: 19,
-        weeklyResetAt: Calendar.current.nextDate(
-            after: Date(),
-            matching: DateComponents(hour: 21, minute: 59, weekday: 1),
-            matchingPolicy: .nextTime),
-        models: [ModelUsage(name: "Fable 5", percent: 25)],
-        extraLimits: [],
-        unknownTopLevel: [],
-        creditsText: nil,
-        lastUpdated: .distantPast
-    )
+    /// The placeholder numbers shown while signed out, with its resets
+    /// counted from `now`. A function, not a stored constant: the countdown
+    /// is phrased at draw time (#133), so a reset fixed at first read would
+    /// tick down to "곧 초기화" about three hours after launch and stay there.
+    /// The half-minute of slack keeps "3시간 8분" through the seconds between
+    /// building it and drawing it.
+    static func sample(now: Date) -> UsageSnapshot {
+        UsageSnapshot(
+            fiveHourPercent: 19,
+            fiveHourResetAt: now.addingTimeInterval(sampleFiveHourLeft),
+            weeklyAllPercent: 19,
+            weeklyResetAt: Calendar.current.nextDate(
+                after: now,
+                matching: DateComponents(hour: 21, minute: 59, weekday: 1),
+                matchingPolicy: .nextTime),
+            models: [ModelUsage(name: "Fable 5", percent: 25)],
+            extraLimits: [],
+            unknownTopLevel: [],
+            creditsText: nil,
+            lastUpdated: .distantPast
+        )
+    }
+
+    private static let sampleFiveHourLeft: TimeInterval = 3 * 3600 + 8 * 60 + 30
 }
 
 /// Where the current data came from — drives the popover's status/footer.
