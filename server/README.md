@@ -221,7 +221,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 
 안 되면: `오류:` 로 시작하는 마지막 메시지를 [5-1](#5-1-installsh--uninstallsh-메시지별) 에서 찾는다. `경고:` 는 설치를 멈추지 않는다.
 
-- [ ] **게이트웨이 레이블 확인** — `▶ 게이트웨이 launchd 레이블 탐색` 아래 `→` 줄이 실제 게이트웨이 레이블인지 본다. 스크립트는 `~/Library/LaunchAgents` 의 plist 를 이름순으로 정렬해 **이름에 `claw` 가 들어간 첫 번째**(에이전트 자신 제외)를 고른다. `claw` 가 들어간 plist 가 여러 개면 엉뚱한 것이 잡힐 수 있다. 게이트웨이를 재설치해 레이블이 바뀌면 `install.sh` 를 다시 돌린다.
+- [ ] **게이트웨이 레이블 확인** — `▶ 게이트웨이 launchd 레이블 탐색` 아래 `→` 줄이 실제 게이트웨이 레이블인지 본다. 스크립트는 방금 빌드한 에이전트(`--print-gateway-label`)에 물어, `~/Library/LaunchAgents` 의 plist 를 이름순으로 정렬해 **이름에 `claw` 가 들어간 첫 번째**(에이전트 자신 제외)를 고른다 — 에이전트가 실행 중 쓰는 탐색 규칙과 같은 코드다. `claw` 가 들어간 plist 가 여러 개면 엉뚱한 것이 잡힐 수 있다. 게이트웨이를 재설치해 레이블이 바뀌면 `install.sh` 를 다시 돌린다.
   에이전트는 plist **파일 이름**을 레이블로 kickstart 하므로, 파일 이름과 plist 안의 `Label` 이 같고 launchd 에 실제로 로드돼 있어야 자동복구가 된다:
   ```bash
   LABEL=ai.openclaw.gateway     # 위 → 줄에 나온 값

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Tests for server/install.sh's option rules (server/lib.sh): validation, the
-# saved `options` file, and precedence (command line > saved > default).
+# saved `options` file, and precedence (command line > saved > default); the
+# constants bash shares with the agent; and the funnel port check
+# (`serve_handlers`) against a stand-in tailscale CLI.
 #
 # Each case pins a rule whose mutation would silently change what a re-run
 # installs — the trap being `git pull && server/install.sh` reverting options.
@@ -121,6 +123,56 @@ check "빌드가 이미 끝남 → 준비" "준비" "$(process_tree 999 <<<"$PS_
 check "프로세스 트리: 루트와 자손만, 경로 없이" "100 swift,101 swift-build,102 clang-stat-cache" \
   "$(process_tree 100 <<<"$PS_TREE" | paste -sd, -)"
 check "프로세스 트리: 루트가 없으면 빈 값" "" "$(process_tree 999 <<<"$PS_TREE")"
+
+echo "▸ 스크립트와 에이전트의 같은 값 (#106)"
+# The same constant lives in bash and in Swift; a change to one side alone
+# would install options the agent clamps differently, or kickstart a label the
+# agent would not pick.
+AGENT_SRC="$ROOT/Sources/mongshell-openclaw-agent"
+swift_value() { # $1=file, $2=declaration name → the literal, digits' _ dropped and quotes stripped
+  grep -E "static let $2 = " "$1" | head -1 | sed -E 's/.*= *//; s/"//g; s/_//g'
+}
+check "기본 주기 = Options.defaultInterval" "$(swift_value "$AGENT_SRC/Options.swift" defaultInterval)" "$DEFAULT_INTERVAL"
+check "주기 하한 = Options.minimumInterval" "$(swift_value "$AGENT_SRC/Options.swift" minimumInterval)" "$MIN_INTERVAL"
+check "주기 상한 = Options.maximumInterval" "$(swift_value "$AGENT_SRC/Options.swift" maximumInterval)" "$MAX_INTERVAL"
+INSTALL_SH="$ROOT/server/install.sh"
+check "자기 레이블 = Options.defaultSelfLabel" "$(swift_value "$AGENT_SRC/Options.swift" defaultSelfLabel)" \
+  "$(grep -E '^SELF_LABEL=' "$INSTALL_SH" | sed -E 's/^SELF_LABEL="(.*)"$/\1/')"
+check "기본 게이트웨이 레이블 = Launchd.defaultGatewayLabel" "$(swift_value "$AGENT_SRC/Heal.swift" defaultGatewayLabel)" \
+  "$(grep -E '^DEFAULT_GATEWAY_LABEL=' "$INSTALL_SH" | sed -E 's/^DEFAULT_GATEWAY_LABEL="(.*)"$/\1/')"
+
+echo "▸ funnel 포트 점검 serve_handlers (#106)"
+# A stand-in tailscale CLI: prints $FAKE_SERVE_JSON, or fails when
+# FAKE_SERVE_FAIL is set. serve_handlers takes the CLI path as its first
+# argument, so nothing real is touched.
+FAKE_TS="$WORK/tailscale"
+cat >"$FAKE_TS" <<'SH'
+#!/bin/bash
+[[ -n "${FAKE_SERVE_FAIL:-}" ]] && exit 1
+printf '%s' "$FAKE_SERVE_JSON"
+SH
+chmod +x "$FAKE_TS"
+HP="srv.example.ts.net:8443"
+handlers() { # $1=JSON → "<rc>|<handlers joined by ,>"
+  local out rc
+  out="$(FAKE_SERVE_JSON="$1" serve_handlers "$FAKE_TS" "$HP" 2>/dev/null)"; rc=$?
+  printf '%s|%s' "$rc" "$(paste -sd, - <<<"$out")"
+}
+check "빈 설정 {} → 핸들러 없음" "0|" "$(handlers '{}')"
+check "빈 출력 → 핸들러 없음" "0|" "$(handlers '')"
+check "'No serve config' 문구 → 핸들러 없음" "0|" "$(handlers 'No serve config')"
+check "그 밖의 비-JSON → 실패 (설정을 숨길 수 있다)" "1|" "$(handlers 'error: something')"
+check "CLI 실패 → 실패" "1|" "$(FAKE_SERVE_FAIL=1 handlers '{}')"
+check "우리 포트의 웹 경로" "0|/abc" \
+  "$(handlers '{"Web":{"srv.example.ts.net:8443":{"Handlers":{"/abc":{"Path":"/x"}}}}}')"
+check "다른 포트의 경로는 세지 않음" "0|" \
+  "$(handlers '{"Web":{"srv.example.ts.net:443":{"Handlers":{"/dash":{}}}}}')"
+check "우리 포트의 TCP 포워딩" "0|tcp:127.0.0.1:3000" \
+  "$(handlers '{"TCP":{"8443":{"TCPForward":"127.0.0.1:3000"}}}')"
+check "--bg 없이 띄운 포그라운드 세션도 센다" "0|/fg" \
+  "$(handlers '{"Foreground":{"s1":{"Web":{"srv.example.ts.net:8443":{"Handlers":{"/fg":{}}}}}}}')"
+check "배경·포그라운드 둘 다" "0|/abc,/fg" \
+  "$(handlers '{"Web":{"srv.example.ts.net:8443":{"Handlers":{"/abc":{}}}},"Foreground":{"s1":{"Web":{"srv.example.ts.net:8443":{"Handlers":{"/fg":{}}}}}}}')"
 
 echo ""
 if [[ ${#FAILURES[@]} -eq 0 ]]; then

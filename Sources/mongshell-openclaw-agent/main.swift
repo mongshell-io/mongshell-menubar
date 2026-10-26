@@ -35,6 +35,9 @@ let options: Options
 switch Options.parse(Array(CommandLine.arguments.dropFirst())) {
 case .run(let parsed): options = parsed
 case .help: print(Options.usage); exit(0)
+case .printGatewayLabel(let selfLabel):
+    print(Launchd.discoveredGatewayLabel(selfLabel: selfLabel, in: Launchd.userLaunchAgentsDir) ?? "")
+    exit(0)
 case .invalid(let message): fail(message)
 }
 var lastLogged: ProbeVerdict?

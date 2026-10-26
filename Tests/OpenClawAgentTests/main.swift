@@ -365,11 +365,15 @@ do {
     touch("com.apple.unrelated.plist")
     let onlySelf = Launchd.gatewayLabel(explicit: nil, selfLabel: selfLabel, in: dir)
     check("자기 레이블만 있으면 기본값", onlySelf == Launchd.defaultGatewayLabel, onlySelf)
+    check("탐색만 하면 못 찾음 = nil (install.sh 가 경고하고 기본값을 쓴다)",
+          Launchd.discoveredGatewayLabel(selfLabel: selfLabel, in: dir) == nil)
 
     // Self sorts before the gateway here ("com.a…" < "com.z…").
     touch("com.zzz.claw-gateway.plist")
     let found = Launchd.gatewayLabel(explicit: nil, selfLabel: selfLabel, in: dir)
     check("정렬상 먼저여도 self 제외", found == "com.zzz.claw-gateway", found)
+    check("탐색만 해도 같은 규칙 (install.sh 가 이 값을 쓴다)",
+          Launchd.discoveredGatewayLabel(selfLabel: selfLabel, in: dir) == "com.zzz.claw-gateway")
 
     let explicit = Launchd.gatewayLabel(explicit: "ai.custom", selfLabel: selfLabel, in: dir)
     check("--gateway-label 우선", explicit == "ai.custom", explicit)
@@ -886,6 +890,11 @@ do {
     check("모르는 인자 → 오류", Options.parse(base + ["--bogus"]) == .invalid("알 수 없는 인자: --bogus"))
     check("--help → 도움말", Options.parse(["--help"]) == .help && Options.parse(base + ["-h"]) == .help)
     check("상태 파일 경로는 정규화", run(["--status-file", "/tmp/a/../s.json"])?.statusFile.path == "/tmp/s.json")
+    check("--print-gateway-label → --status-file 없이도, 기본 자기 레이블로",
+          Options.parse(["--print-gateway-label"]) == .printGatewayLabel(selfLabel: Options.defaultSelfLabel))
+    check("--print-gateway-label 은 --self-label 을 따른다 (순서 무관)",
+          Options.parse(["--print-gateway-label", "--self-label", "me"]) == .printGatewayLabel(selfLabel: "me")
+          && Options.parse(["--self-label", "me", "--print-gateway-label"]) == .printGatewayLabel(selfLabel: "me"))
 }
 
 // MARK: - 한 사이클의 순서 (#105)

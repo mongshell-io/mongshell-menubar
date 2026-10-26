@@ -88,12 +88,18 @@ enum Launchd {
     /// kickstart itself.
     static func gatewayLabel(explicit: String?, selfLabel: String, in dir: URL) -> String {
         if let explicit, !explicit.isEmpty, explicit != selfLabel { return explicit }
+        return discoveredGatewayLabel(selfLabel: selfLabel, in: dir) ?? defaultGatewayLabel
+    }
+
+    /// The search alone, nil when nothing matches. `server/install.sh` asks
+    /// for it through `--print-gateway-label` instead of keeping a copy of
+    /// the rule in bash (#106).
+    static func discoveredGatewayLabel(selfLabel: String, in dir: URL) -> String? {
         let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        let match = files.sorted().lazy
+        return files.sorted().lazy
             .filter { $0.hasSuffix(".plist") && $0.lowercased().contains("claw") }
             .map { String($0.dropLast(".plist".count)) }
             .first { $0 != selfLabel }
-        return match ?? defaultGatewayLabel
     }
 
     /// OS-level hard restart — the only thing that fixes openclaw's
