@@ -69,6 +69,11 @@ final class UsageModel: ObservableObject {
         UsageRetryPolicy.manualRefreshBlocked(until: loadState, now: Date())
     }
 
+    /// What the usage surfaces show and offer right now (#104).
+    var presentation: UsagePresentation {
+        UsagePresentation(loadState: loadState, accountSource: accountSource, now: Date())
+    }
+
     private var pollBase: Int { max(Config.minPollInterval, Preferences.shared.pollIntervalSeconds) }
 
     private func pollLoop() async {

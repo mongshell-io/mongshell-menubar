@@ -21,6 +21,7 @@ import Foundation
 // retry keeps the account behind an error, a 429 on the retry backs off,
 // and a successful retry shows like any success (#92/#93/#95); the session
 // flags across refreshes (#44, #86, #90) and the threshold notifications;
+// which badge, banner, banner button and account row each state gets (#104);
 // and the `Meter`
 // shows the mode's number with the risk color (or monochrome when color
 // coding is off).
@@ -662,6 +663,53 @@ do {
     check("save failed after our delete → held, Keychain may be empty",
           UsageRefreshPolicy.pending(after: .failedAfterDelete, renewed: newer, expected: holdsR1)
               == PendingOwnToken(token: newer, keychain: .maybeEmpty))
+}
+
+// MARK: what the usage surfaces show and offer (#90, #104)
+
+do {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    let retryAt = now.addingTimeInterval(600)
+    func p(_ state: LoadState, _ source: DataSource?) -> UsagePresentation {
+        UsagePresentation(loadState: state, accountSource: source, now: now)
+    }
+
+    // #90 — the own login keeps "로그아웃" and never gets a login button
+    // while a 429, an error or a fetch replaces the loaded state.
+    for state in [LoadState.rateLimited(retryAt: retryAt), .error("x"), .loading, .loaded(.oauthLogin)] {
+        let shown = p(state, .oauthLogin)
+        check("own login in \(state): sign-out offered, account row is the login (#90)",
+              shown.offersSignOut && shown.account == .ownLogin)
+        check("own login in \(state): no login button on the banner (#90)", shown.bannerAction != .signIn)
+    }
+    check("CLI account: no sign-out (nothing of ours to sign out of)",
+          !p(.loaded(.claudeCodeCLI), .claudeCodeCLI).offersSignOut
+          && p(.loaded(.claudeCodeCLI), .claudeCodeCLI).account == .cliAccount)
+    check("no account: the settings row offers a login",
+          p(.signedOut, nil).account == .signedOut && p(.signedOut, .sample).account == .signedOut)
+
+    check("signed out → sample badge, login button",
+          p(.signedOut, nil).badge == .sample && p(.signedOut, nil).bannerAction == .signIn)
+    check("lapsed login → its own banner, login button",
+          p(.sessionExpired, nil).banner == .sessionExpired && p(.sessionExpired, nil).bannerAction == .signIn)
+    check("error → retry button with the message",
+          p(.error("x"), .oauthLogin).banner == .failed("x") && p(.error("x"), .oauthLogin).bannerAction == .retry)
+    check("rate limited → no button on the banner, the poll retries by itself (#86)",
+          p(.rateLimited(retryAt: retryAt), .oauthLogin).banner == .rateLimited(retryAt: retryAt)
+          && p(.rateLimited(retryAt: retryAt), .oauthLogin).bannerAction == UsagePresentation.BannerAction.none)
+    check("rate limited → manual refresh blocked until the retry time (#86)",
+          p(.rateLimited(retryAt: retryAt), .oauthLogin).manualRefreshBlockedUntil == retryAt
+          && p(.error("x"), .oauthLogin).manualRefreshBlockedUntil == nil)
+    check("loading → no button", p(.loading, nil).bannerAction == UsagePresentation.BannerAction.none)
+    check("loaded with own login → no banner, connected",
+          p(.loaded(.oauthLogin), .oauthLogin).banner == UsagePresentation.Banner.none
+          && p(.loaded(.oauthLogin), .oauthLogin).badge == .connected)
+    check("loaded with the CLI token → the CLI banner, no button",
+          p(.loaded(.claudeCodeCLI), .claudeCodeCLI).banner == .cliAccount
+          && p(.loaded(.claudeCodeCLI), .claudeCodeCLI).bannerAction == UsagePresentation.BannerAction.none)
+    check("badges: limited / failed / syncing",
+          p(.rateLimited(retryAt: retryAt), nil).badge == .limited
+          && p(.error("x"), nil).badge == .failed && p(.loading, nil).badge == .syncing)
 }
 
 // MARK: result

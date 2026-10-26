@@ -206,26 +206,26 @@ struct PopoverView: View {
     /// the usage endpoint provides no peak-window data). Freshness is shown
     /// separately in the footer, so this only conveys the connection state.
     private var statusBadge: (color: Color, text: String) {
-        switch model.loadState {
-        case .loaded:      return (Palette.onlineDot, "연결됨")
-        case .loading:     return (Palette.textTertiary, "동기화 중")
-        case .signedOut, .sessionExpired:
-                           return (Palette.textTertiary, "샘플")
-        case .rateLimited: return (Palette.amber, "제한됨")
-        case .error:       return (Palette.red, "오류")
+        switch model.presentation.badge {
+        case .connected: return (Palette.onlineDot, "연결됨")
+        case .syncing:   return (Palette.textTertiary, "동기화 중")
+        case .sample:    return (Palette.textTertiary, "샘플")
+        case .limited:   return (Palette.amber, "제한됨")
+        case .failed:    return (Palette.red, "오류")
         }
     }
 
     private var overflowMenu: some View {
-        Menu {
-            if let until = model.manualRefreshBlockedUntil {
+        let presentation = model.presentation
+        return Menu {
+            if let until = presentation.manualRefreshBlockedUntil {
                 Button("새로고침 — \(TimeText.minutesLeft(until: until))분 후 가능") {}
                     .disabled(true)
             } else {
                 Button("새로고침") { model.refreshNow() }
             }
             Button("설정…") { onOpenSettings() }
-            if model.accountSource == .oauthLogin {
+            if presentation.offersSignOut {
                 Button("로그아웃") { model.signOut() }
             }
             Divider()
@@ -244,39 +244,44 @@ struct PopoverView: View {
     // MARK: Connection banner (only when not cleanly loaded)
 
     @ViewBuilder private var stateBanner: some View {
-        switch model.loadState {
+        let presentation = model.presentation
+        let action = presentation.bannerAction
+        switch presentation.banner {
+        case .none:
+            EmptyView()
         case .signedOut:
             banner(text: "샘플 데이터 표시 중 — 로그인하면 실제 사용량이 보여요",
-                   tint: Palette.amber) { signInButton }
+                   tint: Palette.amber) { bannerButton(action) }
         case .sessionExpired:
             banner(text: "로그인이 만료되었어요 — 다시 로그인하면 실제 사용량이 보여요",
-                   tint: Palette.amber) { signInButton }
+                   tint: Palette.amber) { bannerButton(action) }
         case .loading:
-            banner(text: "불러오는 중…", tint: Palette.textSecondary) { EmptyView() }
+            banner(text: "불러오는 중…", tint: Palette.textSecondary) { bannerButton(action) }
         case .rateLimited(let retryAt):
             // Nothing is published until `retryAt`, so the minutes tick here.
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 banner(text: "요청이 제한되었습니다 — \(TimeText.minutesLeft(until: retryAt, now: context.date))분 후 자동 재시도",
-                       tint: Palette.amber) { EmptyView() }
+                       tint: Palette.amber) { bannerButton(action) }
             }
-        case .error(let msg):
-            banner(text: msg, tint: Palette.red) {
-                Button("재시도") { model.refreshNow() }
-                    .controlSize(.small)
-            }
-        case .loaded(let source):
-            if source == .claudeCodeCLI {
-                banner(text: "Claude Code 계정 사용 중", tint: Palette.onlineDot) { EmptyView() }
-            } else {
-                EmptyView()
-            }
+        case .failed(let message):
+            banner(text: message, tint: Palette.red) { bannerButton(action) }
+        case .cliAccount:
+            banner(text: "Claude Code 계정 사용 중", tint: Palette.onlineDot) { bannerButton(action) }
         }
     }
 
-    private var signInButton: some View {
-        Button("로그인") { Task { await model.signIn() } }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+    @ViewBuilder private func bannerButton(_ action: UsagePresentation.BannerAction) -> some View {
+        switch action {
+        case .none:
+            EmptyView()
+        case .signIn:
+            Button("로그인") { Task { await model.signIn() } }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+        case .retry:
+            Button("재시도") { model.refreshNow() }
+                .controlSize(.small)
+        }
     }
 
     private func banner<Trailing: View>(text: String, tint: Color,
