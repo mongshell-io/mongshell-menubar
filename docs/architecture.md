@@ -22,7 +22,7 @@ non_goals:
 | 로컬 리스너 | `Network.framework` (`NWListener`) — OAuth 루프백 |
 | 자격증명 | Security.framework Keychain (generic password) |
 | 설정 영속화 | `UserDefaults` (`@AppStorage`) |
-| 알림 | UserNotifications (앱 번들 필수) — `Notifier` 한 곳에서만 부른다. 보낼지 말지는 각 모델이 정한다 |
+| 알림 | UserNotifications (앱 번들 필수) — `Notifier` |
 | 로그인 항목 | ServiceManagement (`SMAppService.mainApp`) |
 | 외부 프로세스 | `posix_spawn` (새 프로세스 그룹, 마감 있는 non-blocking 읽기) — `openclaw` CLI, `launchctl` (게이트웨이 재시작·CI 러너 상태 조회. 서버 에이전트 전용 — 메뉴바 앱은 셸아웃하지 않는다) |
 | 호스트 신호 읽기 (서버 에이전트) | IOKit (`IOKit.ps` — 전원 공급원·내장 배터리), Foundation `URL` 리소스 값 (홈 볼륨 여유 공간), `/Library/LaunchDaemons` 목록 + `launchctl print system/<레이블>` (CI 러너, sudo 불필요) |
@@ -65,8 +65,8 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
 - 토큰이 없으면 네트워크를 타지 않고 샘플 스냅샷(`UsageSnapshot.sample(now:)`)으로 렌더한다. 샘플의 초기화 시각은 고정값이 아니라 샘플을 보이는 전이마다(토큰 없음·401·로그인 만료·로그아웃, 그리고 샘플을 보이던 중의 실패·요청 제한 — 로그아웃 상태에서 Keychain 이 잠긴 폴링 등) 그 시각부터 다시 잡는다 — 앱을 켤 때 한 번 잡으면 약 세 시간 뒤 "곧 초기화" 에 멈춘다 (#133).
 - 자체 토큰 갱신이 `400` + `invalid_grant` 로 실패하면 자체 토큰을 버리고 로그인 만료 안내(`LoadState.sessionExpired` — 배너, 알림은 한 번)를 띄운다. 다음 폴링은 Claude Code 토큰으로 넘어가고, 그 토큰이 없거나 `401` 이면 사용량 요청이 한 번 성공하거나 사용자가 다시 로그인·로그아웃할 때까지 로그아웃 대신 이 안내를 유지한다. 그 밖의 실패(전송 오류·5xx·거부된 3xx·응답 크기 상한 초과)는 토큰을 유지하고 다음 폴링에 다시 시도한다.
 - 사용량 요청이 `401` 이면: Claude Code 토큰은 바로 로그아웃으로 보이고 다음 폴링에 다시 읽는다. 로그아웃으로 보일 때는 직전에 받은 실제 숫자를 남기지 않고 샘플로 되돌린다 — 배너가 "샘플 데이터" 라고 말하는 것과 맞추려는 것이다 (#134). 자체 토큰은 한 번 갱신해 다시 요청한다 — 재요청의 두 번째 `401` 은 로그아웃으로, 갱신의 `invalid_grant` 는 로그인 만료 안내(`LoadState.sessionExpired`)로, 갱신이나 재요청의 일시 실패는 계정을 유지한 채 오류 배너로, 재요청의 `429` 는 위 백오프로 보인다. 재요청이 성공하면 일반 성공과 같이 임계 알림을 확인한다 (#92·#93·#95). 규칙은 `UsageRefreshPolicy` 가, 그 결과로 바뀌는 표시 상태(`snapshot`·`loadState`·계정 출처·백오프 단계·로그인 만료 안내 유지)의 전이는 `UsageSession` 이 권위다.
-- 남은 시간 문구는 응답이 아니라 그릴 때 만든다. `UsageSnapshot` 은 초기화 시각(`Date?`)만 들고, "N시간 M분 후 초기화" 와 요청 제한 배너의 "N분 후 자동 재시도" 는 뷰가 `TimeText` 로 그릴 때마다 만든다 — `TimeText.minuteTick` 주기의 `TimelineView` 가 다시 그린다 (#133). 초기화 시각이 없으면 문구 없이 비운다("곧 초기화" 로 접지 않는다).
-- 알림은 `Notifier`(Services) 하나로 나간다. 임계 알림은 설정의 "25/50/75/90% 도달 알림" 이 켜져 있고 앱 번들로 실행 중일 때만 `UsageThresholdWatch` 에 관측을 넘기고, 로그인 만료 알림은 그 토글과 무관하게 그 자리에서 알림 권한을 묻고 허용되면 보낸다.
+- 남은 시간 문구는 응답이 아니라 그릴 때 만든다 — 응답 시점에 만든 문구는 다음 폴링까지 멈춰 있기 때문이다. `UsageSnapshot` 은 초기화 시각(`Date?`)만 들고, "N시간 M분 후 초기화" 와 요청 제한 배너의 "N분 후 자동 재시도" 는 뷰가 `TimeText` 로 그릴 때마다 만든다 — `TimeText.minuteTick` 주기의 `TimelineView` 가 다시 그린다 (#133). 초기화 시각이 없으면 문구 없이 비운다("곧 초기화" 로 접지 않는다).
+- 알림은 `Notifier`(Services) 하나로 나가고, 보낼지 말지는 각 모델이 정한다 — 이 규칙은 사용량뿐 아니라 openclaw·서버 호스트 알림에도 같다. 임계 알림은 설정의 "25/50/75/90% 도달 알림" 이 켜져 있고 앱 번들로 실행 중일 때만 `UsageThresholdWatch` 에 관측을 넘기고, 로그인 만료 알림은 그 토글과 무관하게 그 자리에서 알림 권한을 묻고 허용되면 보낸다.
 
 ### 2. Claude Code 설정 편집 (양방향)
 
@@ -215,7 +215,7 @@ GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주�
 
 ### 응답 읽기 공통 규칙
 
-네 경로가 바깥에서 받은 JSON 을 읽는 규칙 셋은 한 타입씩에 모여 있다 (`Services/`).
+바깥에서 받은 JSON(사용량 응답·OAuth 토큰 응답·Claude Code 자격증명·openclaw 상태 문서·GitHub 응답)을 읽는 규칙 셋은 한 타입씩에 모여 있다 (`Services/`). 규칙마다 적용 범위가 다르므로 각 항목에 적는다.
 
 - **숫자는 `JSONNumber`** (#135). JSON `true`/`false` 는 숫자가 아니다 — `JSONSerialization` 이 bool 을 1/0 으로 돌려주므로 그대로 읽으면 `true` 가 1% · 1초 · 1센트가 된다. NaN·무한대도 버린다. 적용 범위: 사용량 응답(퍼센트·크레딧 금액과 지수), OAuth 토큰 응답의 `expires_in`, Claude Code 자격증명의 `expiresAt`, openclaw 상태 문서(배터리·디스크·러너 수치), GitHub 응답(PR 번호·검사 개수·워크플로 id·실행 번호·한도). bool 이 온 자리는 그 값이 없는 것으로 읽는다(토큰 만료 시각이면 만료 없음, 크레딧 지수면 기본값 2).
 - **화면·로그에 닿는 문자열은 `DisplayText`** (#136). 제어문자·줄바꿈은 공백이 되고, 호출자가 정한 글자 상한(`Config`)과 유니코드 스칼라 480개 상한으로 자른다. 적용 범위: openclaw 상태 문서(detail · `agentVersion` · 모르는 health 값), 사용량 응답(`kind` · 모델명 · 최상위 키 이름), GitHub 응답(PR 제목 · 레포 이름 · 검사 이름 · 머지 실패 메시지). 정규화는 표시용 문자열에만 쓴다 — 검사 재실행을 묶는 식별 키는 응답 원문으로 만든다(정규화로 잘리거나 제어문자만 다른 서로 다른 검사가 하나로 합쳐지지 않게). 정규화 후 레포 이름이 빈 PR 은 보일 것도 레포 숨김으로 가릴 키도 없어 버린다.

@@ -26,7 +26,7 @@ non_goals:
 | openclaw 서버 상태 URL (HTTPS 읽기 전용) — openclaw 판정과 서버 호스트 신호(`host`)를 한 문서에서 읽는다 | `OpenClawStatusClient` |
 | 로그인 항목 (ServiceManagement) | `LoginItemService` |
 | 토큰 경로 진단 로그 (`Config.authDebugLogURL` 에 덧붙여 쓰는 파일 — 토큰·인증 코드는 넣지 않는다) | `AuthDebugLog` |
-| 알림 센터 (UserNotifications — 권한 요청·앱 번들 확인 포함; 보낼지 말지는 호출자가 정한다) | `Notifier` |
+| 알림 센터 (UserNotifications — 권한 요청·앱 번들 확인 포함) | `Notifier` |
 | GitHub 토큰 (자체 PAT 항목 · gh CLI 항목 읽기) | `GitHubCredentials` |
 | GitHub GraphQL (`api.github.com` 단일 호스트 — 폴링 query + 내 PR 의 squash 머지 mutation 하나, Decision #49) | `GitHubAPIClient` |
 
