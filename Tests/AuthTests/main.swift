@@ -227,10 +227,12 @@ do {
     check("item that no longer decodes → missing (sign-in stays possible)",
           OwnTokenLookup(status: errSecSuccess, data: Data("junk".utf8)) == .missing
           && OwnTokenLookup(status: errSecSuccess, data: nil) == .missing)
-    check("locked / not allowed → unreadable, not missing",
-          OwnTokenLookup(status: errSecInteractionNotAllowed, data: nil) == .unreadable(errSecInteractionNotAllowed))
-    check("any other Keychain error → unreadable",
-          OwnTokenLookup(status: errSecAuthFailed, data: nil) == .unreadable(errSecAuthFailed))
+    check("locked / may not ask → unavailable, not missing",
+          OwnTokenLookup(status: errSecInteractionNotAllowed, data: nil) == .unavailable(errSecInteractionNotAllowed)
+          && OwnTokenLookup(status: errSecNotAvailable, data: nil) == .unavailable(errSecNotAvailable))
+    check("denied or any other refusal → refused (a fresh sign-in stays possible)",
+          OwnTokenLookup(status: errSecAuthFailed, data: nil) == .refused(errSecAuthFailed)
+          && OwnTokenLookup(status: errSecUserCanceled, data: nil) == .refused(errSecUserCanceled))
 }
 
 // MARK: Diagnostic log formatting

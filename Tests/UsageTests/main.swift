@@ -460,6 +460,24 @@ do {
           UsageRefreshPolicy.step(after: .unauthorized, retry: .refetched(.ok(snap))) == .show(snap))
 }
 
+// MARK: which token a refresh polls with (#102)
+
+do {
+    let own = OAuthToken(accessToken: "own", refreshToken: "r", expiresAt: nil)
+    let cli = OAuthToken(accessToken: "cli", refreshToken: nil, expiresAt: nil)
+    check("own token found → own, CLI not even read",
+          UsageRefreshPolicy.chooseToken(own: .found(own), cli: { nil }) == .token(own, .oauthLogin))
+    check("own token missing → CLI token",
+          UsageRefreshPolicy.chooseToken(own: .missing, cli: { cli }) == .token(cli, .claudeCodeCLI))
+    check("own token refused → CLI token (a denial does not trap the user)",
+          UsageRefreshPolicy.chooseToken(own: .refused(errSecAuthFailed), cli: { cli }) == .token(cli, .claudeCodeCLI))
+    check("Keychain locked → wait, no quiet switch to the CLI account",
+          UsageRefreshPolicy.chooseToken(own: .unavailable(errSecInteractionNotAllowed), cli: { cli })
+              == .ownUnavailable(errSecInteractionNotAllowed))
+    check("nothing anywhere → none",
+          UsageRefreshPolicy.chooseToken(own: .missing, cli: { nil }) == UsageTokenChoice.none)
+}
+
 // MARK: result
 
 if failures.isEmpty {

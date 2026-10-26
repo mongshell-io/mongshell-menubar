@@ -83,22 +83,10 @@ final class UsageModel: ObservableObject {
 
     // MARK: Token resolution
 
-    private enum TokenResolution {
-        case token(OAuthToken, DataSource)
-        case none
-        /// Our own token may be there but the Keychain would not say; falling
-        /// back to the CLI token would quietly switch accounts.
-        case ownUnreadable(OSStatus)
-    }
-
-    private func currentToken() -> TokenResolution {
-        switch CredentialStore.lookupOwnToken() {
-        case .found(let own): return .token(own, .oauthLogin)
-        case .unreadable(let status): return .ownUnreadable(status)
-        case .missing: break
-        }
-        if let cli = CredentialStore.loadClaudeCodeToken() { return .token(cli, .claudeCodeCLI) }
-        return .none
+    private func currentToken() -> UsageTokenChoice {
+        let own = CredentialStore.lookupOwnToken()
+        if case .refused(let status) = own { AuthDebugLog.write("own token refused status=\(status)") }
+        return UsageRefreshPolicy.chooseToken(own: own, cli: CredentialStore.loadClaudeCodeToken)
     }
 
     // MARK: Refresh
@@ -125,10 +113,10 @@ final class UsageModel: ObservableObject {
             markSignedOut()
             snapshot = .sample
             return
-        case .ownUnreadable(let status):
+        case .ownUnavailable(let status):
             // Keeps the account and the numbers; the next poll reads again.
-            AuthDebugLog.write("own token unreadable status=\(status)")
-            loadState = .error("Keychain 에서 로그인 정보를 읽지 못했습니다")
+            AuthDebugLog.write("own token unavailable status=\(status)")
+            loadState = .error("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다")
             return
         }
         var token = initialToken
@@ -294,7 +282,12 @@ final class UsageModel: ObservableObject {
     func signIn() async {
         do {
             let token = try await auth.signIn()
-            CredentialStore.saveOwnToken(token)
+            // A token that did not reach the Keychain is gone at the next
+            // poll, which would then quietly fall back to the CLI token.
+            guard CredentialStore.saveOwnToken(token) else {
+                loadState = .error("로그인 정보를 Keychain 에 저장하지 못했습니다")
+                return
+            }
             sessionExpiredUnresolved = false
             await refreshOnce()
         } catch {

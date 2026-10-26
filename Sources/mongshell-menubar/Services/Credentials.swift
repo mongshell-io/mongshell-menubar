@@ -17,18 +17,21 @@ struct OAuthToken: Codable, Equatable {
     }
 }
 
-/// What reading our own token found. "Cannot read" is kept apart from "none"
-/// so a locked or busy Keychain is not shown as signed-out (#102).
+/// What reading our own token found. A locked Keychain is kept apart from
+/// "none" so it is not shown as signed-out (#102).
 enum OwnTokenLookup: Equatable {
     case found(OAuthToken)
     case missing
-    /// The Keychain answered with something other than "not found"; the
-    /// item may well still be there.
-    case unreadable(OSStatus)
+    /// The Keychain is locked or may not ask the user right now. The item is
+    /// most likely there and a later read should work.
+    case unavailable(OSStatus)
+    /// Any other refusal — access denied, an item written under another
+    /// signing identity. It may not pass on its own, so callers treat it as
+    /// missing: a fresh sign-in replaces the item.
+    case refused(OSStatus)
 
     /// An item that is there but no longer decodes counts as missing: no
-    /// later read will fix it, and calling it unreadable would leave no way
-    /// to sign in again.
+    /// later read will fix it.
     init(status: OSStatus, data: Data?) {
         switch status {
         case errSecSuccess:
@@ -39,9 +42,17 @@ enum OwnTokenLookup: Equatable {
             }
         case errSecItemNotFound:
             self = .missing
+        case _ where Self.isTransient(status):
+            self = .unavailable(status)
         default:
-            self = .unreadable(status)
+            self = .refused(status)
         }
+    }
+
+    /// The failures that pass by themselves. Reads keep the token through
+    /// them, and writes leave the item alone.
+    static func isTransient(_ status: OSStatus) -> Bool {
+        status == errSecInteractionNotAllowed || status == errSecNotAvailable
     }
 }
 
@@ -55,7 +66,8 @@ enum CredentialStore {
     /// Replaces the item in place. Deleting first and adding after lost the
     /// token for good whenever the add failed: the refresh token is single
     /// use, so the one just spent cannot be asked for again (#102). Returns
-    /// whether the Keychain now holds `token`; a failure is logged.
+    /// whether the Keychain now holds `token`; a failure is logged. An
+    /// in-place update keeps the item's access list as it was.
     @discardableResult
     static func saveOwnToken(_ token: OAuthToken) -> Bool {
         guard let data = try? JSONEncoder().encode(token) else { return false }
@@ -69,10 +81,11 @@ enum CredentialStore {
         var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
             status = SecItemAdd(attrs as CFDictionary, nil)
-        } else if status != errSecSuccess {
-            // An item the update cannot touch (e.g. written under another
-            // signing identity) — the old replace is still worth a try.
-            AuthDebugLog.write("own token update failed status=\(status); replacing")
+        } else if status != errSecSuccess, !OwnTokenLookup.isTransient(status) {
+            // An item this build may not update — recreating it is the way
+            // back to an item we own. A locked Keychain is not retried this
+            // way: the delete could land and the add fail.
+            AuthDebugLog.write("own token update refused status=\(status); recreating")
             SecItemDelete(query as CFDictionary)
             status = SecItemAdd(attrs as CFDictionary, nil)
         }
