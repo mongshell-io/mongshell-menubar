@@ -148,13 +148,25 @@ enum CredentialStore {
             // when the user just cancelled the prompt: the delete could land
             // and the add fail.
             AuthDebugLog.write("own token update refused status=\(status); recreating")
-            deleted = SecItemDelete(query as CFDictionary) == errSecSuccess
-            status = SecItemAdd(attrs as CFDictionary, nil)
+            (status, deleted) = recreate(delete: { SecItemDelete(query as CFDictionary) },
+                                         add: { SecItemAdd(attrs as CFDictionary, nil) })
         }
         if status != errSecSuccess {
             AuthDebugLog.write("own token save failed status=\(status)\(deleted ? " after delete" : "")")
         }
         return OwnTokenSave(status: status, deletedFirst: deleted)
+    }
+
+    /// The delete-then-add of a save that could not update the item. The
+    /// delete can prompt too: when the user cancels that prompt the item is
+    /// as it was, the add is not tried — it would only fail as a duplicate
+    /// and pass for a plain failure, so the decline would not be remembered
+    /// and the next poll would ask again (#143). Returns the status the save
+    /// ends with and whether the old item is gone.
+    static func recreate(delete: () -> OSStatus, add: () -> OSStatus) -> (status: OSStatus, deleted: Bool) {
+        let deleteStatus = delete()
+        if OwnTokenLookup.isUserRefusal(deleteStatus) { return (deleteStatus, false) }
+        return (add(), deleteStatus == errSecSuccess)
     }
 
     private static func lookupOwnTokenBlocking() -> OwnTokenLookup {

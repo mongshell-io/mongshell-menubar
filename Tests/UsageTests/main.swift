@@ -977,6 +977,23 @@ do {
     check("save: cancelled after our delete → failedAfterDelete (an empty Keychain outranks the answer)",
           OwnTokenSave(status: errSecUserCanceled, deletedFirst: true) == .failedAfterDelete)
 
+    // A save that recreates the item: the delete's prompt cancelled → no add,
+    // and the save reads as the user's answer (not a duplicate-item failure).
+    var adds = 0
+    let cancelledDelete = CredentialStore.recreate(delete: { errSecUserCanceled },
+                                                   add: { adds += 1; return errSecDuplicateItem })
+    check("recreate: delete prompt cancelled → add not tried, save cancelled",
+          adds == 0 && OwnTokenSave(status: cancelledDelete.status, deletedFirst: cancelledDelete.deleted) == .cancelled,
+          "\(adds) adds, status \(cancelledDelete.status)")
+    let recreated = CredentialStore.recreate(delete: { errSecSuccess }, add: { adds += 1; return errSecSuccess })
+    check("recreate: delete and add pass → saved", adds == 1 && recreated == (errSecSuccess, true))
+    let lostAfterDelete = CredentialStore.recreate(delete: { errSecSuccess }, add: { errSecIO })
+    check("recreate: add fails after the delete → failedAfterDelete",
+          OwnTokenSave(status: lostAfterDelete.status, deletedFirst: lostAfterDelete.deleted) == .failedAfterDelete)
+    let refusedDelete = CredentialStore.recreate(delete: { errSecAuthFailed }, add: { errSecDuplicateItem })
+    check("recreate: delete refused otherwise → add still tried, a plain failure",
+          OwnTokenSave(status: refusedDelete.status, deletedFirst: refusedDelete.deleted) == .failed)
+
     // Remembering the decline.
     check("read cancelled → decline remembered", UsageRefreshPolicy.declined(false, after: cancelled, sameLogin: true))
     check("read refused otherwise → no decline (the #132 store retry stays)",
