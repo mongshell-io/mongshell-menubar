@@ -111,6 +111,26 @@ do {
     check("채널 줄 안 gateway unreachable → degraded", channelRefused == .degraded(detail: "Slack main"),
           "\(String(describing: channelRefused))")
 
+    // "Gateway reachable." is the gateway answering: a DOWN token on another
+    // gateway line is about something it reaches, not the gateway itself.
+    let vaultDown = verdict("[secrets] gateway secrets.resolve: vault unreachable\nGateway reachable.\n"
+                            + "- Telegram default: running\n", exit: 0)
+    check("reachable + 게이트웨이 줄의 vault unreachable + running → ok", vaultDown == .ok(detail: "Telegram default"),
+          "\(String(describing: vaultDown))")
+    let vaultDownBare = verdict("[secrets] gateway secrets.resolve: vault unreachable\nGateway reachable.\n", exit: 0)
+    check("reachable + 게이트웨이 줄의 vault unreachable + 채널 없음 → ok(채널 없음)",
+          vaultDownBare == .ok(detail: "채널 없음"), "\(String(describing: vaultDownBare))")
+
+    // Colour codes around the line must not hide the positive signal.
+    let esc = "\u{1B}"
+    let coloured = verdict("\(esc)[32mGateway reachable.\(esc)[0m\n", exit: 0)
+    check("색 코드가 붙은 Gateway reachable → ok(채널 없음)", coloured == .ok(detail: "채널 없음"),
+          "\(String(describing: coloured))")
+    let colouredVault = verdict("[secrets] gateway secrets.resolve: vault unreachable\n"
+                                + "\(esc)[1;32mGateway reachable.\(esc)[0m\n- Telegram default: running\n", exit: 0)
+    check("색 코드 reachable + vault unreachable + running → ok", colouredVault == .ok(detail: "Telegram default"),
+          "\(String(describing: colouredVault))")
+
     // The positive signal is a line opening "Gateway reachable": the tip on
     // every run says "(requires a reachable gateway)" and must not count.
     let tipOnly = verdict("Tip: https://docs.openclaw.ai/cli/status adds gateway health probes to status output "

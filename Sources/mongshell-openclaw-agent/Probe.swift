@@ -93,7 +93,7 @@ enum Probe {
     static let launcherFailureExitCodes: Set<Int32> = [126, 127]
 
     /// Gateway-unreachable wording — DOWN, but only on a gateway line (see
-    /// `isGatewayLine`). With the gateway stopped, openclaw exits 0 and every
+    /// `isGatewayLine`) and only with no "Gateway reachable." line. With the gateway stopped, openclaw exits 0 and every
     /// line carrying one of these names it ("Gateway not reachable after
     /// waiting 15 s.", "… (Gateway not reachable at ws://127.0.0.1:18789
     /// (ECONNREFUSED)." — #157). Counted across the whole output, a refused
@@ -114,9 +114,15 @@ enum Probe {
         !lowerLine.hasPrefix("-") && lowerLine.contains(gatewayMentionToken)
     }
 
-    /// Trimmed, lowercased lines that name the gateway.
+    /// A CSI escape sequence (`ESC [ … final byte`) — the colour codes a
+    /// CLI adds when it thinks it is on a terminal. Left in, one in front of
+    /// "Gateway reachable." hides the positive signal's prefix.
+    static let ansiEscapePattern = "\u{1B}\\[[0-?]*[ -/]*[@-~]"
+
+    /// Trimmed, lowercased lines that name the gateway, colour codes removed.
     private static func gatewayLines(_ text: String) -> [String] {
         text.split(whereSeparator: \.isNewline)
+            .map { String($0).replacingOccurrences(of: ansiEscapePattern, with: "", options: .regularExpression) }
             .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
             .filter(isGatewayLine)
     }
@@ -170,9 +176,12 @@ enum Probe {
         let text = result.stdout
         let gateway = gatewayLines(text)
 
-        // The gateway said it can't be reached → DOWN. (Checked before the
-        // positive test below — an outage line wins over anything else.)
-        if reportsDown(gateway) { return .down }
+        // The gateway said it can't be reached → DOWN — unless a line says
+        // "Gateway reachable.": that is the gateway answering, the direct
+        // evidence, and a DOWN token beside it is about something the
+        // gateway reaches (e.g. "[secrets] gateway secrets.resolve: vault
+        // unreachable"). A stopped gateway prints no such line (#157).
+        if reportsDown(gateway) && !reportsReachable(gateway) { return .down }
 
         let lines = text
             .split(whereSeparator: \.isNewline)
