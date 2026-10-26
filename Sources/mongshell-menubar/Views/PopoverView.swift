@@ -251,8 +251,12 @@ struct PopoverView: View {
         case .unreadLimits:
             banner(text: "사용량 형식을 읽지 못했습니다 — 읽지 못한 한도는 비워 둡니다",
                    tint: Palette.red) { bannerButton(action) }
-        case .keychainDeclined(let fallback):
-            banner(text: "Keychain 접근을 취소했어요 — \(declinedFallbackText(fallback))",
+        case .keychainDeclined(let fallback, let limitsUnread):
+            // The format notice it stands in for rides along (#130); the lead
+            // is cut short then so the banner stays within two lines.
+            banner(text: limitsUnread
+                       ? "Keychain 접근 취소 — \(declinedFallbackText(fallback)) · 한도 형식 오류"
+                       : "Keychain 접근을 취소했어요 — \(declinedFallbackText(fallback))",
                    tint: Palette.amber) { bannerButton(action) }
         }
     }

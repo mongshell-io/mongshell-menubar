@@ -859,17 +859,20 @@ do {
 
     // #146 — a remembered decline (#143) says so, and what is shown instead.
     check("declined, CLI account shown → the declined banner names the CLI account, 다시 허용",
-          p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).banner == .keychainDeclined(.cliAccount)
+          p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).banner == .keychainDeclined(.cliAccount, limitsUnread: false)
           && p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).bannerAction == .allowKeychain)
     check("declined, polling with the held renewal → the declined banner says so (not a clean 'no banner')",
-          p(.loaded(.oauthLogin), .oauthLogin, declined: true).banner == .keychainDeclined(.heldLogin)
+          p(.loaded(.oauthLogin), .oauthLogin, declined: true).banner == .keychainDeclined(.heldLogin, limitsUnread: false)
           && p(.loaded(.oauthLogin), .oauthLogin, declined: true).bannerAction == .allowKeychain)
     check("declined, nothing to poll with → the declined banner on the sample, 다시 허용 rather than 로그인",
-          p(.signedOut, nil, declined: true).banner == .keychainDeclined(.sample)
+          p(.signedOut, nil, declined: true).banner == .keychainDeclined(.sample, limitsUnread: false)
           && p(.signedOut, nil, declined: true).bannerAction == .allowKeychain)
-    check("declined outranks the format notice (whose numbers these are comes first)",
+    check("declined outranks the format notice but carries it (a grey gauge keeps its reason)",
           p(.loaded(.claudeCodeCLI), .claudeCodeCLI, limitsUnread: true, declined: true).banner
-              == .keychainDeclined(.cliAccount))
+              == .keychainDeclined(.cliAccount, limitsUnread: true)
+          && p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true, declined: true).banner
+              == .keychainDeclined(.heldLogin, limitsUnread: true)
+          && p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true, declined: true).bannerAction == .allowKeychain)
     check("declined does not hide a lapsed login, loading, a rate limit or an error",
           p(.sessionExpired, nil, declined: true).banner == .sessionExpired
           && p(.sessionExpired, nil, declined: true).bannerAction == .signIn
