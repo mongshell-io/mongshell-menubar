@@ -46,7 +46,6 @@ struct SettingsView: View {
                 Toggle("사용량 3단계 색상", isOn: $prefs.colorCoding)
                 Toggle("사용량 게이지·퍼센트 표시", isOn: $prefs.showPercent)
                 Toggle("남은 양으로 표시 (기본: 사용한 양)", isOn: $prefs.showRemaining)
-                Toggle("90% 이상일 때 아이콘 맥동", isOn: $prefs.pulseWhenCritical)
             }
 
             Section("업데이트") {

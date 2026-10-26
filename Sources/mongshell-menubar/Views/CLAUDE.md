@@ -23,13 +23,13 @@ non_goals:
 
 ## 뷰 로컬 상태는 `@State` 대신 수동 펼침
 
-`@State` 를 적지 않는다. macOS 27 SDK 부터 `@State` 는 SwiftUIMacros 플러그인이 전개하는 매크로이고, 그 플러그인은 Xcode 에만 들어 있어 Command Line Tools 빌드가 깨진다 (Decision #11-2). `State<Value>` 프로퍼티 래퍼 자체는 남아 있으므로 매크로가 만들었을 것을 직접 적는다 — `MenuBarIconView.pulsing` 이 본보기다:
+`@State` 를 적지 않는다. macOS 27 SDK 부터 `@State` 는 SwiftUIMacros 플러그인이 전개하는 매크로이고, 그 플러그인은 Xcode 에만 들어 있어 Command Line Tools 빌드가 깨진다 (Decision #11-2). `State<Value>` 프로퍼티 래퍼 자체는 남아 있으므로 매크로가 만들었을 것을 직접 적는다 — `OpenClawSettingsSection.urlError` 가 본보기다:
 
 ```swift
-private var _pulsing = State(initialValue: false)
-private var pulsing: Bool {
-    get { _pulsing.wrappedValue }
-    nonmutating set { _pulsing.wrappedValue = newValue }
+private var _urlError = State<String?>(initialValue: nil)
+private var urlError: String? {
+    get { _urlError.wrappedValue }
+    nonmutating set { _urlError.wrappedValue = newValue }
 }
 ```
 

@@ -9,7 +9,7 @@ struct OpenClawSettingsSection: View {
 
     private let intervals = [30, 60, 120]
 
-    // `@State` 를 손으로 펼친 것 (Decision #11-2, `MenuBarIconView.pulsing` 참조).
+    // `@State` 를 손으로 펼친 것 (Decision #11-2, 아래 `urlError` 가 Views/CLAUDE.md 의 본보기).
     // 입력 중인 주소는 여기에만 두고 "적용" 때 모델로 넘긴다 — 타이핑 도중의
     // 반쪽 주소로 폴링이 돌지 않게.
     private var _draftURL: State<String>

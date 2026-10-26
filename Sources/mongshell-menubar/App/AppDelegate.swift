@@ -4,7 +4,7 @@ import Combine
 
 /// An NSHostingView that lets mouse events fall through to the status-item
 /// button underneath (so the button's click action still fires while the
-/// SwiftUI icon keeps animating, e.g. the ≥90% pulse), while tracking cursor
+/// SwiftUI icon is drawn over it), while tracking cursor
 /// enter/exit over the icon to drive the instant hover summary.
 final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
     var onMouseEntered: (() -> Void)?
@@ -21,7 +21,7 @@ final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
     /// draws changes size, whichever model or preference caused it — so the
     /// status item follows the content without a list of inputs (#116). It
     /// also invalidates on every frame of an animation that keeps the size,
-    /// such as the ≥90% pulse, so only an actual width change is reported.
+    /// so only an actual width change is reported.
     override func invalidateIntrinsicContentSize() {
         super.invalidateIntrinsicContentSize()
         guard !sizeChangePending else { return }
