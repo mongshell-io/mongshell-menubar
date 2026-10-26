@@ -22,4 +22,16 @@ enum KeychainQueue {
             queue.async { continuation.resume(returning: work()) }
         }
     }
+
+    /// Calls `done` on the main actor once every job queued before this call
+    /// has run, or once `timeout` has passed, whichever comes first — a
+    /// prompt left up must not hold the caller forever.
+    static func whenDrained(timeout: TimeInterval, _ done: @escaping @MainActor @Sendable () -> Void) {
+        let drained = DispatchSemaphore(value: 0)
+        queue.async { drained.signal() }
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = drained.wait(timeout: .now() + timeout)
+            Task { @MainActor in done() }
+        }
+    }
 }

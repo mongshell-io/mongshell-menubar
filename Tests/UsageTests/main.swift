@@ -1142,6 +1142,31 @@ do {
     }
     check("Keychain queue: calls from the main actor run in the order made",
           ordered.order == Array(0..<orderedCount), "\(ordered.order)")
+
+    // Quitting waits for queued work, but not past the cap.
+    @MainActor final class Drains {
+        var afterSlow: [Int]?
+        var cappedAt: Date?
+    }
+    let drains = MainActor.assumeIsolated { Drains() }
+    let slow = Probe()
+    Task.detached { _ = await KeychainQueue.run { slow.job(1, pause: 0.05) } }
+    Thread.sleep(forTimeInterval: 0.01)
+    KeychainQueue.whenDrained(timeout: 5) { drains.afterSlow = slow.order }
+    let blocker = DispatchSemaphore(value: 0)
+    Task.detached { _ = await KeychainQueue.run { blocker.wait() } }
+    Thread.sleep(forTimeInterval: 0.01)
+    let cappedStart = Date()
+    KeychainQueue.whenDrained(timeout: 0.2) { drains.cappedAt = Date() }
+    let drainDeadline = Date().addingTimeInterval(5)
+    while MainActor.assumeIsolated({ drains.afterSlow == nil || drains.cappedAt == nil }), Date() < drainDeadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    }
+    blocker.signal()
+    let (afterSlow, cappedAt) = MainActor.assumeIsolated { (drains.afterSlow, drains.cappedAt) }
+    check("Keychain queue: drain waits for the job queued before it", afterSlow == [1], "\(String(describing: afterSlow))")
+    check("Keychain queue: drain gives up at the cap while a job hangs (a prompt left up)",
+          cappedAt.map { $0.timeIntervalSince(cappedStart) < 2 } ?? false)
 }
 
 // MARK: #133 — reset phrases are made at draw time; flat fallbacks are logged
