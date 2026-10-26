@@ -14,17 +14,25 @@ final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
     var onIntrinsicSizeChange: (() -> Void)?
     private var hoverTracking: NSTrackingArea?
     private var sizeChangePending = false
+    /// The width last reported through `onIntrinsicSizeChange`.
+    private var reportedWidth: CGFloat?
 
     /// NSHostingView invalidates its intrinsic size whenever what SwiftUI
     /// draws changes size, whichever model or preference caused it — so the
-    /// status item follows the content without a list of inputs (#116).
+    /// status item follows the content without a list of inputs (#116). It
+    /// also invalidates on every frame of an animation that keeps the size,
+    /// such as the ≥90% pulse, so only an actual width change is reported.
     override func invalidateIntrinsicContentSize() {
         super.invalidateIntrinsicContentSize()
         guard !sizeChangePending else { return }
         sizeChangePending = true
         DispatchQueue.main.async { [weak self] in
-            self?.sizeChangePending = false
-            self?.onIntrinsicSizeChange?()
+            guard let self else { return }
+            sizeChangePending = false
+            let width = fittingSize.width
+            guard width != reportedWidth else { return }
+            reportedWidth = width
+            onIntrinsicSizeChange?()
         }
     }
 
@@ -233,9 +241,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hosts[region] = host
     }
 
-    /// Keeps the item's length equal to the regions' total width. A length
-    /// that is already right is left alone, so a resize never feeds back into
-    /// another round of invalidation.
+    /// Keeps the item's length equal to the regions' total width. Setting the
+    /// length doesn't invalidate the hosts again — their size depends on their
+    /// content only — and a length that is already right isn't written.
     private func resizeStatusItem() {
         guard let statusItem else { return }
         let width = Region.allCases.reduce(CGFloat(0)) { sum, region in
