@@ -300,23 +300,32 @@ final class UsageModel: ObservableObject {
     }
 
     /// Drops the dead own token so the next poll falls through to the CLI
-    /// token (or to signed-out), and tells the user once. No repeat guard is
-    /// needed: with the token gone, nothing can reach this path again until
-    /// the user signs in anew. A sign-in or sign-out that lands while the
-    /// Keychain is asked wins: before the delete, nothing is deleted; after
-    /// it, its save was queued behind the delete and stands, and the lapsed
-    /// notice is not shown over it.
+    /// token (or to signed-out), and tells the user once. When the Keychain
+    /// cannot say whether it still holds that token, the notice goes up all
+    /// the same but the item is left (#147); once it reads again the dead
+    /// token lapses again, and `lapseIsNews` keeps that from notifying twice.
+    /// A sign-in or sign-out that lands while the Keychain is asked wins:
+    /// before the delete, nothing is deleted; after it, its save was queued
+    /// behind the delete and stands, and the lapsed notice is not shown over
+    /// it.
     private func expireSession(_ token: OAuthToken, generation: Int) async {
         let match = await keychainMatch(UsageRefreshPolicy.expectation(pending: pendingOwnToken, polling: token))
         guard generation == loginGeneration else { return }
         // The token is dead either way; a held renewal of it is too.
         pendingOwnToken = nil
-        guard match == .current else { return }
-        AuthDebugLog.write("own token discarded (invalid_grant) \(AuthDebugLog.session(token))")
-        _ = await CredentialStore.clearOwnToken()
-        guard generation == loginGeneration else { return }
+        switch UsageRefreshPolicy.lapse(match: match) {
+        case .leave:
+            return
+        case .noticeOnly:
+            AuthDebugLog.write("own token lapsed (invalid_grant), Keychain cannot say; item kept \(AuthDebugLog.session(token))")
+        case .discard:
+            AuthDebugLog.write("own token discarded (invalid_grant) \(AuthDebugLog.session(token))")
+            _ = await CredentialStore.clearOwnToken()
+            guard generation == loginGeneration else { return }
+        }
+        let isNews = session.lapseIsNews
         session.expired(now: Date())
-        notifySessionExpired()
+        if isNews { notifySessionExpired() }
     }
 
     /// Takes a renewed own token: stores it, or holds it in memory when the

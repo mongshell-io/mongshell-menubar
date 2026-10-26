@@ -31,6 +31,12 @@ struct UsageSession: Equatable {
 
     static let backoffCap = 4
 
+    /// Whether a lapse now is news to the user — false while the notice from
+    /// an earlier one is still up. A lapse the Keychain could not confirm
+    /// leaves the dead token in place (#147), so it can lapse again once the
+    /// item reads; that one is not announced twice.
+    var lapseIsNews: Bool { !expiredUnresolved }
+
     // MARK: Refresh events
 
     /// No token anywhere.

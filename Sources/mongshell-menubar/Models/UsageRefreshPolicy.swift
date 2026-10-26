@@ -63,6 +63,18 @@ enum KeychainMatch: Equatable {
     case unknown
 }
 
+/// What an `invalid_grant` on the own token does, by what the Keychain says.
+enum LapseStep: Equatable {
+    /// The Keychain holds the dead token: delete it and show the notice.
+    case discard
+    /// The Keychain cannot say (locked, refused, a declined prompt): show
+    /// the notice, but leave the item — it may hold another login (#147).
+    case noticeOnly
+    /// A sign-in, a sign-out or another instance moved it on: that stands,
+    /// and no notice goes up over it.
+    case leave
+}
+
 /// What to do with a pending own token at the start of a refresh.
 enum PendingResolution: Equatable {
     case none
@@ -166,6 +178,21 @@ enum UsageRefreshPolicy {
     /// nothing, once a save of ours deleted the item (#108).
     static func pending(afterSaving held: PendingOwnToken, result: OwnTokenSave) -> PendingOwnToken? {
         pending(after: result, renewed: held.token, expected: held.keychain)
+    }
+
+    /// The login lapsed whatever the Keychain says — the server turned its
+    /// refresh token away — so a Keychain that cannot answer does not hide
+    /// that from the user. It only keeps the item from being deleted: a read
+    /// that did not happen cannot show the item still holds that login. Left
+    /// quiet, the next poll fell through to the CLI token or the sample with
+    /// no word of why (#147); with a decline remembered (#143), that was
+    /// every `invalid_grant`.
+    static func lapse(match: KeychainMatch) -> LapseStep {
+        switch match {
+        case .current: return .discard
+        case .unknown: return .noticeOnly
+        case .changed: return .leave
+        }
     }
 
     static func resolvePending(_ pending: PendingOwnToken?, own: OwnTokenLookup) -> PendingResolution {

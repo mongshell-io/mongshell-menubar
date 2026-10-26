@@ -1254,6 +1254,48 @@ do {
     check("integer: Int.min is -2^63 exactly → kept", JSONNumber.integer(NSNumber(value: Int.min)) == Int.min)
 }
 
+// MARK: #147 — a lapse the Keychain cannot confirm is still told
+
+do {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    let dead = OAuthToken(accessToken: "a1", refreshToken: "r1", expiresAt: nil)
+    let holdsR1 = KeychainExpectation.holds(refreshToken: "r1")
+    let snap = UsageSnapshot(fiveHourPercent: 10, fiveHourResetAt: nil,
+                             weeklyAllPercent: 20, weeklyResetAt: nil, models: [], extraLimits: [],
+                             unknownTopLevel: [], creditsText: nil, lastUpdated: now)
+    func lapse(_ own: OwnTokenLookup) -> LapseStep {
+        UsageRefreshPolicy.lapse(match: UsageRefreshPolicy.keychainMatch(own: own, expects: holdsR1))
+    }
+
+    check("lapse, Keychain holds the dead token → delete it and tell",
+          lapse(.found(dead)) == .discard)
+    // A remembered decline (#143) answers every read with this refusal — so
+    // this is every invalid_grant while the decline stands.
+    check("lapse, prompt declined → told, item kept (it may be another login)",
+          lapse(UsageRefreshPolicy.rememberedRefusal) == .noticeOnly)
+    check("lapse, Keychain locked or refused → told, item kept",
+          lapse(.unavailable(errSecInteractionNotAllowed)) == .noticeOnly
+          && lapse(.refused(errSecAuthFailed)) == .noticeOnly)
+    check("lapse, Keychain moved on (another login, a sign-out) → nothing over it",
+          lapse(.found(OAuthToken(accessToken: "b", refreshToken: "rb", expiresAt: nil))) == .leave
+          && lapse(.missing) == .leave)
+
+    // The kept item lapses again once it reads: one notification, not two.
+    var s = UsageSession()
+    s.loaded(snap, source: .oauthLogin)
+    check("first lapse is news", s.lapseIsNews)
+    s.expired(now: now)
+    check("a second lapse under the notice is not news (no second notification)", !s.lapseIsNews)
+    s.noToken(now: now)
+    check("…nor after the polls that follow it", !s.lapseIsNews)
+    var resolved = s
+    resolved.loaded(snap, source: .claudeCodeCLI)
+    check("a lapse after the notice was resolved by a fetch is news again", resolved.lapseIsNews)
+    var signedIn = s
+    signedIn.signedIn()
+    check("a lapse after signing in again is news again", signedIn.lapseIsNews)
+}
+
 // MARK: result
 
 if failures.isEmpty {
