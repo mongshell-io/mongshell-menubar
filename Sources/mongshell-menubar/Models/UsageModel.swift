@@ -10,9 +10,11 @@ final class UsageModel: ObservableObject {
     // Mirrors of `session`'s visible state. `@Published` sends
     // `objectWillChange` on every assignment, equal value or not, so the
     // `didSet` below assigns only what differs: a session change that shows
-    // nothing new (a refresh starting under the same account, a repeated
-    // error, a flag) leaves the views observing this model — the menu bar
-    // icon among them — alone.
+    // nothing new (a refresh starting under the same account, a flag, an
+    // error repeated while real numbers are shown) leaves the views
+    // observing this model — the menu bar icon among them — alone. While the
+    // sample is up, each failed/rateLimited/noToken pass rebuilds it with
+    // `sample(now:)` (#133), so that snapshot is published again.
     // See `UsageSession`.
     @Published private(set) var snapshot: UsageSnapshot = .sample(now: Date())
     @Published private(set) var loadState: LoadState = .signedOut
