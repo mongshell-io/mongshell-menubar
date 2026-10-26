@@ -46,3 +46,27 @@ struct PopoverHeader<Mark: View, BeforeSettings: View, AfterSettings: View>: Vie
         .padding(.bottom, 13)
     }
 }
+
+/// The clock both popover headers run on: `TimeText.minuteTick` while
+/// `ticking`, otherwise a single entry and no further updates. One schedule
+/// type for both states keeps the header in the same `TimelineView` when a
+/// rate limit starts or ends — swapping a TimelineView branch for a plain one
+/// gives the header a new identity and rebuilds its ⋯ menu, which can close
+/// it while open (#153). Toggling the flag works the way
+/// `.animation(paused:)` does: a changed schedule value restarts the timeline
+/// from the current date.
+struct HeaderClockSchedule: TimelineSchedule {
+    let ticking: Bool
+
+    func entries(from startDate: Date, mode: TimelineScheduleMode) -> AnyIterator<Date> {
+        guard ticking else {
+            var pending: Date? = startDate
+            return AnyIterator { defer { pending = nil }; return pending }
+        }
+        var next = startDate
+        return AnyIterator {
+            defer { next = next.addingTimeInterval(TimeText.minuteTick) }
+            return next
+        }
+    }
+}

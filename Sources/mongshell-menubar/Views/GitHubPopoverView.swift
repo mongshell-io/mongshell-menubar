@@ -54,16 +54,13 @@ struct GitHubPopoverView: View {
 
     /// While the manual refresh is held back the minutes on it tick with
     /// the rate-limit banner's period, as the usage header's do; the
-    /// snapshot clock, when set, wins.
-    @ViewBuilder private var header: some View {
-        if let frozenNow = model.frozenNow {
-            header(now: frozenNow)
-        } else if model.presentation.manualRefreshBlockedUntil != nil {
-            TimelineView(.periodic(from: .now, by: TimeText.minuteTick)) { context in
-                header(now: context.date)
-            }
-        } else {
-            header(now: Date())
+    /// snapshot clock, when set, wins. Always the same TimelineView, so the
+    /// open menu survives a limit starting or ending (#153).
+    private var header: some View {
+        let frozenNow = model.frozenNow
+        let ticking = frozenNow == nil && model.presentation.manualRefreshBlockedUntil != nil
+        return TimelineView(HeaderClockSchedule(ticking: ticking)) { context in
+            header(now: frozenNow ?? context.date)
         }
     }
 
