@@ -149,7 +149,11 @@ final class UsageModel: ObservableObject {
                     expireSession(token)
                     return
                 case .transientFailure:
-                    break
+                    // The own token is still in the Keychain and may renew on
+                    // the next poll — showing signed-out here put a login
+                    // button in front of a network blip (#92).
+                    loadState = .error("사용량을 불러오지 못했습니다")
+                    return
                 }
             }
             rejectedAccessToken = token.accessToken
