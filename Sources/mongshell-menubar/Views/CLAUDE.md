@@ -18,6 +18,7 @@ non_goals:
 - 상태는 `Models/` 의 `@MainActor ObservableObject` (`UsageModel.shared`, `Preferences.shared`, `OpenClawModel`) 를 `@ObservedObject`/`@EnvironmentObject` 로 관찰한다.
 - 뷰 안에서 `URLSession`·`Process`·`FileManager`·Keychain 을 직접 부르지 않는다. 필요하면 모델에 메서드를 만들고 그것을 호출한다.
 - 사용자 액션은 모델 메서드 호출로 끝난다 (`refreshNow()`, `applyStatusURL(_:)` 등).
+- 두 팝오버의 머리말(제목·연결 배지·⋯ 메뉴)과 배너는 `PopoverHeader`·`PopoverBanner` 를 함께 쓴다. ⋯ 메뉴의 "설정…"·"종료" 는 `PopoverHeader` 가 고정하고, 영역은 자기 항목만 넣는다 — 따로 구현하다 GitHub 메뉴에서 종료가 빠진 적이 있다(#74).
 - 사용량의 배지·배너·버튼·계정 행은 뷰가 `loadState` 를 직접 `switch` 해 정하지 않고 `UsagePresentation` 을 읽는다 (#104). 뷰에 남는 것은 문구와 색이다. GitHub 의 PR 행 배지·머지 버튼은 `GitHubPullRequest`·`GitHubMergePolicy` 가 정하고, GitHub 연결 상태의 배지·배너·토큰 행은 아직 뷰가 직접 판정한다.
 
 ## 뷰 로컬 상태는 `@State` 대신 수동 펼침

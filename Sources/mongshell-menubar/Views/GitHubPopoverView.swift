@@ -53,23 +53,16 @@ struct GitHubPopoverView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 9) {
+        PopoverHeader(title: "GitHub", badge: statusBadge,
+                      onOpenSettings: onOpenSettings, onQuit: onQuit) {
             Image(systemName: "arrow.triangle.pull")
                 .font(.system(size: 18))
                 .foregroundStyle(Palette.textSecondary)
-            Text("GitHub")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Palette.textPrimary)
-            Spacer(minLength: 0)
-            Circle().fill(statusBadge.color).frame(width: 7, height: 7)
-            Text(statusBadge.text)
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.textSecondary)
-            overflowMenu
+        } beforeSettings: {
+            Button("새로고침") { model.refreshNow() }
+        } afterSettings: {
+            EmptyView()
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 15)
-        .padding(.bottom, 13)
     }
 
     private var statusBadge: (color: Color, text: String) {
@@ -82,23 +75,6 @@ struct GitHubPopoverView: View {
         case .unauthorized:   return (Palette.red, "권한 부족")
         case .patSaveFailed, .error: return (Palette.red, "오류")
         }
-    }
-
-    private var overflowMenu: some View {
-        Menu {
-            Button("새로고침") { model.refreshNow() }
-            Button("설정…") { onOpenSettings() }
-            Divider()
-            Button("mongshell-menubar 종료") { onQuit() }
-        } label: {
-            Image(systemName: "ellipsis.circle")
-                .font(.system(size: 14))
-                .foregroundStyle(Palette.textSecondary)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .frame(width: 22)
     }
 
     // MARK: State banner (mockup § C3)

@@ -185,21 +185,22 @@ struct PopoverView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 9) {
+        let presentation = model.presentation
+        return PopoverHeader(title: "mongshell-menubar", badge: statusBadge,
+                             onOpenSettings: onOpenSettings, onQuit: onQuit) {
             RingView(percent: fiveMeter.displayPercent, color: fiveMeter.color, lineWidth: 3, diameter: 18)
-            Text("mongshell-menubar")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Palette.textPrimary)
-            Spacer(minLength: 0)
-            Circle().fill(statusBadge.color).frame(width: 7, height: 7)
-            Text(statusBadge.text)
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.textSecondary)
-            overflowMenu
+        } beforeSettings: {
+            if let until = presentation.manualRefreshBlockedUntil {
+                Button("새로고침 — \(TimeText.minutesLeft(until: until))분 후 가능") {}
+                    .disabled(true)
+            } else {
+                Button("새로고침") { model.refreshNow() }
+            }
+        } afterSettings: {
+            if presentation.offersSignOut {
+                Button("로그아웃") { model.signOut() }
+            }
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 15)
-        .padding(.bottom, 13)
     }
 
     /// Real connection status (replaces the old fabricated Off-peak label —
@@ -213,32 +214,6 @@ struct PopoverView: View {
         case .limited:   return (Palette.amber, "제한됨")
         case .failed:    return (Palette.red, "오류")
         }
-    }
-
-    private var overflowMenu: some View {
-        let presentation = model.presentation
-        return Menu {
-            if let until = presentation.manualRefreshBlockedUntil {
-                Button("새로고침 — \(TimeText.minutesLeft(until: until))분 후 가능") {}
-                    .disabled(true)
-            } else {
-                Button("새로고침") { model.refreshNow() }
-            }
-            Button("설정…") { onOpenSettings() }
-            if presentation.offersSignOut {
-                Button("로그아웃") { model.signOut() }
-            }
-            Divider()
-            Button("mongshell-menubar 종료") { onQuit() }
-        } label: {
-            Image(systemName: "ellipsis.circle")
-                .font(.system(size: 14))
-                .foregroundStyle(Palette.textSecondary)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .frame(width: 22)
     }
 
     // MARK: Connection banner (only when not cleanly loaded)
