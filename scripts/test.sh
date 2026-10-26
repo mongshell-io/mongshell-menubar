@@ -111,12 +111,14 @@ echo "▶ running github tests"
 # format, which pulls in the constants and the token type it names; nothing
 # here touches the network or the Keychain. The @MainActor model is left out,
 # as above, but the 401 → refresh → retry rules it applies are compiled from
-# `UsageRefreshPolicy`. `BoundedHTTP` rides along because the client's
+# `UsageRefreshPolicy` and the state it ends in from `UsageSession`.
+# `BoundedHTTP` rides along because the client's
 # transport names it.
 echo "▶ compiling usage tests"
 swiftc -o "$OUT/usage-tests" \
   "$APP/Design/Palette.swift" \
   "$APP/Models/UsageRefreshPolicy.swift" \
+  "$APP/Models/UsageSession.swift" \
   "$APP/Models/UsageState.swift" \
   "$APP/Services/AuthDebugLog.swift" \
   "$APP/Services/BoundedHTTP.swift" \

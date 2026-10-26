@@ -27,6 +27,22 @@ enum UsageTokenChoice: Equatable {
     case ownUnavailable(OSStatus)
 }
 
+/// What came of refreshing an expired own token before polling with it.
+enum UpFrontRenewal: Equatable {
+    case renewed
+    case sessionExpired
+    case renewalFailed
+}
+
+enum UpFrontStep: Equatable {
+    /// Poll with the new token.
+    case useRenewed
+    case expireSession
+    /// Poll with the expired token anyway — a refresh blip is no reason to
+    /// stop, and a 401 then earns the usual one refresh.
+    case pollAnyway
+}
+
 /// What came of the one own-token refresh a 401 earns.
 enum OwnTokenRetry: Equatable {
     /// The refresh worked and the usage was asked again with the new token.
@@ -55,6 +71,18 @@ enum UsageRefreshStep: Equatable {
 /// tied to the Keychain and the network, so the rules are kept here where
 /// `scripts/test.sh` can pin them (#97).
 enum UsageRefreshPolicy {
+    static func shouldRenewUpFront(source: DataSource, tokenExpired: Bool) -> Bool {
+        source == .oauthLogin && tokenExpired
+    }
+
+    static func step(afterUpFront renewal: UpFrontRenewal) -> UpFrontStep {
+        switch renewal {
+        case .renewed: return .useRenewed
+        case .sessionExpired: return .expireSession
+        case .renewalFailed: return .pollAnyway
+        }
+    }
+
     /// Only the app's own token can be refreshed; a CLI token is re-read on
     /// the next poll instead (Claude Code may have rotated it).
     static func shouldRenew(after first: UsageFetchResult, source: DataSource) -> Bool {
