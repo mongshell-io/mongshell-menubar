@@ -91,7 +91,7 @@ non_goals:
 - 토큰·인증 코드를 싣는 요청(`UsageAPIClient`·`OAuthTokenClient`)은 `BoundedHTTP` 세션으로만 보낸다 — 리다이렉트를 따르지 않는다. 사양은 [docs/architecture.md § Auth](../../../docs/architecture.md#auth) 가 권위다.
 - 디버그 로그에 토큰·인증 코드를 남기지 않는다.
 - Claude Code 의 Keychain 항목은 **읽기 전용**으로 취급한다. 우리 것이 아니다.
-- **Keychain 실패를 "없음" 으로 접지 않는다.** 읽기는 `errSecItemNotFound` 와 그 밖의 실패(잠김·거부)를 타입으로 나눠 올리고(`OwnTokenLookup`), 쓰기는 상태를 돌려주며 실패를 로그에 남긴다. GitHub 쪽(`.missing/.denied/.failure`)과 같은 원칙이다 (#102).
+- **자체 토큰의 Keychain 실패를 "없음" 으로 접지 않는다.** 읽기는 `errSecItemNotFound` 와 그 밖의 실패(잠김·거부)를 타입으로 나눠 올리고(`OwnTokenLookup`), 쓰기는 상태를 돌려주며 실패를 로그에 남긴다. GitHub 쪽(`.missing/.denied/.failure`)과 같은 원칙이다 (#102). Claude Code 항목 읽기는 아직 거부와 없음을 나누지 않는다 — 없으면 로그아웃으로 보일 뿐 우리 토큰을 잃지는 않는다.
 
 GitHub 토큰(Decision #45)에도 같은 규칙을 적용한다 — Keychain 에만 두고, `api.github.com` 외 어디에도 보내지 않으며, 로그·에러 문구·배너에 토큰 값을 넣지 않는다 (배너에 쓰는 것은 계정명까지다). gh CLI 의 항목은 Claude Code 의 것과 같이 읽기 전용이다.
 
