@@ -1149,13 +1149,17 @@ do {
         var cappedAt: Date?
     }
     let drains = MainActor.assumeIsolated { Drains() }
+    // Each job signals once it is running, so the drain below is queued after
+    // it by construction rather than by a sleep that a loaded machine outruns.
     let slow = Probe()
-    Task.detached { _ = await KeychainQueue.run { slow.job(1, pause: 0.05) } }
-    Thread.sleep(forTimeInterval: 0.01)
+    let slowStarted = DispatchSemaphore(value: 0)
+    Task.detached { _ = await KeychainQueue.run { slowStarted.signal(); return slow.job(1, pause: 0.05) } }
+    slowStarted.wait()
     KeychainQueue.whenDrained(timeout: 5) { drains.afterSlow = slow.order }
     let blocker = DispatchSemaphore(value: 0)
-    Task.detached { _ = await KeychainQueue.run { blocker.wait() } }
-    Thread.sleep(forTimeInterval: 0.01)
+    let blockerStarted = DispatchSemaphore(value: 0)
+    Task.detached { _ = await KeychainQueue.run { blockerStarted.signal(); blocker.wait() } }
+    blockerStarted.wait()
     let cappedStart = Date()
     KeychainQueue.whenDrained(timeout: 0.2) { drains.cappedAt = Date() }
     let drainDeadline = Date().addingTimeInterval(5)
@@ -1166,7 +1170,8 @@ do {
     let (afterSlow, cappedAt) = MainActor.assumeIsolated { (drains.afterSlow, drains.cappedAt) }
     check("Keychain queue: drain waits for the job queued before it", afterSlow == [1], "\(String(describing: afterSlow))")
     check("Keychain queue: drain gives up at the cap while a job hangs (a prompt left up)",
-          cappedAt.map { $0.timeIntervalSince(cappedStart) < 2 } ?? false)
+          cappedAt.map { (0.15..<2).contains($0.timeIntervalSince(cappedStart)) } ?? false,
+          "\(String(describing: cappedAt.map { $0.timeIntervalSince(cappedStart) }))")
 }
 
 // MARK: #133 — reset phrases are made at draw time; flat fallbacks are logged
