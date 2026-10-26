@@ -174,7 +174,7 @@ private struct MenuRing: View {
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.secondary.opacity(0.30), lineWidth: Self.lineWidth)
+                .stroke(Palette.menuBarRingTrack, lineWidth: Self.lineWidth)
             Circle()
                 .trim(from: 0, to: max(0, min(1, CGFloat(percent) / 100)))
                 .stroke(color, style: StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round))

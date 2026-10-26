@@ -316,6 +316,21 @@ private extension ServerHost {
         disk: ServerHostDisk(level: .critical, availableBytes: 4_200_000_000))
 }
 
+/// Backdrops the snapshot images are drawn on — snapshot-only, not app
+/// colors, so they stay here rather than in `Palette`.
+private enum SnapshotBackdrop {
+    /// The light backdrop; also the light menu bar.
+    static let light = Color(hex: 0xE8E6E1)
+    /// A status-bar stand-in, per appearance.
+    static func menuBar(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color(hex: 0x2C2C30) : light
+    }
+    /// The desktop around the menu-bar band in `MenuBarHostStrip`.
+    static func desktop(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color(hex: 0x1A1A1D) : Color(hex: 0xCFCDC8)
+    }
+}
+
 /// Menu-bar mock: Claude mark + `5h · 7d` text at three usage-level pairs, each
 /// with a different openclaw dot (ok / server unreachable / gateway down) so the
 /// grey-vs-red distinction is visible side by side; last, an unread 5-hour
@@ -340,7 +355,7 @@ private struct MenuBarStrip: View {
         }
         .padding(.horizontal, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(scheme == .dark ? Color(hex: 0x2C2C30) : Color(hex: 0xE8E6E1))
+        .background(SnapshotBackdrop.menuBar(scheme))
     }
 }
 
@@ -375,9 +390,9 @@ private struct MenuBarHostStrip: View {
         .frame(maxWidth: .infinity)
         .frame(height: Self.menuBarThickness)
         .clipped()
-        .background(scheme == .dark ? Color(hex: 0x2C2C30) : Color(hex: 0xE8E6E1))
+        .background(SnapshotBackdrop.menuBar(scheme))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(scheme == .dark ? Color(hex: 0x1A1A1D) : Color(hex: 0xCFCDC8))
+        .background(SnapshotBackdrop.desktop(scheme))
     }
 }
 
@@ -539,7 +554,7 @@ private struct GitHubMenuBarStrip: View {
         }
         .padding(.horizontal, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(scheme == .dark ? Color(hex: 0x2C2C30) : Color(hex: 0xE8E6E1))
+        .background(SnapshotBackdrop.menuBar(scheme))
     }
 }
 
@@ -550,7 +565,7 @@ private struct GitHubHoverPreview: View {
         GitHubHoverSummaryView(model: github)
             .background(Palette.popoverBG)
             .padding(24)
-            .background(Color(hex: 0xE8E6E1))
+            .background(SnapshotBackdrop.light)
     }
 }
 
@@ -559,7 +574,7 @@ private struct GitHubPopoverPreview: View {
     var body: some View {
         GitHubPopoverView(model: github, prefs: .shared, onOpenSettings: {}, onQuit: {})
             .padding(24)
-            .background(Color(hex: 0xE8E6E1))
+            .background(SnapshotBackdrop.light)
     }
 }
 
@@ -602,7 +617,7 @@ private struct HoverPreview: View {
         HoverSummaryView(model: .shared, prefs: .shared)
             .background(Palette.popoverBG)
             .padding(24)
-            .background(Color(hex: 0xE8E6E1))
+            .background(SnapshotBackdrop.light)
     }
 }
 
@@ -614,6 +629,6 @@ private struct PopoverPreview: View {
             onOpenSettings: {}, onQuit: {}
         )
         .padding(24)
-        .background(Color(hex: 0xE8E6E1))
+        .background(SnapshotBackdrop.light)
     }
 }

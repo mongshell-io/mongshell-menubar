@@ -19,6 +19,13 @@ enum Palette {
     /// full grey ring is not read as 100% (or, empty, as 0%).
     static let usageUnknownDash: CGFloat = 1.6
 
+    // Menu-bar lines. Derived from the adaptive secondary so they follow the
+    // status bar's light/dark appearance like the glyphs do.
+    /// The unfilled track of a menu-bar ring gauge.
+    static let menuBarRingTrack = Color.secondary.opacity(0.30)
+    /// The hairline between the Claude and GitHub regions (Decision #45).
+    static let menuBarRegionDivider = Color.secondary.opacity(0.3)
+
     // Popover text
     static let textPrimary   = Color(hex: 0x1D1D1F)
     static let textSecondary = Color(hex: 0x86868B)
