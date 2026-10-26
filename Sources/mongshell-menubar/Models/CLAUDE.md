@@ -18,7 +18,7 @@ non_goals:
 | 종류 | 예 | 규칙 |
 |---|---|---|
 | 상태 소유 객체 | `UsageModel`, `OpenClawModel`, `ClaudeSettingsModel`, `Preferences`, `LoginItemModel`, `GitHubModel` | `@MainActor final class … : ObservableObject` |
-| 값 타입 | `UsageSnapshot`, `ModelUsage`, `OpenClawHealth`, `ServerHost` / `ServerHostPower` / `ServerHostDisk` / `ServerHostRunners` / `ServerHostLevel`, `ServerHostHealth` | `struct`/`enum`, `Equatable`, 로직 없음에 가깝게. 단 판정 규칙을 테스트 가능하게 담는 순수 값 타입은 허용 (`OpenClawReading` — 두절 판정, `OpenClawHealWatch` — 복구 알림 판정, `ServerHostAlertWatch` — 서버 호스트 알림 판정, `GitHubPullRequest` — PR 배지·점·숫자 판정, `GitHubCILine` — hover CI 줄 판정, `GitHubMergePolicy` — 머지 버튼 노출·요청·머지 상태 이월 판정, `UsageRetryPolicy` — 429 대기·수동 새로고침 차단 판정, `UsageRefreshPolicy` — 사용량 토큰 선택·선제 갱신·401 → 갱신 → 재요청 판정, `UsageSession` — 사용량 표시 상태와 세션 플래그의 전이, `UsageThresholdWatch` — 사용량 임계 알림 판정, `UsagePresentation` — 사용량 배지·배너·버튼·계정 행 노출 판정) |
+| 값 타입 | `UsageSnapshot`, `ModelUsage`, `OpenClawHealth`, `ServerHost` / `ServerHostPower` / `ServerHostDisk` / `ServerHostRunners` / `ServerHostLevel`, `ServerHostHealth` | `struct`/`enum`, `Equatable`, 로직 없음에 가깝게. 단 판정 규칙을 테스트 가능하게 담는 순수 값 타입은 허용 (`OpenClawReading` — 두절 판정, `OpenClawHealWatch` — 복구 알림 판정, `ServerHostAlertWatch` — 서버 호스트 알림 판정, `GitHubPullRequest` — PR 배지·점·숫자 판정, `GitHubCILine` — hover CI 줄 판정, `GitHubMergePolicy` — 머지 버튼 노출·요청·머지 상태 이월 판정, `UsageRetryPolicy` — 429 대기·수동 새로고침 차단 판정, `UsageRefreshPolicy` — 사용량 토큰 선택·선제 갱신·401 → 갱신 → 재요청 판정, `UsageSession` — 사용량 표시 상태와 세션 플래그의 전이, `UsageThresholdWatch` — 사용량 임계 알림 판정, `UsagePresentation` — 사용량 배지·배너·버튼·계정 행 노출 판정, `GitHubPresentation` — GitHub 연결 배지·배너·버튼·토큰 행 노출 판정) |
 
 ## `@MainActor` 격리
 

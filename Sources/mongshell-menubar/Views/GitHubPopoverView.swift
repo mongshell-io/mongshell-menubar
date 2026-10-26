@@ -66,55 +66,67 @@ struct GitHubPopoverView: View {
     }
 
     private var statusBadge: (color: Color, text: String) {
-        switch model.loadState {
-        case .off, .loading:  return (Palette.textTertiary, "동기화 중")
-        case .loaded:         return (Palette.onlineDot, "연결됨")
-        case .noToken:        return (Palette.textTertiary, "토큰 없음")
-        case .keychainDenied: return (Palette.textTertiary, "거부됨")
-        case .rateLimited:    return (Palette.amber, "제한됨")
-        case .unauthorized:   return (Palette.red, "권한 부족")
-        case .patSaveFailed, .error: return (Palette.red, "오류")
+        switch model.presentation.badge {
+        case .syncing:      return (Palette.textTertiary, "동기화 중")
+        case .connected:    return (Palette.onlineDot, "연결됨")
+        case .noToken:      return (Palette.textTertiary, "토큰 없음")
+        case .denied:       return (Palette.textTertiary, "거부됨")
+        case .limited:      return (Palette.amber, "제한됨")
+        case .unauthorized: return (Palette.red, "권한 부족")
+        case .failed:       return (Palette.red, "오류")
         }
     }
 
     // MARK: State banner (mockup § C3)
 
     @ViewBuilder private var stateBanner: some View {
-        switch model.loadState {
-        case .off, .loading:
-            PopoverBanner(text: "불러오는 중…", tint: Palette.textSecondary)
-        case .loaded(.ghCLI(let account)):
-            PopoverBanner(text: "gh CLI 계정 사용 중 · \(account)", tint: Palette.onlineDot)
-        case .loaded(.pat):
-            PopoverBanner(text: "PAT 사용 중", tint: Palette.onlineDot)
+        let presentation = model.presentation
+        let action = presentation.bannerAction
+        switch presentation.banner {
+        case .loading:
+            PopoverBanner(text: "불러오는 중…", tint: Palette.textSecondary) { bannerButton(action) }
+        case .ghAccount(let account):
+            PopoverBanner(text: "gh CLI 계정 사용 중 · \(account)", tint: Palette.onlineDot) { bannerButton(action) }
+        case .pat:
+            PopoverBanner(text: "PAT 사용 중", tint: Palette.onlineDot) { bannerButton(action) }
         case .noToken:
             PopoverBanner(text: "GitHub 토큰이 없어요 — 로그인하면 PR 이 보여요", tint: Palette.amber) {
-                Button("설정…") { onOpenSettings() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                bannerButton(action)
             }
         case .keychainDenied:
-            PopoverBanner(text: "gh 토큰 접근이 거부됨", tint: Palette.amber) {
-                Button("다시 시도") { model.retryGHKeychain() }
-                    .controlSize(.small)
-            }
+            PopoverBanner(text: "gh 토큰 접근이 거부됨", tint: Palette.amber) { bannerButton(action) }
         case .rateLimited(let retryAt):
             PopoverBanner(text: "API 한도 초과 — \(TimeText.minutesLeft(until: retryAt, now: model.frozenNow ?? Date()))분 후 자동 재시도",
-                          tint: Palette.amber)
+                          tint: Palette.amber) { bannerButton(action) }
         case .unauthorized:
             PopoverBanner(text: "토큰이 거부되었어요 (401) — 권한 확인 필요", tint: Palette.red) {
-                retryButton
+                bannerButton(action)
             }
-        case .patSaveFailed:
-            PopoverBanner(text: model.loadState.hoverLabel, tint: Palette.red) { retryButton }
-        case .error(let message):
-            PopoverBanner(text: message, tint: Palette.red) { retryButton }
+        case .patSaveFailed(let status):
+            // Same wording as the hover's grey-dot line — one source for it.
+            PopoverBanner(text: GitHubLoadState.patSaveFailed(status).hoverLabel, tint: Palette.red) {
+                bannerButton(action)
+            }
+        case .failed(let message):
+            PopoverBanner(text: message, tint: Palette.red) { bannerButton(action) }
         }
     }
 
-    private var retryButton: some View {
-        Button("재시도") { model.refreshNow() }
-            .controlSize(.small)
+    @ViewBuilder private func bannerButton(_ action: GitHubPresentation.BannerAction) -> some View {
+        switch action {
+        case .none:
+            EmptyView()
+        case .openSettings:
+            Button("설정…") { onOpenSettings() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+        case .retryGHKeychain:
+            Button("다시 시도") { model.retryGHKeychain() }
+                .controlSize(.small)
+        case .retry:
+            Button("재시도") { model.refreshNow() }
+                .controlSize(.small)
+        }
     }
 
     // MARK: PR sections

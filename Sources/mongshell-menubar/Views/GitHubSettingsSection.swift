@@ -74,29 +74,31 @@ struct GitHubSettingsSection: View {
     // MARK: Token
 
     @ViewBuilder private var tokenRow: some View {
-        switch (model.tokenSource, model.loadState) {
-        case (.pat?, .unauthorized):
+        let presentation = model.presentation
+        switch presentation.token {
+        case .pat(rejected: true):
             LabeledContent("토큰", value: "PAT 사용 중 — 거부됨 (401)")
-            clearPATButton
-        case (.pat?, _):
+        case .pat(rejected: false):
             LabeledContent("토큰", value: "PAT 사용 중")
-            clearPATButton
-        case (.ghCLI(let account)?, .unauthorized):
+        case .ghAccount(let account, rejected: true):
             LabeledContent("토큰", value: "gh CLI 계정 \(account) — 거부됨 (401)")
-        case (.ghCLI(let account)?, _):
+        case .ghAccount(let account, rejected: false):
             LabeledContent("토큰", value: "gh CLI 계정 \(account) 사용")
-        case (nil, .keychainDenied):
+        case .keychainDenied:
             LabeledContent("토큰", value: "gh 토큰 접근이 거부됨")
-            Button("gh 토큰 다시 시도") { model.retryGHKeychain() }
-        case (nil, .loading):
+        case .checking:
             LabeledContent("토큰", value: "확인 중…")
-        case (nil, _):
+        case .none:
             LabeledContent("토큰", value: "없음")
         }
-    }
-
-    private var clearPATButton: some View {
-        Button("PAT 지우기") { model.clearPAT() }
+        switch presentation.tokenAction {
+        case .none:
+            EmptyView()
+        case .clearPAT:
+            Button("PAT 지우기") { model.clearPAT() }
+        case .retryGHKeychain:
+            Button("gh 토큰 다시 시도") { model.retryGHKeychain() }
+        }
     }
 
     private func applyPAT() {

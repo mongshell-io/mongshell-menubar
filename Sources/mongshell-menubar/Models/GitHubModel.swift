@@ -77,6 +77,11 @@ final class GitHubModel: ObservableObject {
         self.client = client
     }
 
+    /// What the connection surfaces show and offer right now (#117).
+    var presentation: GitHubPresentation {
+        GitHubPresentation(loadState: loadState, tokenSource: tokenSource)
+    }
+
     // MARK: Lifecycle
 
     func start() {
