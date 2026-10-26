@@ -91,12 +91,15 @@ swift build && MONGSHELL_SNAPSHOT=/tmp/mongshell_snaps ./.build/debug/mongshell-
 | `popover_openclaw_unreachable` / `popover_openclaw_down` | 팝오버 — openclaw 두절 / 게이트웨이 다운 |
 | `popover_extra_limit` | 팝오버 — 로그인된 상태(샘플 배너 없음)에서 7일 한도 아래에 앱이 모르는 `kind` 의 한도(설정 화면의 제한 초기화/보너스) 한 줄이 위험도 색 막대와 초기화 캡션으로 붙은 상태. `popover` 에는 없다 |
 | `popover_usage_rate_limited` / `popover_usage_session_expired` / `popover_usage_error` / `popover_usage_cli_account` | 팝오버 — 사용량 배너가 상태마다 다른 모습: 요청 제한(N분 후 자동 재시도, 버튼 없음) / 로그인 만료(로그인 버튼) / 오류(재시도 버튼) / Claude Code 계정 사용 중. 숫자는 샘플이다 |
+| `popover_usage_no_values` | 팝오버 — 5시간·7일 한도를 모두 읽지 못하고 초기화 시각도 없는 상태 (#133): 회색 링·"—" 아래에 "곧 초기화" 같은 초기화 문구가 없다 |
+| `hover` / `hover_no_values` | Claude 영역 hover 요약 — 5시간·7일 두 줄(퍼센트 · 초기화 문구) / 값도 초기화 시각도 없어 "—" 만 남은 상태 (#133). 5시간 초기화 문구는 그릴 때 만들어지며, 스냅샷은 샘플의 초기화 시각을 렌더 시계에 고정해 "3시간 8분" 으로 그린다 |
 | `popover_usage_unread_limits` | 팝오버 — 응답에서 5시간 한도를 읽지 못한 상태 (#130): 머리말·본 게이지가 점선 회색 링과 "—", "사용량 형식을 읽지 못했습니다" 배너(버튼 없음). 읽힌 7일 한도는 그대로 보인다 |
 | `settings` / `settings_claude` / `settings_openclaw` / `settings_openclaw_down` | 설정창 |
 | `github_menubar_strip_dark` / `github_menubar_strip_light` / `github_menubar_strip_zero_dark` / `github_menubar_strip_ci_dark` | 메뉴바 두 영역 — Claude 영역 뒤에 헤어라인 · GitHub 글리프 · 점 · 숫자 (3건·빨강 / 0건·초록 / 0건·주황 = CI 진행중) |
 | `github_menubar_strip_merge_dark` / `github_menubar_strip_merge_light` | 메뉴바 두 영역 — 머지 가능한 내 PR 이 있어 글리프가 초록 merge 로 바뀐 상태 (Decision #52). `_zero_dark` 와 글리프 칸 밖은 픽셀 단위로 같아야 한다 (폭 불변) |
 | `github_hover` | GitHub 영역 hover 요약 — CI 줄 + 내 PR 줄 + 머지 가능 줄, CI 경과 시간은 `frozenNow` 로 고정 |
 | `github_popover` / `github_popover_overflow` / `github_popover_no_token` / `github_popover_unauthorized` | GitHub 팝오버 — gh CLI 로 연결됨 / 섹션 상한 초과("외 N건")와 빈 섹션("없음") / 토큰 없음 배너 / 401 배너. 진행중 칩의 경과 시간은 `frozenNow` 로 고정 |
+| `github_popover_rate_limited` | GitHub 팝오버 — API 한도 초과 배너("N분 후 자동 재시도", #133). 남은 분은 `frozenNow` 로 고정 |
 | `github_popover_merge_failed` | GitHub 팝오버 — 내 PR 의 머지 가능 행에서 GitHub 가 squash 머지를 거절해 행 아래 빨간 사유 한 줄이 붙은 상태 (Decision #49). `github_popover` 에는 같은 행에 평상시 버튼이 보인다 |
 | `settings_github` | 설정창 GitHub 섹션 (켜진 상태) |
 

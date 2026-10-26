@@ -47,8 +47,10 @@ enum SnapshotRenderer {
         }
         // Every usage state is set explicitly: an image must not lean on
         // whatever the one before it left behind (#104).
-        UsageModel.shared.presentForSnapshot(.sample, state: .signedOut)
+        let sample = UsageSnapshot.snapshotSample(now: now)
+        UsageModel.shared.presentForSnapshot(sample, state: .signedOut)
         write(PopoverPreview(), to: base, "popover", scale: 2)
+        write(HoverPreview(), to: base, "hover", scale: 2)
         UsageModel.shared.presentForSnapshot(.snapshotExtraLimit(now: now), state: .loaded(.oauthLogin))
         write(PopoverPreview(), to: base, "popover_extra_limit", scale: 2)
         // The states the usage banner and its buttons turn on (#104).
@@ -58,16 +60,26 @@ enum SnapshotRenderer {
             (.error("사용량을 불러오지 못했습니다"), "error"),
             (.loaded(.claudeCodeCLI), "cli_account"),
         ] {
-            UsageModel.shared.presentForSnapshot(.sample, state: state)
+            UsageModel.shared.presentForSnapshot(sample, state: state)
             write(PopoverPreview(), to: base, "popover_usage_\(name)", scale: 2)
         }
         // A response whose 5-hour row went missing: grey ring and the format
         // banner, the weekly limit still read (#130).
-        var unread = UsageSnapshot.sample
+        var unread = sample
         unread.fiveHourPercent = nil
         UsageModel.shared.presentForSnapshot(unread, state: .loaded(.oauthLogin))
         write(PopoverPreview(), to: base, "popover_usage_unread_limits", scale: 2)
-        UsageModel.shared.presentForSnapshot(.sample, state: .signedOut)
+        // Neither limit read and no reset times: dashes, and no "곧 초기화"
+        // under the ring or beside the hover rows (#133).
+        var noValues = sample
+        noValues.fiveHourPercent = nil
+        noValues.fiveHourResetAt = nil
+        noValues.weeklyAllPercent = nil
+        noValues.weeklyResetAt = nil
+        UsageModel.shared.presentForSnapshot(noValues, state: .loaded(.oauthLogin))
+        write(PopoverPreview(), to: base, "popover_usage_no_values", scale: 2)
+        write(HoverPreview(), to: base, "hover_no_values", scale: 2)
+        UsageModel.shared.presentForSnapshot(sample, state: .signedOut)
         OpenClawModel.shared.presentForSnapshot(
             .snapshotOK(now: now, host: .snapshotOnBattery), now: now)
         write(PopoverPreview(), to: base, "popover_host_on_battery", scale: 2)
@@ -160,6 +172,9 @@ enum SnapshotRenderer {
         write(GitHubPopoverPreview(github: github), to: base, "github_popover_no_token", scale: 2)
         github.presentForSnapshot(nil, state: .unauthorized, now: now)
         write(GitHubPopoverPreview(github: github), to: base, "github_popover_unauthorized", scale: 2)
+        github.presentForSnapshot(.sample(now: now), state: .rateLimited(retryAt: now.addingTimeInterval(600)),
+                                  now: now)
+        write(GitHubPopoverPreview(github: github), to: base, "github_popover_rate_limited", scale: 2)
 
         // The section's rows only appear with the region on; switch it on in
         // the volatile argument domain for this one image and off again, so
@@ -563,11 +578,22 @@ private struct GitHubSectionPreview: View {
 }
 
 private extension UsageSnapshot {
+    /// `.sample` with its 5-hour reset pinned to the render's clock. The
+    /// countdown is phrased at draw time (#133), so `.sample`'s own instant —
+    /// fixed whenever it was first read — would let the minutes drift. The
+    /// half-minute of slack keeps "3시간 8분" through the seconds a run takes.
+    static func snapshotSample(now: Date) -> UsageSnapshot {
+        let fiveHourLeft: TimeInterval = 3 * 3600 + 8 * 60 + 30
+        var snapshot = UsageSnapshot.sample
+        snapshot.fiveHourResetAt = now.addingTimeInterval(fiveHourLeft)
+        return snapshot
+    }
+
     /// The sample plus one limit of a kind the app does not know — what a
     /// reset/bonus from the settings page would look like. Kept out of
     /// `.sample` itself: the signed-out popover must not show a fake bonus.
     static func snapshotExtraLimit(now: Date) -> UsageSnapshot {
-        var snapshot = UsageSnapshot.sample
+        var snapshot = UsageSnapshot.snapshotSample(now: now)
         // Pinned to a weekday + clock like `.sample.weeklyResetAt`, so the
         // caption reads "수요일 21:59 초기화" whenever the render runs.
         let resetAt = Calendar.current.nextDate(
@@ -576,8 +602,18 @@ private extension UsageSnapshot {
             matchingPolicy: .nextTime)
         snapshot.extraLimits = [ExtraLimit(
             id: "bonus", kind: "bonus", scopeModel: nil, percent: 12,
-            resetAt: resetAt, resetText: TimeText.resetsAt(resetAt), isActive: true)]
+            resetAt: resetAt, isActive: true)]
         return snapshot
+    }
+}
+
+/// The Claude hover summary, on the same backdrop as `GitHubHoverPreview`.
+private struct HoverPreview: View {
+    var body: some View {
+        HoverSummaryView(model: .shared, prefs: .shared)
+            .background(Palette.popoverBG)
+            .padding(24)
+            .background(Color(hex: 0xE8E6E1))
     }
 }
 

@@ -240,7 +240,7 @@ struct PopoverView: View {
             banner(text: "불러오는 중…", tint: Palette.textSecondary) { bannerButton(action) }
         case .rateLimited(let retryAt):
             // Nothing is published until `retryAt`, so the minutes tick here.
-            TimelineView(.periodic(from: .now, by: 60)) { context in
+            TimelineView(.periodic(from: .now, by: TimeText.minuteTick)) { context in
                 banner(text: "요청이 제한되었습니다 — \(TimeText.minutesLeft(until: retryAt, now: context.date))분 후 자동 재시도",
                        tint: Palette.amber) { bannerButton(action) }
             }
@@ -298,9 +298,14 @@ struct PopoverView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Palette.textSecondary)
                 .padding(.bottom, 3)
-            Text(snap.fiveHourResetText)
-                .font(.system(size: 14))
-                .foregroundStyle(Palette.textPrimary)
+            // The countdown is phrased here, not stored, so it keeps moving
+            // between polls (#133). With no reset time the line stays empty
+            // rather than claiming "곧 초기화".
+            TimelineView(.periodic(from: .now, by: TimeText.minuteTick)) { context in
+                Text(TimeText.resetsIn(snap.fiveHourResetAt, now: context.date))
+                    .font(.system(size: 14))
+                    .foregroundStyle(Palette.textPrimary)
+            }
         }
         .padding(.horizontal, 18)
         .padding(.top, 22)
@@ -316,7 +321,7 @@ struct PopoverView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Palette.textSecondary)
                 Spacer()
-                Text(snap.weeklyResetText)
+                Text(TimeText.resetsAt(snap.weeklyResetAt))
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.textTertiary)
             }
@@ -337,8 +342,8 @@ struct PopoverView: View {
                 Spacer().frame(height: 16)
                 usageBar(meter: Meter(usedPercent: limit.percent, showRemaining: prefs.showRemaining, colorCoding: prefs.colorCoding),
                          label: limit.name, color: nil)
-                if limit.resetAt != nil {
-                    Text(limit.resetText)
+                if let resetAt = limit.resetAt {
+                    Text(TimeText.resetsAt(resetAt))
                         .font(.system(size: 12))
                         .foregroundStyle(Palette.textTertiary)
                         .padding(.top, 6)

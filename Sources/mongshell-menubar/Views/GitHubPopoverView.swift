@@ -96,8 +96,15 @@ struct GitHubPopoverView: View {
         case .keychainDenied:
             PopoverBanner(text: "gh 토큰 접근이 거부됨", tint: Palette.amber) { bannerButton(action) }
         case .rateLimited(let retryAt):
-            PopoverBanner(text: "API 한도 초과 — \(TimeText.minutesLeft(until: retryAt, now: model.frozenNow ?? Date()))분 후 자동 재시도",
-                          tint: Palette.amber) { bannerButton(action) }
+            // Nothing is published until `retryAt`, so the minutes tick here,
+            // as on the usage banner. The snapshot clock, when set, wins.
+            if let frozenNow = model.frozenNow {
+                rateLimitedBanner(retryAt: retryAt, now: frozenNow, action: action)
+            } else {
+                TimelineView(.periodic(from: .now, by: TimeText.minuteTick)) { context in
+                    rateLimitedBanner(retryAt: retryAt, now: context.date, action: action)
+                }
+            }
         case .unauthorized:
             PopoverBanner(text: "토큰이 거부되었어요 (401) — 권한 확인 필요", tint: Palette.red) {
                 bannerButton(action)
@@ -110,6 +117,12 @@ struct GitHubPopoverView: View {
         case .failed(let message):
             PopoverBanner(text: message, tint: Palette.red) { bannerButton(action) }
         }
+    }
+
+    private func rateLimitedBanner(retryAt: Date, now: Date,
+                                   action: GitHubPresentation.BannerAction) -> some View {
+        PopoverBanner(text: "API 한도 초과 — \(TimeText.minutesLeft(until: retryAt, now: now))분 후 자동 재시도",
+                      tint: Palette.amber) { bannerButton(action) }
     }
 
     @ViewBuilder private func bannerButton(_ action: GitHubPresentation.BannerAction) -> some View {

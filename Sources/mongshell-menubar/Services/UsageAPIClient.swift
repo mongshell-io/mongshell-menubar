@@ -132,7 +132,6 @@ struct UsageAPIClient {
                     scopeModel: scopeModel,
                     percent: pct,
                     resetAt: reset,
-                    resetText: TimeText.resetsAt(reset),
                     isActive: limit["is_active"] as? Bool))
             case nil:
                 break
@@ -141,26 +140,29 @@ struct UsageAPIClient {
 
         // The flat objects mirror session/weekly_all, so each is the
         // fallback for its own window when `limits` is absent or no longer
-        // carries a readable row for it.
+        // carries a readable row for it. A fallback taken while `limits` is
+        // there is noted for the debug log: the row it replaced went away.
+        var flatFallbacks: [String] = []
         if fivePct == nil, let five = root["five_hour"] as? [String: Any],
            let pct = percentValue(five["utilization"]) {
             fivePct = pct; fiveReset = ResponseDate.parse(five["resets_at"])
+            if !limits.isEmpty { flatFallbacks.append("five_hour") }
         }
         if weeklyPct == nil, let weekly = root["seven_day"] as? [String: Any],
            let pct = percentValue(weekly["utilization"]) {
             weeklyPct = pct; weeklyReset = ResponseDate.parse(weekly["resets_at"])
+            if !limits.isEmpty { flatFallbacks.append("seven_day") }
         }
 
         return UsageSnapshot(
             fiveHourPercent: fivePct,
-            fiveHourResetText: TimeText.resetsIn(fiveReset),
             fiveHourResetAt: fiveReset,
             weeklyAllPercent: weeklyPct,
-            weeklyResetText: TimeText.resetsAt(weeklyReset),
             weeklyResetAt: weeklyReset,
             models: models,
             extraLimits: extraLimits,
             unknownTopLevel: unknownTopLevel(in: root),
+            flatFallbacks: flatFallbacks,
             creditsText: creditsText(from: root),
             lastUpdated: Date()
         )

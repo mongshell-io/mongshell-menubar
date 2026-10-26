@@ -116,8 +116,6 @@ do {
     check("extra percent", extra?.percent == 12, "\(String(describing: extra?.percent))")
     check("extra resetAt", extra?.resetAt == iso("2026-11-05T07:59:00+00:00"),
           "\(String(describing: extra?.resetAt))")
-    check("extra resetText is the popover phrasing",
-          extra?.resetText == TimeText.resetsAt(iso("2026-11-05T07:59:00+00:00")), extra?.resetText ?? "nil")
     check("extra is_active carried", extra?.isActive == true, "\(String(describing: extra?.isActive))")
     check("known three unchanged: session", snap.fiveHourPercent == 4 && snap.fiveHourResetAt == sessionReset)
     check("known three unchanged: weekly_all", snap.weeklyAllPercent == 23 && snap.weeklyResetAt == weeklyReset)
@@ -141,7 +139,6 @@ do {
     check("scoped unknown kind → scopeModel alone matches the weekly_scoped row",
           extra?.scopeModel == snap.models.first?.name, extra?.scopeModel ?? "nil")
     check("no resets_at → resetAt nil", extra?.resetAt == nil, "\(String(describing: extra?.resetAt))")
-    check("no resets_at → resetText empty", extra?.resetText == "", extra?.resetText ?? "nil")
     check("no is_active → nil", extra?.isActive == nil, "\(String(describing: extra?.isActive))")
 } catch {
     check("response with scoped unknown kind parses", false, "\(error)")
@@ -256,7 +253,7 @@ func unknownSnapshot(percent: Int = 12, kind: String = "bonus", resetAt: Date? =
                      utilization: Int? = 100) -> UsageSnapshot {
     var snap = UsageSnapshot.sample
     snap.extraLimits = [ExtraLimit(id: kind, kind: kind, scopeModel: nil, percent: percent,
-                                   resetAt: resetAt, resetText: "", isActive: true)]
+                                   resetAt: resetAt, isActive: true)]
     snap.unknownTopLevel = [UnknownBucket(key: "iguana_necktie", utilization: utilization, resetAt: nil)]
     return snap
 }
@@ -850,6 +847,43 @@ do {
           UsageRefreshPolicy.chooseToken(resolution: UsageRefreshPolicy.resolvePending(held, own: refused),
                                          own: refused, cli: { cliToken })
               == .token(renewed, .oauthLogin))
+}
+
+// MARK: #133 — reset phrases are made at draw time; flat fallbacks are logged
+
+do {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    let reset = now.addingTimeInterval(3 * 3600 + 8 * 60)
+    check("countdown follows the clock it is drawn with",
+          TimeText.resetsIn(reset, now: now) == "3시간 8분 후 초기화"
+          && TimeText.resetsIn(reset, now: now.addingTimeInterval(3 * 3600)) == "8분 후 초기화",
+          TimeText.resetsIn(reset, now: now.addingTimeInterval(3 * 3600)))
+    check("past the reset → 곧 초기화", TimeText.resetsIn(reset, now: reset) == "곧 초기화")
+    check("no reset time → empty, not 곧 초기화", TimeText.resetsIn(nil, now: now) == "",
+          TimeText.resetsIn(nil, now: now))
+    check("weekly phrase: no reset time → empty", TimeText.resetsAt(nil) == "")
+
+    // The real shape with its session row renamed: the flat `five_hour`
+    // (utilization 4) fills the window and the log says so.
+    let renamedBody = String(decoding: response(), as: UTF8.self)
+        .replacingOccurrences(of: #""kind":"session""#, with: #""kind":"session_v2""#)
+    let renamed = try UsageAPIClient.parse(body(renamedBody))
+    check("session row renamed, five_hour present → read flat and noted",
+          renamed.fiveHourPercent == 4 && renamed.flatFallbacks == ["five_hour"],
+          "\(String(describing: renamed.fiveHourPercent)) \(renamed.flatFallbacks)")
+    let line = AuthDebugLog.usageUnknownLine(renamed) ?? ""
+    check("flat fallback → a log line naming the window",
+          line.contains("read flat five_hour"), line)
+    check("flat fallback → a dedupe key, so the line is written once",
+          AuthDebugLog.usageUnknownKey(renamed) != nil)
+
+    let flatOnly = try UsageAPIClient.parse(body(#"{"five_hour": {"utilization": 41}, "seven_day": {"utilization": 9}}"#))
+    check("no limits array → flat objects read, nothing noted",
+          flatOnly.fiveHourPercent == 41 && flatOnly.weeklyAllPercent == 9 && flatOnly.flatFallbacks.isEmpty,
+          "\(flatOnly.flatFallbacks)")
+    check("real response shape → nothing noted", (try UsageAPIClient.parse(response())).flatFallbacks.isEmpty)
+} catch {
+    check("#133 responses parse", false, "\(error)")
 }
 
 // MARK: result

@@ -15,9 +15,15 @@ struct HoverSummaryView: View {
         // Grid so the three columns (label · percent · reset) line up across
         // both rows — label and percent widths differ per row, which left an
         // HStack ragged.
-        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 6, verticalSpacing: 5) {
-            row(window: "5시간", used: snap.fiveHourPercent, reset: snap.fiveHourResetText)
-            row(window: "7일", used: snap.weeklyAllPercent, reset: snap.weeklyResetText)
+        // The 5-hour countdown is phrased at draw time, so it keeps moving
+        // while the summary stays up between polls (#133).
+        TimelineView(.periodic(from: .now, by: TimeText.minuteTick)) { context in
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 6, verticalSpacing: 5) {
+                row(window: "5시간", used: snap.fiveHourPercent,
+                    reset: TimeText.resetsIn(snap.fiveHourResetAt, now: context.date))
+                row(window: "7일", used: snap.weeklyAllPercent,
+                    reset: TimeText.resetsAt(snap.weeklyResetAt))
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
