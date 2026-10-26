@@ -18,29 +18,39 @@ trap 'rm -rf "$OUT"' EXIT
 # Every async Keychain entry point must be nonisolated(nonsending) so a call
 # reaches the serial queue in the order the caller made it (#141). The order
 # test in UsageTests only covers KeychainQueue.run; the stores touch the real
-# Keychain, so their modifier is checked here instead.
+# Keychain, so their modifier is checked here instead. The model's Keychain
+# boundaries stand for those entry points (#150); the order tests run their
+# fakes on the main actor either way, so they cannot see the modifier go
+# missing.
+#
+# Each file must hold exactly the expected number of modified declarations,
+# not just none without the modifier: a declaration split over several lines
+# or renamed out of the pattern would otherwise drop out of the check
+# silently. A new entry point means raising its count here.
+check_nonsending() { # <expected count> <extended regex> <file>
+  local expected="$1" pattern="$2" file="$3" missing found
+  missing="$(grep -nE "$pattern" "$file" | grep -v 'nonisolated(nonsending)' || true)"
+  if [[ -n "$missing" ]]; then
+    echo "✗ Keychain entry point without nonisolated(nonsending) in ${file#"$ROOT"/}:" >&2
+    echo "$missing" >&2
+    exit 1
+  fi
+  found="$(grep -E "$pattern" "$file" | grep -c 'nonisolated(nonsending)' || true)"
+  if [[ "$found" -ne "$expected" ]]; then
+    echo "✗ ${file#"$ROOT"/}: expected $expected nonisolated(nonsending) Keychain declarations, found $found" >&2
+    echo "  (split over lines, renamed, or a new one — update the count in scripts/test.sh)" >&2
+    exit 1
+  fi
+}
+
 echo "▶ checking Keychain entry points are nonisolated(nonsending)"
-missing="$(grep -nE 'func [A-Za-z]+.*\) async' \
-  "$ROOT/Sources/mongshell-menubar/Services/KeychainQueue.swift" \
-  "$ROOT/Sources/mongshell-menubar/Services/Credentials.swift" \
-  "$ROOT/Sources/mongshell-menubar/Services/GitHubCredentials.swift" \
-  | grep -v 'nonisolated(nonsending)' || true)"
-if [[ -n "$missing" ]]; then
-  echo "✗ async Keychain entry point without nonisolated(nonsending):" >&2
-  echo "$missing" >&2
-  exit 1
-fi
-# The model's Keychain boundaries stand for those entry points (#150); the
-# order tests run their fakes on the main actor either way, so they cannot
-# see the modifier go missing.
-missing="$(grep -nE 'var (lookupOwnToken|saveOwnToken|clearOwnToken|loadClaudeCodeToken):' \
-  "$ROOT/Sources/mongshell-menubar/Models/UsageModel.swift" \
-  | grep -v 'nonisolated(nonsending)' || true)"
-if [[ -n "$missing" ]]; then
-  echo "✗ UsageModel Keychain boundary without nonisolated(nonsending):" >&2
-  echo "$missing" >&2
-  exit 1
-fi
+SERVICES="$ROOT/Sources/mongshell-menubar/Services"
+ENTRY_POINT='func [A-Za-z]+.*\) async'
+check_nonsending 1 "$ENTRY_POINT" "$SERVICES/KeychainQueue.swift"
+check_nonsending 4 "$ENTRY_POINT" "$SERVICES/Credentials.swift"
+check_nonsending 4 "$ENTRY_POINT" "$SERVICES/GitHubCredentials.swift"
+check_nonsending 4 'var (lookupOwnToken|saveOwnToken|clearOwnToken|loadClaudeCodeToken):' \
+  "$ROOT/Sources/mongshell-menubar/Models/UsageModel.swift"
 
 echo "▶ compiling settings tests"
 swiftc -o "$OUT/tests" \

@@ -38,7 +38,7 @@ Swift 는 컴파일이 곧 타입 검사라 별도 typecheck 명령이 없다. *
 ./scripts/test.sh
 ```
 
-`scripts/test.sh` 는 컴파일 전에 grep 게이트를 먼저 돈다 — Keychain 의 `async` 진입점(`KeychainQueue`·`Credentials`·`GitHubCredentials`)에 `nonisolated(nonsending)` 이 빠졌으면 실패한다(#141; 진입점이 실제 Keychain 을 건드려 순서 테스트로는 덮지 못해서다, 규약은 `Services/CLAUDE.md`) 그 진입점을 대신하는 `UsageModel.Boundaries` 의 Keychain 클로저 넷도 같은 게이트를 지난다(#150; 순서 테스트의 가짜는 메인에서 돌아 수식어가 빠져도 보지 못한다).
+`scripts/test.sh` 는 컴파일 전에 grep 게이트를 먼저 돈다 — Keychain 의 `async` 진입점(`KeychainQueue`·`Credentials`·`GitHubCredentials`)에 `nonisolated(nonsending)` 이 빠졌으면 실패한다(#141; 진입점이 실제 Keychain 을 건드려 순서 테스트로는 덮지 못해서다, 규약은 `Services/CLAUDE.md`) 그 진입점을 대신하는 `UsageModel.Boundaries` 의 Keychain 클로저 넷도 같은 게이트를 지난다(#150; 순서 테스트의 가짜는 메인에서 돌아 수식어가 빠져도 보지 못한다). 게이트는 파일별로 수식어 달린 선언 수(`KeychainQueue` 1 · `Credentials` 4 · `GitHubCredentials` 4 · `UsageModel` 4)도 맞춰 보아, 선언이 여러 줄로 갈리거나 이름이 바뀌어 패턴에서 빠지면 실패한다 — 진입점을 더하면 `scripts/test.sh` 의 개수를 올린다.
 
 `swift test` 가 **아니다.** `swift test` 는 XCTest 나 swift-testing 을 요구하는데 둘 다 Command Line Tools 에 들어 있지 않고, "Xcode 없이 빌드 가능" 은 이 프로젝트가 유지하는 전제다 (Decision #11-1). 대신 `scripts/test.sh` 가 `swiftc` 로 **실제 소스 파일과 테스트 파일을 함께 컴파일**해 실행한다 — 사본이 아니라 배포되는 코드를 그대로 검증한다.
 
