@@ -2,8 +2,8 @@ import SwiftUI
 
 /// The status-bar content: Claude mark + two compact ring gauges (`◔15% ◕96%`)
 /// for the 5-hour and 7-day windows. Hosted inside the NSStatusItem button via
-/// NSHostingView.
-/// Reset times live in the popover, not the bar, to keep it short.
+/// NSHostingView. Of the reset times only the 5-hour one rides in the bar
+/// (`fiveHourReset`); the rest live in the popover, to keep the bar short.
 struct MenuBarIconView: View {
     @ObservedObject var model: UsageModel
     @ObservedObject var prefs: Preferences

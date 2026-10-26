@@ -12,10 +12,11 @@ final class Preferences: ObservableObject {
     /// false = show consumed amount (기본), true = show remaining amount.
     /// Only flips the displayed number + gauge fill; color still tracks risk.
     @AppStorage("showRemaining") var showRemaining: Bool = false
-    /// Polling interval in seconds. 180 (the endpoint's safe floor) is the
+    /// Polling interval in seconds. The endpoint's safe floor
+    /// (`Config.minPollInterval`) is the
     /// default — usage %s change slowly, so this is the freshest safe cadence.
     /// The option exists mainly as a 429 escape valve / battery saver.
-    @AppStorage("pollIntervalSeconds") var pollIntervalSeconds: Int = 180
+    @AppStorage("pollIntervalSeconds") var pollIntervalSeconds: Int = Config.minPollInterval
     @AppStorage("notifyThresholds") var notifyThresholds: Bool = true
 
     // MARK: openclaw

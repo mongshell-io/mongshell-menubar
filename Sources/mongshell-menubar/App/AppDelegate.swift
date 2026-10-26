@@ -185,8 +185,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         githubHC.sizingOptions = [.preferredContentSize]
         githubPopover.contentViewController = githubHC
         clickPopovers[.github] = githubPopover
-        // The model hears the popover: open = refresh at once; closed = a
-        // pending merge confirm is void. AppKit closes a .transient popover
+        // The model hears the popover: open = refresh at once; closed = only
+        // recorded, so the next open refreshes again. AppKit closes a .transient popover
         // itself, so the close is learned from its notification rather than
         // from `togglePopover`.
         NotificationCenter.default.publisher(for: NSPopover.didCloseNotification, object: githubPopover)

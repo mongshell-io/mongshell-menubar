@@ -13,10 +13,6 @@ import SwiftUI
 final class OpenClawModel: ObservableObject {
     static let shared = OpenClawModel()
 
-    /// Floor on the poll interval — the agent itself probes at ≥30s, so polling
-    /// much faster only re-reads the same file.
-    static let minimumPollSeconds = 15
-
     @Published private(set) var health: OpenClawHealth = .notConfigured
     /// The server host's own dot. `.absent` whenever there is nothing to show
     /// — no URL, or a server that sends no `host`.
@@ -100,7 +96,7 @@ final class OpenClawModel: ObservableObject {
     private func pollLoop(_ url: URL) async {
         while !Task.isCancelled {
             await refreshOnce(url)
-            let secs = max(Self.minimumPollSeconds, Preferences.shared.openClawPollSeconds)
+            let secs = max(Config.openClawMinPollSeconds, Preferences.shared.openClawPollSeconds)
             try? await Task.sleep(for: .seconds(secs))
         }
     }

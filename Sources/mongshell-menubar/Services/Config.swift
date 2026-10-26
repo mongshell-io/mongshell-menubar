@@ -52,6 +52,11 @@ enum Config {
 
     static let minPollInterval: Int = 180
 
+    /// Floor on the openclaw status-URL poll interval — the server agent
+    /// itself probes at ≥30s, so polling much faster only re-reads the same
+    /// file.
+    static let openClawMinPollSeconds = 15
+
     /// Bounds on what the usage response may put on screen or in the log,
     /// applied once in `UsageAPIClient.parse`. A limit `kind` or model name
     /// is a short word; a top-level key is a two-word code name — 64 is room
