@@ -117,6 +117,7 @@ echo "▶ running github tests"
 echo "▶ compiling usage tests"
 swiftc -o "$OUT/usage-tests" \
   "$APP/Design/Palette.swift" \
+  "$APP/Models/UsagePresentation.swift" \
   "$APP/Models/UsageRefreshPolicy.swift" \
   "$APP/Models/UsageSession.swift" \
   "$APP/Models/UsageState.swift" \
