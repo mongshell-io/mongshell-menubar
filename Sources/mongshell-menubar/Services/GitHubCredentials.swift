@@ -22,12 +22,19 @@ struct GitHubGHCredential: Equatable, Sendable {
 
 /// GitHub tokens (Decision #45 (c)). Two Keychain items: our own PAT item
 /// (read/write) and the gh CLI's (read-only — it is gh's, not ours). The
-/// read order, PAT first, is applied by the model.
+/// read order, PAT first, is applied by the model. Like `CredentialStore`,
+/// every entry point runs its Keychain calls on `KeychainQueue`, off the
+/// main thread, and is `nonisolated(nonsending)` so calls reach the queue
+/// in the order they were made (#141).
 struct GitHubCredentialStore: Sendable {
 
     // MARK: Own PAT (read/write)
 
-    func loadOwnPAT() -> String? {
+    nonisolated(nonsending) func loadOwnPAT() async -> String? {
+        await KeychainQueue.run { Self.loadOwnPATBlocking() }
+    }
+
+    private static func loadOwnPATBlocking() -> String? {
         var query = Self.ownItemQuery
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -48,15 +55,19 @@ struct GitHubCredentialStore: Sendable {
     /// first, where the delete here is refused and the add fails instead.
     /// A failed add can lose the old PAT, which the user can paste again
     /// (Decision #109, #126).
-    func savePAT(_ token: String) -> OSStatus {
-        SecItemDelete(Self.ownItemQuery as CFDictionary)
-        var attrs = Self.ownItemQuery
-        attrs[kSecValueData as String] = Data(token.utf8)
-        return SecItemAdd(attrs as CFDictionary, nil)
+    /// The delete and the add are one job, so no other Keychain call lands
+    /// between them.
+    nonisolated(nonsending) func savePAT(_ token: String) async -> OSStatus {
+        await KeychainQueue.run {
+            SecItemDelete(Self.ownItemQuery as CFDictionary)
+            var attrs = Self.ownItemQuery
+            attrs[kSecValueData as String] = Data(token.utf8)
+            return SecItemAdd(attrs as CFDictionary, nil)
+        }
     }
 
-    func clearPAT() {
-        SecItemDelete(Self.ownItemQuery as CFDictionary)
+    nonisolated(nonsending) func clearPAT() async {
+        await KeychainQueue.run { _ = SecItemDelete(Self.ownItemQuery as CFDictionary) }
     }
 
     private static var ownItemQuery: [String: Any] {
@@ -71,7 +82,11 @@ struct GitHubCredentialStore: Sendable {
     /// under the service (multiple gh accounts) an arbitrary one is read.
     /// The go-keyring wrapping is undone here, so the token comes back
     /// ready to send.
-    func loadGHToken() -> Result<GitHubGHCredential, GHKeychainError> {
+    nonisolated(nonsending) func loadGHToken() async -> Result<GitHubGHCredential, GHKeychainError> {
+        await KeychainQueue.run { Self.loadGHTokenBlocking() }
+    }
+
+    private static func loadGHTokenBlocking() -> Result<GitHubGHCredential, GHKeychainError> {
         var query = Self.ghItemQuery
         query[kSecReturnAttributes as String] = true
         query[kSecReturnData as String] = true

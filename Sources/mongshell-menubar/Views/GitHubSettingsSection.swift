@@ -97,15 +97,16 @@ struct GitHubSettingsSection: View {
         case .none:
             EmptyView()
         case .clearPAT:
-            Button("PAT 지우기") { model.clearPAT() }
+            Button("PAT 지우기") { Task { await model.clearPAT() } }
         case .retryGHKeychain:
             Button("gh 토큰 다시 시도") { model.retryGHKeychain() }
         }
     }
 
     private func applyPAT() {
-        model.applyPAT(draftPAT)
+        let pasted = draftPAT
         draftPAT = ""
+        Task { await model.applyPAT(pasted) }
     }
 
     // MARK: Hidden repositories

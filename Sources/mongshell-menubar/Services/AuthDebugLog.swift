@@ -6,9 +6,15 @@ import Foundation
 /// "when did the last refresh succeed" can be read off the file instead of
 /// reconstructed from network captures. Never write a token or auth code here.
 enum AuthDebugLog {
+    /// Lines come from the main thread and from `KeychainQueue` (#141); one
+    /// append at a time keeps them whole.
+    private static let lock = NSLock()
+
     static func write(_ message: String) {
         let line = "\(iso(Date())) \(message)\n"
         let url = Config.authDebugLogURL
+        lock.lock()
+        defer { lock.unlock() }
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
         if size <= Config.authDebugLogMaxBytes, let handle = try? FileHandle(forWritingTo: url) {
             handle.seekToEndOfFile()

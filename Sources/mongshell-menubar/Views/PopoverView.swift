@@ -204,7 +204,7 @@ struct PopoverView: View {
             }
         } afterSettings: {
             if presentation.offersSignOut {
-                Button("로그아웃") { model.signOut() }
+                Button("로그아웃") { Task { await model.signOut() } }
             }
         }
     }

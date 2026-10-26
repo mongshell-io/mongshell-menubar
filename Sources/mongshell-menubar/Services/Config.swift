@@ -152,4 +152,11 @@ enum Config {
     /// event or per change in unknown limits is a few KB a month, so 1 MiB
     /// only trips on a runaway.
     static let authDebugLogMaxBytes = 1024 * 1024
+
+    /// How long quitting waits for queued Keychain work (#141). A renewed own
+    /// token whose save is still queued is the only copy of the login — the
+    /// refresh token it replaces is spent (#102). A save takes milliseconds;
+    /// the wait only runs long while a Keychain prompt is up, and then the
+    /// user is quitting past it.
+    static let keychainDrainOnQuitSeconds: TimeInterval = 3
 }

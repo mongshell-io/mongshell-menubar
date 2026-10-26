@@ -954,6 +954,226 @@ do {
               == .token(renewed, .oauthLogin))
 }
 
+// MARK: #143 — a declined Keychain prompt is not put back by the polls
+
+do {
+    let old = OAuthToken(accessToken: "a1", refreshToken: "r1", expiresAt: nil)
+    let renewed = OAuthToken(accessToken: "a2", refreshToken: "r2", expiresAt: nil)
+    let cliToken = OAuthToken(accessToken: "c", refreshToken: nil, expiresAt: nil)
+    let held = PendingOwnToken(token: renewed, keychain: .holds(refreshToken: "r1"))
+    let cancelled = OwnTokenLookup.refused(errSecUserCanceled)
+
+    // Which statuses are the user's answer.
+    check("errSecUserCanceled is the user's answer to the prompt",
+          OwnTokenLookup.isUserRefusal(errSecUserCanceled))
+    check("errSecAuthFailed is not counted as the user's answer (also a no-prompt ACL refusal, #132)",
+          !OwnTokenLookup.isUserRefusal(errSecAuthFailed))
+
+    // The save result keeps a cancelled prompt apart from a plain failure.
+    check("save: success → saved", OwnTokenSave(status: errSecSuccess, deletedFirst: false) == .saved)
+    check("save: prompt cancelled → cancelled, not failed",
+          OwnTokenSave(status: errSecUserCanceled, deletedFirst: false) == .cancelled)
+    check("save: other refusal → failed", OwnTokenSave(status: errSecAuthFailed, deletedFirst: false) == .failed)
+    check("save: cancelled after our delete → failedAfterDelete (an empty Keychain outranks the answer)",
+          OwnTokenSave(status: errSecUserCanceled, deletedFirst: true) == .failedAfterDelete)
+
+    // A save that recreates the item: the delete's prompt cancelled → no add,
+    // and the save reads as the user's answer (not a duplicate-item failure).
+    var adds = 0
+    let cancelledDelete = CredentialStore.recreate(delete: { errSecUserCanceled },
+                                                   add: { adds += 1; return errSecDuplicateItem })
+    check("recreate: delete prompt cancelled → add not tried, save cancelled",
+          adds == 0 && OwnTokenSave(status: cancelledDelete.status, deletedFirst: cancelledDelete.deleted) == .cancelled,
+          "\(adds) adds, status \(cancelledDelete.status)")
+    let recreated = CredentialStore.recreate(delete: { errSecSuccess }, add: { adds += 1; return errSecSuccess })
+    check("recreate: delete and add pass → saved", adds == 1 && recreated == (errSecSuccess, true))
+    let lostAfterDelete = CredentialStore.recreate(delete: { errSecSuccess }, add: { errSecIO })
+    check("recreate: add fails after the delete → failedAfterDelete",
+          OwnTokenSave(status: lostAfterDelete.status, deletedFirst: lostAfterDelete.deleted) == .failedAfterDelete)
+    let refusedDelete = CredentialStore.recreate(delete: { errSecAuthFailed }, add: { errSecDuplicateItem })
+    check("recreate: delete refused otherwise → add still tried, a plain failure",
+          OwnTokenSave(status: refusedDelete.status, deletedFirst: refusedDelete.deleted) == .failed)
+
+    // Remembering the decline.
+    check("read cancelled → decline remembered", UsageRefreshPolicy.declined(false, after: cancelled, sameLogin: true))
+    check("read refused otherwise → no decline (the #132 store retry stays)",
+          !UsageRefreshPolicy.declined(false, after: .refused(errSecAuthFailed), sameLogin: true))
+    check("read found / missing / locked → no decline",
+          !UsageRefreshPolicy.declined(false, after: .found(old), sameLogin: true)
+          && !UsageRefreshPolicy.declined(false, after: .missing, sameLogin: true)
+          && !UsageRefreshPolicy.declined(false, after: .unavailable(errSecInteractionNotAllowed), sameLogin: true))
+    check("save cancelled → decline remembered", UsageRefreshPolicy.declined(false, afterSaving: .cancelled, sameLogin: true))
+    check("save failed / saved → no decline",
+          !UsageRefreshPolicy.declined(false, afterSaving: .failed, sameLogin: true)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .saved, sameLogin: true)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .failedAfterDelete, sameLogin: true))
+    check("a poll does not lift a standing decline, whatever it reads or saves",
+          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: true)
+          && UsageRefreshPolicy.declined(true, after: .missing, sameLogin: true)
+          && UsageRefreshPolicy.declined(true, afterSaving: .saved, sameLogin: true))
+
+    // While declined, a poll reads nothing from the Keychain…
+    var reads = 0
+    let read: () -> OwnTokenLookup = { reads += 1; return .found(old) }
+    let whileDeclined = UsageRefreshPolicy.ownLookup(declined: true) ?? read()
+    check("declined → the own item is not read (no prompt)", reads == 0, "\(reads) reads")
+    check("declined → the read answers as the refusal it was", whileDeclined == cancelled)
+    // …and stores nothing.
+    check("declined with a held renewal → kept in memory, not stored",
+          UsageRefreshPolicy.resolvePending(held, own: whileDeclined) == .useInMemory(renewed))
+    check("declined with a held renewal → polls with it, not the CLI token",
+          UsageRefreshPolicy.chooseToken(resolution: .useInMemory(renewed), own: whileDeclined, cli: { cliToken })
+              == .token(renewed, .oauthLogin))
+    check("declined with nothing held → the CLI token, as a refusal did before",
+          UsageRefreshPolicy.chooseToken(resolution: UsageRefreshPolicy.resolvePending(nil, own: whileDeclined),
+                                         own: whileDeclined, cli: { cliToken })
+              == .token(cliToken, .claudeCodeCLI))
+    check("declined while adopting a renewal → held, not stored",
+          UsageRefreshPolicy.adopt(match: UsageRefreshPolicy.keychainMatch(own: whileDeclined, expects: held.keychain),
+                                   sameLogin: true) == .hold)
+    check("save cancelled → the renewal stays held against the item as it was",
+          UsageRefreshPolicy.pending(afterSaving: held, result: .cancelled) == held)
+
+    // The user acting (sign-in, a manual refresh) lifts the flag: the read happens again.
+    let afterUserActs = UsageRefreshPolicy.ownLookup(declined: false) ?? read()
+    check("decline lifted → the own item is read again", reads == 1 && afterUserActs == .found(old), "\(reads) reads")
+    check("decline lifted, Keychain found → a held renewal is stored again",
+          UsageRefreshPolicy.resolvePending(held, own: afterUserActs) == .save(renewed))
+}
+
+// MARK: #141 — Keychain calls off the main thread: what may land between the awaits
+
+do {
+    let old = OAuthToken(accessToken: "a1", refreshToken: "r1", expiresAt: nil)
+    let renewed = OAuthToken(accessToken: "a2", refreshToken: "r2", expiresAt: nil)
+    let cancelled = OwnTokenLookup.refused(errSecUserCanceled)
+
+    // A poll read is out; meanwhile the sign-in's save is cancelled and sets
+    // the flag. The read then comes back `.found` — folded into the flag as it
+    // is now (true), the decline stands; folded into the value captured when
+    // the read went out (false), it would be lifted and the dialog come back.
+    check("save cancelled while a poll read was out → the read's .found keeps the decline",
+          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: true)
+          && !UsageRefreshPolicy.declined(false, after: .found(old), sameLogin: true))
+    // A read or save that went out before a sign-in or sign-out: the sign-in
+    // lifted the flag, and an answer about the item before it sets nothing.
+    check("answer from before a sign-in → does not set the decline again",
+          !UsageRefreshPolicy.declined(false, after: cancelled, sameLogin: false)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .cancelled, sameLogin: false))
+    check("answer from before a sign-in → does not lift a decline set since",
+          UsageRefreshPolicy.declined(true, after: .found(old), sameLogin: false)
+          && UsageRefreshPolicy.declined(true, afterSaving: .saved, sameLogin: false))
+
+    // The CLI token (another Keychain read, which can prompt) is read only
+    // when the choice falls through to it.
+    check("own token found / held renewal / locked → no CLI read",
+          UsageRefreshPolicy.ownChoice(resolution: .none, own: .found(old)) == .token(old, .oauthLogin)
+          && UsageRefreshPolicy.ownChoice(resolution: .useInMemory(renewed), own: cancelled) == .token(renewed, .oauthLogin)
+          && UsageRefreshPolicy.ownChoice(resolution: .save(renewed), own: .missing) == .token(renewed, .oauthLogin)
+          && UsageRefreshPolicy.ownChoice(resolution: .none, own: .unavailable(errSecInteractionNotAllowed))
+              == .ownUnavailable(errSecInteractionNotAllowed))
+    check("own token missing / refused / dropped → the CLI token is next",
+          UsageRefreshPolicy.ownChoice(resolution: .none, own: .missing) == nil
+          && UsageRefreshPolicy.ownChoice(resolution: .none, own: cancelled) == nil
+          && UsageRefreshPolicy.ownChoice(resolution: .drop, own: .missing) == nil)
+    check("CLI token read → that token, or none",
+          UsageRefreshPolicy.cliChoice(old) == .token(old, .claudeCodeCLI)
+          && UsageRefreshPolicy.cliChoice(nil) == UsageTokenChoice.none)
+
+    // The queue every SecItem call runs on: off the main thread, one job at a
+    // time, in the order asked for from one caller.
+    final class Probe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var active = 0
+        private(set) var peak = 0
+        private(set) var order: [Int] = []
+        private(set) var onMain = false
+        func job(_ index: Int, pause: TimeInterval = 0.005) -> Int {
+            lock.lock()
+            active += 1
+            peak = max(peak, active)
+            if Thread.isMainThread { onMain = true }
+            lock.unlock()
+            Thread.sleep(forTimeInterval: pause)
+            lock.lock()
+            active -= 1
+            order.append(index)
+            lock.unlock()
+            return index
+        }
+    }
+    let probe = Probe()
+    let jobCount = 8
+    let done = DispatchSemaphore(value: 0)
+    Task.detached {
+        await withTaskGroup(of: Int.self) { group in
+            for index in 0..<jobCount {
+                group.addTask { await KeychainQueue.run { probe.job(index) } }
+            }
+        }
+        for index in 0..<jobCount { _ = await KeychainQueue.run { probe.job(100 + index) } }
+        done.signal()
+    }
+    done.wait()
+    check("Keychain queue: never two jobs at once", probe.peak == 1, "peak \(probe.peak)")
+    check("Keychain queue: not on the main thread", !probe.onMain)
+    check("Keychain queue: one caller's jobs run in the order asked",
+          Array(probe.order.suffix(jobCount)) == (0..<jobCount).map { 100 + $0 }, "\(probe.order)")
+
+    // Calls started one after another on the main actor, no await between
+    // them, run on the queue in that order: each is queued before its task
+    // first suspends, on the caller's actor — not after a hop to the global
+    // executor, where the order is lost. This is what lets a sign-in's save
+    // land after a poll's delete asked for before it.
+    let ordered = Probe()
+    let orderedCount = 64
+    var finished = 0
+    MainActor.assumeIsolated {
+        for index in 0..<orderedCount {
+            Task { @MainActor in
+                _ = await KeychainQueue.run { ordered.job(index, pause: 0) }
+                finished += 1
+            }
+        }
+    }
+    let deadline = Date().addingTimeInterval(10)
+    while finished < orderedCount, Date() < deadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    }
+    check("Keychain queue: calls from the main actor run in the order made",
+          ordered.order == Array(0..<orderedCount), "\(ordered.order)")
+
+    // Quitting waits for queued work, but not past the cap.
+    @MainActor final class Drains {
+        var afterSlow: [Int]?
+        var cappedAt: Date?
+    }
+    let drains = MainActor.assumeIsolated { Drains() }
+    // Each job signals once it is running, so the drain below is queued after
+    // it by construction rather than by a sleep that a loaded machine outruns.
+    let slow = Probe()
+    let slowStarted = DispatchSemaphore(value: 0)
+    Task.detached { _ = await KeychainQueue.run { slowStarted.signal(); return slow.job(1, pause: 0.05) } }
+    slowStarted.wait()
+    KeychainQueue.whenDrained(timeout: 5) { drains.afterSlow = slow.order }
+    let blocker = DispatchSemaphore(value: 0)
+    let blockerStarted = DispatchSemaphore(value: 0)
+    Task.detached { _ = await KeychainQueue.run { blockerStarted.signal(); blocker.wait() } }
+    blockerStarted.wait()
+    let cappedStart = Date()
+    KeychainQueue.whenDrained(timeout: 0.2) { drains.cappedAt = Date() }
+    let drainDeadline = Date().addingTimeInterval(5)
+    while MainActor.assumeIsolated({ drains.afterSlow == nil || drains.cappedAt == nil }), Date() < drainDeadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    }
+    blocker.signal()
+    let (afterSlow, cappedAt) = MainActor.assumeIsolated { (drains.afterSlow, drains.cappedAt) }
+    check("Keychain queue: drain waits for the job queued before it", afterSlow == [1], "\(String(describing: afterSlow))")
+    check("Keychain queue: drain gives up at the cap while a job hangs (a prompt left up)",
+          cappedAt.map { (0.15..<2).contains($0.timeIntervalSince(cappedStart)) } ?? false,
+          "\(String(describing: cappedAt.map { $0.timeIntervalSince(cappedStart) }))")
+}
+
 // MARK: #133 — reset phrases are made at draw time; flat fallbacks are logged
 
 do {

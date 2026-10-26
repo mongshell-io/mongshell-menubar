@@ -27,6 +27,7 @@ non_goals:
 - 오래 걸리는 일은 `Task` 안에서 `await` 로 넘기고, 결과를 받아 `@Published` 를 갱신하는 지점만 메인에 남긴다.
 - 폴링 루프는 `Task` 하나로 소유하고, 재시작 시 **이전 태스크를 반드시 취소**한다 (`pollTask?.cancel()`). 취소 없이 새로 만들면 루프가 중첩된다.
 - `Task.isCancelled` 를 루프 조건에 넣는다.
+- Keychain 호출(`Services/` 의 `async` 진입점)을 await 한 뒤에는 그 사이 상태가 바뀌었을 수 있다는 전제로 세대(`UsageModel.loginGeneration`, `GitHubModel.generation`)를 다시 확인하고, 바뀌었으면 읽은 것을 버린다 (#141). 규칙은 [docs/architecture.md § 1. 사용량 폴링](../../../docs/architecture.md#1-사용량-폴링-주-경로) · [§ 4. GitHub PR 폴링](../../../docs/architecture.md#4-github-pr-폴링-선택-경로) 이 권위다.
 
 ## 싱글턴
 
@@ -62,9 +63,10 @@ non_goals:
 
 Decision #45·#49·#52 의 모델 쪽 규약은 넷이다. 주기와 요청 정지 규칙은 [docs/architecture.md § 4. GitHub PR 폴링](../../../docs/architecture.md#4-github-pr-폴링-선택-경로) 이 권위다.
 
-- 판정은 `GitHubPullRequest.swift` 의 순수 값 타입에 둔다 — 배지 우선순위, 메뉴바 숫자(내 PR 중 막힌 것), 점 색, hover CI 줄(`GitHubCILine`), 머지 가능 수(모델의 머지 상태를 인자로 받는다 — Decision #52, 머지 상태가 바뀌는 모든 경로가 glance 를 다시 계산한다), 검사 칩 접기, 머지 버튼 노출·요청 판정(스냅샷에서 다시 꺼낸 PR · `loadState` · 스냅샷 세대 · 스냅샷을 받은 토큰 출처로)·머지 상태의 갱신 간 이월(`GitHubMergePolicy`, Decision #49). 연결 상태의 배지·배너·토큰 행 노출은 `GitHubPresentation.swift` 가 정한다 (#117). `GitHubModel` 은 API 결과를 그 타입에 넘겨 호출만 하고, 판정 규칙을 모델 안에 다시 적지 않는다. 규칙은 `scripts/test.sh` 가 고정한다.
+- 판정은 `GitHubPullRequest.swift` 의 순수 값 타입에 둔다 — 배지 우선순위, 메뉴바 숫자(내 PR 중 막힌 것), 점 색, hover CI 줄(`GitHubCILine`), 머지 가능 수(모델의 머지 상태를 인자로 받는다 — Decision #52, 머지 상태가 바뀌는 모든 경로가 glance 를 다시 계산한다), 검사 칩 접기. 머지 버튼 노출·요청 판정(스냅샷에서 다시 꺼낸 PR · `loadState` · 스냅샷 세대 · 스냅샷을 받은 토큰 출처로)·머지 상태의 갱신 간 이월은 `GitHubMergePolicy.swift` 의 `GitHubMergePolicy` 가 정한다 (Decision #49, 분리 #142). 연결 상태의 배지·배너·토큰 행 노출은 `GitHubPresentation.swift` 가 정한다 (#117). `GitHubModel` 은 API 결과를 그 타입에 넘겨 호출만 하고, 판정 규칙을 모델 안에 다시 적지 않는다. 규칙은 `scripts/test.sh` 가 고정한다.
 - 팝오버의 열림·닫힘은 `setPopoverOpen(_:)` 으로 받는다 (AppDelegate 가 `NSPopover.didCloseNotification` 으로 부른다). hover 는 갱신을 일으키지 않는다.
 - gh 항목의 Keychain 접근 거부(`.denied`)는 모델이 세션 동안 기억하고 설정에서만 재시도한다 — 폴링마다 대화상자가 뜨지 않도록.
+  - 같은 이유로 `UsageModel` 은 자체 토큰 항목의 대화상자 취소(`errSecUserCanceled`)를 세션 동안 기억한다 (#143) — 해제는 로그인·수동 새로고침·앱 재시작뿐이다 (사양: [docs/architecture.md § Auth](../../../docs/architecture.md#auth)).
 - 1초 경과 시간은 모델의 일이 아니다 — 팝오버·hover 뷰의 `TimelineView` 가 그린다. 모델은 검사의 `startedAt`/`completedAt` 을 저장만 한다.
 
 ## 알림·백오프

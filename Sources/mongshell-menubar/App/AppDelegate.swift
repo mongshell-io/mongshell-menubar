@@ -108,6 +108,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // handed this instance (Decision #45).
     private let github = GitHubModel(prefs: Preferences.shared)
 
+    /// Quitting waits for the Keychain queue, capped by
+    /// `Config.keychainDrainOnQuitSeconds`, so a renewed token's save still
+    /// queued is not lost with the process (#141).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        KeychainQueue.whenDrained(timeout: Config.keychainDrainOnQuitSeconds) {
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // QA hook: render reference PNGs offscreen, then exit.
         if SnapshotRenderer.runIfRequested() {

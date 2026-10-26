@@ -14,6 +14,22 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 
+# Every async Keychain entry point must be nonisolated(nonsending) so a call
+# reaches the serial queue in the order the caller made it (#141). The order
+# test in UsageTests only covers KeychainQueue.run; the stores touch the real
+# Keychain, so their modifier is checked here instead.
+echo "▶ checking Keychain entry points are nonisolated(nonsending)"
+missing="$(grep -nE 'func [A-Za-z]+.*\) async' \
+  "$ROOT/Sources/mongshell-menubar/Services/KeychainQueue.swift" \
+  "$ROOT/Sources/mongshell-menubar/Services/Credentials.swift" \
+  "$ROOT/Sources/mongshell-menubar/Services/GitHubCredentials.swift" \
+  | grep -v 'nonisolated(nonsending)' || true)"
+if [[ -n "$missing" ]]; then
+  echo "✗ async Keychain entry point without nonisolated(nonsending):" >&2
+  echo "$missing" >&2
+  exit 1
+fi
+
 echo "▶ compiling settings tests"
 swiftc -o "$OUT/tests" \
   "$ROOT/Sources/mongshell-menubar/Services/ClaudeSettingsStore.swift" \
@@ -84,6 +100,7 @@ swiftc -o "$OUT/auth-tests" \
   "$APP/Services/Config.swift" \
   "$APP/Services/Credentials.swift" \
   "$APP/Services/JSONNumber.swift" \
+  "$APP/Services/KeychainQueue.swift" \
   "$APP/Services/OAuthTokenClient.swift" \
   "$ROOT/Tests/AuthTests/main.swift"
 
@@ -104,12 +121,14 @@ swiftc -o "$OUT/github-tests" \
   "$APP/Models/GitHubState.swift" \
   "$APP/Models/GitHubPresentation.swift" \
   "$APP/Models/GitHubPullRequest.swift" \
+  "$APP/Models/GitHubMergePolicy.swift" \
   "$APP/Services/BoundedHTTP.swift" \
   "$APP/Services/Config.swift" \
   "$APP/Services/DisplayText.swift" \
   "$APP/Services/GitHubAPIClient.swift" \
   "$APP/Services/GitHubCredentials.swift" \
   "$APP/Services/JSONNumber.swift" \
+  "$APP/Services/KeychainQueue.swift" \
   "$APP/Services/ResponseDate.swift" \
   "$APP/Services/TimeText.swift" \
   "$ROOT/Tests/GitHubTests/main.swift"
@@ -140,6 +159,7 @@ swiftc -o "$OUT/usage-tests" \
   "$APP/Services/Credentials.swift" \
   "$APP/Services/DisplayText.swift" \
   "$APP/Services/JSONNumber.swift" \
+  "$APP/Services/KeychainQueue.swift" \
   "$APP/Services/ResponseDate.swift" \
   "$APP/Services/TimeText.swift" \
   "$APP/Services/UsageAPIClient.swift" \
