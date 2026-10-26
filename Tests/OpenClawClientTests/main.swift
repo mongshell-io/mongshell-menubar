@@ -9,8 +9,8 @@ import Foundation
 // clock text shown next to it, and how the host signals are read and worded.
 //
 // Run with `./scripts/test.sh`, which compiles this against the real app
-// sources *and* the agent's `Probe.swift` / `HostProbe.swift` /
-// `StatusFile.swift`, so the round-trip cases encode with the agent's actual
+// sources *and* the agent's `Probe.swift` / `ProcessRunner.swift` /
+// `HostProbe.swift` / `StatusFile.swift`, so the round-trip cases encode with the agent's actual
 // encoder.
 
 var failures: [String] = []

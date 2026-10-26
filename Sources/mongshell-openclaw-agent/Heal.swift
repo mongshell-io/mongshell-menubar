@@ -100,7 +100,7 @@ enum Launchd {
     /// cancel-proof longpoll hang. Returns whether launchctl reported success.
     static func kickstart(label: String) -> Bool {
         let target = "gui/\(getuid())/\(label)"
-        let result = Probe.run(launchctlPath, ["kickstart", "-k", target], timeout: kickstartTimeout)
+        let result = ProcessRunner.run(launchctlPath, ["kickstart", "-k", target], timeout: kickstartTimeout)
         return !result.timedOut && result.termination == .exited(status: 0)
     }
 }

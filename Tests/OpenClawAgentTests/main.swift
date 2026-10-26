@@ -5,7 +5,9 @@ import Foundation
 // Each case pins a rule whose mutation would silently change what the menubar
 // clients see or make the agent restart the wrong thing: probe verdict order,
 // heal timing, the self-label exclusion, the host thresholds (CI runners
-// included), and the status-file wire format.
+// included), the status-file wire format, the order of one cycle (an unheard
+// probe is neither published nor counted; a heal is published even when its
+// re-probe goes unheard) and the option rules.
 //
 // Run with `./scripts/test.sh`, which compiles this against the real sources
 // (main.swift excluded — it's the agent's entry point).
@@ -94,7 +96,7 @@ do {
 
     // The log line is the only place the cause shows up, so a launch failure
     // must say why (fd exhaustion and a missing binary need different fixes).
-    let missing = Probe.run("/nonexistent/openclaw", [], timeout: 1)
+    let missing = ProcessRunner.run("/nonexistent/openclaw", [], timeout: 1)
     let missingReason = reason(Probe.parseProbe(missing)) ?? ""
     check("없는 경로 실행 → 실행 실패, 출력 없음, timedOut 아님",
           missing.termination == .launchFailed(errno: ENOENT) && missing.stdout.isEmpty && !missing.timedOut,
@@ -104,7 +106,7 @@ do {
     let notExecutable = root.appendingPathComponent("not-executable")
     FileManager.default.createFile(atPath: notExecutable.path, contents: Data("#!/bin/sh\n".utf8),
                                    attributes: [.posixPermissions: 0o644])
-    let denied = Probe.run(notExecutable.path, [], timeout: 1)
+    let denied = ProcessRunner.run(notExecutable.path, [], timeout: 1)
     let deniedReason = reason(Probe.parseProbe(denied)) ?? ""
     check("실행 권한 없음 → 사유에 strerror 문구", deniedReason == "openclaw 실행 실패 — Permission denied",
           deniedReason)
@@ -112,7 +114,7 @@ do {
     // openclaw re-raises a worker's fatal signal on itself; with no output
     // that is still not a statement about the gateway, but the log must say
     // it was a signal rather than a silent exit.
-    let killed = Probe.run("/bin/sh", ["-c", "kill -9 $$"], timeout: 5)
+    let killed = ProcessRunner.run("/bin/sh", ["-c", "kill -9 $$"], timeout: 5)
     let killedObservation = Probe.parseProbe(killed)
     check("출력 없이 신호로 종료 → 관측 실패 + 신호 번호",
           killed.termination == .signaled(SIGKILL)
@@ -145,11 +147,11 @@ do {
 print("▸ run() 타임아웃")
 do {
     let started = Date()
-    let r = Probe.run("/bin/sleep", ["5"], timeout: 0.3)
+    let r = ProcessRunner.run("/bin/sleep", ["5"], timeout: 0.3)
     let elapsed = Date().timeIntervalSince(started)
     check("매달린 프로세스는 timedOut", r.timedOut)
     check("데드라인 근처에서 끊김", elapsed < 3, String(format: "%.2fs", elapsed))
-    let fine = Probe.run("/bin/echo", ["hi"], timeout: 5)
+    let fine = ProcessRunner.run("/bin/echo", ["hi"], timeout: 5)
     check("정상 종료는 timedOut 아님", !fine.timedOut && fine.termination == .exited(status: 0) && fine.stdout == "hi\n")
 }
 
@@ -176,7 +178,7 @@ do {
     // the work is a grandchild holding the pipe. Killing only the direct child
     // left it running — and the read waiting for it.
     let started = Date()
-    let hung = Probe.run("/bin/sh", ["-c", "sleep 30 & echo $!; wait"], timeout: 1)
+    let hung = ProcessRunner.run("/bin/sh", ["-c", "sleep 30 & echo $!; wait"], timeout: 1)
     let elapsed = Date().timeIntervalSince(started)
     let grandchild = firstPid(hung.stdout)
     check("손자가 쥔 파이프 — timedOut", hung.timedOut)
@@ -188,7 +190,7 @@ do {
     // A straggler left behind by a child that exited on its own is cleaned up
     // right away, instead of holding the read open until the deadline.
     let leftStarted = Date()
-    let left = Probe.run("/bin/sh", ["-c", "sleep 30 & echo $!"], timeout: 5)
+    let left = ProcessRunner.run("/bin/sh", ["-c", "sleep 30 & echo $!"], timeout: 5)
     let leftElapsed = Date().timeIntervalSince(leftStarted)
     let straggler = firstPid(left.stdout)
     check("정상 종료 후 남은 자손 — 즉시 반환", !left.timedOut && left.termination == .exited(status: 0) && leftElapsed < 2,
@@ -202,12 +204,12 @@ do {
     // the overall deadline instead of waiting for it. The shell ignores
     // SIGTERM so it lives until the SIGKILL — the full deadline's path.
     let escapeStarted = Date()
-    let escaped = Probe.run(
+    let escaped = ProcessRunner.run(
         "/bin/sh", ["-c", #"trap '' TERM; perl -MPOSIX -e '$|=1; setsid(); print "$$\n"; sleep 30' & wait"#],
         timeout: 1)
     let escapeElapsed = Date().timeIntervalSince(escapeStarted)
     let escapee = firstPid(escaped.stdout)
-    let deadline = 1 + Probe.killGrace + Probe.readGrace
+    let deadline = 1 + ProcessRunner.killGrace + ProcessRunner.readGrace
     check("그룹을 빠져나간 자손 — 마감 근처에서 반환",
           escapeElapsed >= deadline - 0.5 && escapeElapsed < deadline + 1.5,
           String(format: "%.2fs (마감 %.1fs)", escapeElapsed, deadline))
@@ -218,14 +220,14 @@ do {
     // escaped descendant holding the pipe may cost only `readGrace` more,
     // not the rest of the timeout.
     let earlyStarted = Date()
-    let early = Probe.run(
+    let early = ProcessRunner.run(
         "/bin/sh", ["-c", #"perl -MPOSIX -e '$|=1; setsid(); print "$$\n"; sleep 30' & sleep 0.3"#],
         timeout: 5)
     let earlyElapsed = Date().timeIntervalSince(earlyStarted)
     let earlyEscapee = firstPid(early.stdout)
     check("정상 종료 후 빠져나간 자손 — 종료 + readGrace 근처에서 반환",
           !early.timedOut && early.termination == .exited(status: 0)
-              && earlyElapsed < 0.3 + Probe.readGrace + 1,
+              && earlyElapsed < 0.3 + ProcessRunner.readGrace + 1,
           String(format: "%.2fs", earlyElapsed))
     check("정상 종료 후 빠져나간 자손 — 출력은 받음", earlyEscapee != nil,
           early.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -238,9 +240,9 @@ print("▸ run() 출력 상한")
 do {
     // Output past the cap is drained, not kept — and not left in the pipe,
     // where it would block the child until the timeout.
-    let flood = Probe.run("/bin/sh", ["-c", #"head -c 200000 /dev/zero | tr '\0' a"#], timeout: 5)
+    let flood = ProcessRunner.run("/bin/sh", ["-c", #"head -c 200000 /dev/zero | tr '\0' a"#], timeout: 5)
     check("상한 넘는 출력 → 상한까지만 보관",
-          flood.stdout.utf8.count == Probe.maxOutputBytes, "\(flood.stdout.utf8.count)B")
+          flood.stdout.utf8.count == ProcessRunner.maxOutputBytes, "\(flood.stdout.utf8.count)B")
     check("상한 넘는 출력 → 막히지 않고 정상 종료",
           !flood.timedOut && flood.termination == .exited(status: 0), "\(flood.termination)")
 }
@@ -254,7 +256,7 @@ do {
     // and report `timedOut` (which would read as gateway down).
     let previous = signal(SIGCHLD, SIG_IGN)
     let started = Date()
-    let r = Probe.run("/bin/echo", ["hi"], timeout: 2)
+    let r = ProcessRunner.run("/bin/echo", ["hi"], timeout: 2)
     let elapsed = Date().timeIntervalSince(started)
     signal(SIGCHLD, previous)
     check("ECHILD → 시간 초과 아님, 종료 상태 모름",
@@ -279,7 +281,7 @@ do {
     let allowedGrowth = 5
     let before = openFDCount()
     check("열린 fd 목록을 읽을 수 있음", before > 0, "결과 \(before)")
-    for _ in 0..<runs { _ = Probe.run("/bin/echo", ["x"], timeout: 5) }
+    for _ in 0..<runs { _ = ProcessRunner.run("/bin/echo", ["x"], timeout: 5) }
     let growth = openFDCount() - before
     check("\(runs)회 실행해도 fd 가 쌓이지 않음", growth <= allowedGrowth, "증가 \(growth)")
 }
@@ -610,7 +612,7 @@ do {
         }
 
         """
-    func run(_ out: String, exit: Int32 = 0, timedOut: Bool = false) -> Probe.RunResult {
+    func run(_ out: String, exit: Int32 = 0, timedOut: Bool = false) -> ProcessRunner.RunResult {
         .init(stdout: out, termination: .exited(status: exit), timedOut: timedOut)
     }
     check("최상위 state = running → 동작", HostProbe.interpretRunner(run(running)) == true)
@@ -853,6 +855,130 @@ do {
     check("깨진 파일 → lastHeal nil", StatusFile.readLastHeal(from: junk) == nil)
     check("파일 없음 → lastHeal nil",
           StatusFile.readLastHeal(from: root.appendingPathComponent("absent.json")) == nil)
+}
+
+// MARK: - 옵션 파싱 (#105)
+
+do {
+    func run(_ args: [String]) -> Options? {
+        if case .run(let o) = Options.parse(args) { return o }
+        return nil
+    }
+    let base = ["--status-file", "/tmp/s.json"]
+    check("기본값 — 60초, 자동복구 켬, 자기 레이블 기본",
+          run(base).map { $0.interval == 60 && $0.autoHeal && $0.selfLabel == Options.defaultSelfLabel
+                          && $0.gatewayLabel == nil && $0.buildVersion == nil } == true)
+    check("--status-file 없음 → 오류",
+          Options.parse([]) == .invalid("--status-file 은 필수입니다"))
+    check("값 없는 플래그 → 오류 (다음 플래그를 값으로 먹지 않는다)",
+          Options.parse(["--status-file", "--no-auto-heal"]) == .invalid("--status-file 에 값이 필요합니다")
+          && Options.parse(base + ["--interval"]) == .invalid("--interval 에 값이 필요합니다"))
+    check("--interval 정수 아님 → 오류",
+          Options.parse(base + ["--interval", "1m"]) == .invalid("--interval 은 정수여야 합니다: 1m"))
+    check("--interval 하한·상한으로 접힘",
+          run(base + ["--interval", "5"])?.interval == Options.minimumInterval
+          && run(base + ["--interval", "999999999"])?.interval == Options.maximumInterval)
+    check("모든 옵션이 실린다",
+          run(base + ["--gateway-label", "g", "--no-auto-heal", "--self-label", "me",
+                      "--build-version", "v1.2.0+3", "--interval", "120"])
+              .map { $0.gatewayLabel == "g" && !$0.autoHeal && $0.selfLabel == "me"
+                     && $0.buildVersion == "v1.2.0+3" && $0.interval == 120 } == true)
+    check("모르는 인자 → 오류", Options.parse(base + ["--bogus"]) == .invalid("알 수 없는 인자: --bogus"))
+    check("--help → 도움말", Options.parse(["--help"]) == .help && Options.parse(base + ["-h"]) == .help)
+    check("상태 파일 경로는 정규화", run(["--status-file", "/tmp/a/../s.json"])?.statusFile.path == "/tmp/s.json")
+}
+
+// MARK: - 한 사이클의 순서 (#105)
+
+/// The world one cycle sees, scripted: probes answer in order, everything
+/// the cycle does is recorded.
+@MainActor final class FakeWorld {
+    var probes: [ProbeObservation]
+    var clock = Date(timeIntervalSince1970: 1_790_000_000)
+    var kickstarts: [String] = []
+    var published: [(verdict: ProbeVerdict, at: Date, lastHeal: HealRecord?)] = []
+    var slept: [TimeInterval] = []
+    var labelLookups = 0
+    var kickstartOK = true
+
+    init(_ probes: [ProbeObservation]) { self.probes = probes }
+
+    var world: AgentCycle.World {
+        AgentCycle.World(
+            // The last answer repeats, so a cycle that probes more than the
+            // script expects fails a check instead of trapping.
+            probe: { self.probes.count > 1 ? self.probes.removeFirst() : self.probes[0] },
+            gatewayLabel: { self.labelLookups += 1; return "ai.openclaw.gateway" },
+            kickstart: { self.kickstarts.append($0); return self.kickstartOK },
+            publish: { self.published.append(($0, $1, $2)) },
+            log: { _ in },
+            sleep: { self.slept.append($0); self.clock.addTimeInterval($0) },
+            now: { self.clock })
+    }
+}
+
+// Top-level code here runs on the main thread but is not checked as main
+// actor isolated, and `AgentCycle` is.
+MainActor.assumeIsolated {
+    let down = ProbeObservation.observed(.down)
+    let ok = ProbeObservation.observed(.ok(detail: "Slack main"))
+
+    var c = AgentCycle(autoHeal: true, lastHeal: nil)
+    let w = FakeWorld([ok])
+    check("정상 → 게시, 복구 없음",
+          c.run(w.world) == .published && w.kickstarts.isEmpty && w.published.count == 1)
+
+    var c2 = AgentCycle(autoHeal: true, lastHeal: nil)
+    let w2 = FakeWorld([down, down, ok])
+    _ = c2.run(w2.world)
+    check("다운 한 번 → 게시만, 복구 없음", w2.kickstarts.isEmpty && w2.published.last?.verdict == .down)
+    let outcome = c2.run(w2.world)
+    check("다운 두 번째 → kickstart, 3초 대기 후 재probe 결과로 게시",
+          outcome == .published && w2.kickstarts == ["ai.openclaw.gateway"]
+          && w2.slept == [AgentCycle.postHealSettle] && w2.published.last?.verdict == .ok(detail: "Slack main"))
+    check("복구 기록이 게시에 실린다 (원인 = 복구 전 판정)",
+          w2.published.last?.lastHeal.map { $0.ok && $0.reason == "down" } == true && c2.lastHeal != nil)
+    check("레이블은 복구 때만 찾는다", w2.labelLookups == 1)
+
+    var c7 = AgentCycle(autoHeal: true, lastHeal: nil)
+    let w7 = FakeWorld([down, down, down])
+    w7.kickstartOK = false
+    _ = c7.run(w7.world); _ = c7.run(w7.world)
+    check("kickstart 실패 → 실패로 게시 (클라이언트가 성공으로 보지 않는다)",
+          w7.published.last?.lastHeal.map { !$0.ok } == true)
+
+    // The invariant main.swift relied on by hand: a heal whose re-probe went
+    // unheard is still published — the next process reads its cooldown from
+    // the file — and with the verdict and time from before the heal.
+    var c3 = AgentCycle(autoHeal: true, lastHeal: nil)
+    let w3 = FakeWorld([down, down, .unobserved(reason: "빈 출력")])
+    _ = c3.run(w3.world)
+    let before = w3.clock
+    let o3 = c3.run(w3.world)
+    check("복구 후 재probe 못 들음 → 재시작 신호", o3 == .unobserved(reason: "빈 출력"))
+    check("…그래도 복구 기록은 먼저 게시된다 (다음 프로세스의 쿨다운)",
+          w3.published.count == 2 && w3.published.last?.lastHeal != nil)
+    check("…복구 전 판정과 그 관측 시각으로",
+          w3.published.last?.verdict == .down && w3.published.last?.at == before)
+
+    var c4 = AgentCycle(autoHeal: true, lastHeal: nil)
+    let w4 = FakeWorld([.unobserved(reason: "spawn 실패"), down, down])
+    check("첫 probe 못 들음 → 게시 없이 재시작 신호",
+          c4.run(w4.world) == .unobserved(reason: "spawn 실패") && w4.published.isEmpty)
+    _ = c4.run(w4.world)
+    check("못 들은 probe 는 복구 횟수에 안 센다", w4.kickstarts.isEmpty)
+
+    var c5 = AgentCycle(autoHeal: false, lastHeal: nil)
+    let w5 = FakeWorld([down, down, down, down, down])
+    for _ in 0..<5 { _ = c5.run(w5.world) }
+    check("자동복구 꺼짐 → 다운이 이어져도 kickstart 없음", w5.kickstarts.isEmpty && w5.published.count == 5)
+
+    let recent = HealRecord(at: Date(timeIntervalSince1970: 1_790_000_000 - 60), ok: true, reason: "down")
+    var c6 = AgentCycle(autoHeal: true, lastHeal: recent)
+    let w6 = FakeWorld([down, down])
+    _ = c6.run(w6.world); _ = c6.run(w6.world)
+    check("상태 파일의 지난 복구가 쿨다운 안 → 다시 복구하지 않는다", w6.kickstarts.isEmpty)
+    check("…지난 복구 기록은 그대로 게시", w6.published.last?.lastHeal == recent)
 }
 
 // MARK: - 결과
