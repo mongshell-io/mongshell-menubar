@@ -30,6 +30,13 @@ struct GitHubPresentation: Equatable {
     /// The settings' token row. `rejected` is a 401 on that token.
     enum Token: Equatable {
         case pat(rejected: Bool)
+        /// A PAT just given could not be stored (#124). What the Keychain
+        /// holds now is unknown — the save may have deleted the old item, or
+        /// failed to (locked, refused, an item another build owns) — but it
+        /// is not the token just given, so nothing is shown as "in use". No
+        /// clear button: clearing is the same delete that just failed. The
+        /// next refresh reads the Keychain again and the row follows it.
+        case patSaveFailed(OSStatus)
         case ghAccount(String, rejected: Bool)
         case keychainDenied
         case checking
@@ -59,7 +66,7 @@ struct GitHubPresentation: Equatable {
         switch token {
         case .pat:                         return .clearPAT
         case .keychainDenied:              return .retryGHKeychain
-        case .ghAccount, .checking, .none: return .none
+        case .ghAccount, .patSaveFailed, .checking, .none: return .none
         }
     }
 
@@ -85,6 +92,7 @@ struct GitHubPresentation: Equatable {
         case .error(let message):            banner = .failed(message)
         }
         switch (tokenSource, loadState) {
+        case (_, .patSaveFailed(let status)):       token = .patSaveFailed(status)
         case (.pat?, .unauthorized):                token = .pat(rejected: true)
         case (.pat?, _):                            token = .pat(rejected: false)
         case (.ghCLI(let account)?, .unauthorized): token = .ghAccount(account, rejected: true)

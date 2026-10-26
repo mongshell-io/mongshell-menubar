@@ -1319,11 +1319,14 @@ do {
           [GitHubLoadState.loading, .rateLimited(retryAt: retryAt), .error("x")].allSatisfy {
               p($0, .pat).token == .pat(rejected: false) && p($0, .pat).tokenAction == .clearPAT
           })
-    // 현재 동작: 저장 실패 후에도 tokenSource 가 직전 값으로 남아 "PAT 사용 중" 으로 보인다.
-    // 고칠 때는 이 케이스를 함께 바꾼다 (동작 변경은 별도 커밋).
-    check("토큰: PAT + patSaveFailed → 사용 중, PAT 지우기 (현재 동작)",
-          p(.patSaveFailed(-25300), .pat).token == .pat(rejected: false)
-          && p(.patSaveFailed(-25300), .pat).tokenAction == .clearPAT)
+    // 저장이 실패하면 Keychain 에 무엇이 남았는지 알 수 없고 방금 준 토큰은 아니다 — "사용 중" 으로
+    // 보이지 않고, 방금 실패한 삭제와 같은 지우기 버튼도 두지 않는다. 다음 새로고침이 다시 읽는다 (#124).
+    check("토큰: PAT 쓰던 중 patSaveFailed → 저장 실패, 버튼 없음 (#124)",
+          p(.patSaveFailed(-25300), .pat).token == .patSaveFailed(-25300)
+          && p(.patSaveFailed(-25300), .pat).tokenAction == .none)
+    check("토큰: gh 쓰던 중·토큰 없던 중 patSaveFailed → 저장 실패 (#124)",
+          p(.patSaveFailed(-25300), gh).token == .patSaveFailed(-25300)
+          && p(.patSaveFailed(-25300), nil).token == .patSaveFailed(-25300))
     check("토큰: gh + 401 → 계정명·거부됨, 버튼 없음",
           p(.unauthorized, gh).token == .ghAccount("mongshellio", rejected: true)
           && p(.unauthorized, gh).tokenAction == .none)
@@ -1340,7 +1343,7 @@ do {
           p(.loading).token == .checking && p(.loading).tokenAction == .none)
     check("토큰: 출처 없음 + 그 밖 → 없음, 버튼 없음",
           [GitHubLoadState.off, .noToken, .unauthorized, .rateLimited(retryAt: retryAt),
-           .patSaveFailed(-25300), .error("x")].allSatisfy {
+           .error("x")].allSatisfy {
               p($0).token == GitHubPresentation.Token.none && p($0).tokenAction == .none
           })
 }
