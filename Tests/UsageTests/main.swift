@@ -944,6 +944,32 @@ do {
     check("#133 responses parse", false, "\(error)")
 }
 
+// MARK: #135 — credits amounts read as JSON numbers, never bools
+
+do {
+    func credits(limit: String, used: String = "0", exponent: String = "2") -> String? {
+        let spend = #""spend": {"enabled": true, "limit": {"amount_minor": \#(limit), "exponent": \#(exponent)}, "used": {"amount_minor": \#(used)}}"#
+        let text = String(decoding: response(), as: UTF8.self).replacingOccurrences(of: #""spend": null"#, with: spend)
+        return (try? UsageAPIClient.interpret(statusCode: 200, retryAfter: nil, data: body(text)))?.creditsText
+    }
+    check("credits: minor units over 10^exponent", credits(limit: "1050", used: "630") == "크레딧 $4.20 남음",
+          "\(String(describing: credits(limit: "1050", used: "630")))")
+    check("credits: exponent missing → 2", credits(limit: "500", exponent: "null") == "크레딧 $5.00 남음")
+    check("credits: exponent true → default 2, not 1",
+          credits(limit: "500", exponent: "true") == "크레딧 $5.00 남음",
+          "\(String(describing: credits(limit: "500", exponent: "true")))")
+    check("credits: exponent 0 kept", credits(limit: "5", exponent: "0") == "크레딧 $5.00 남음")
+    check("credits: amount true → 0, not 1 cent",
+          credits(limit: "true", exponent: "0") == "크레딧 $0.00 남음",
+          "\(String(describing: credits(limit: "true", exponent: "0")))")
+    check("credits: used true → 0", credits(limit: "100", used: "true", exponent: "0") == "크레딧 $100.00 남음")
+    check("credits: fractional amount → 0 (integers only, as before)",
+          credits(limit: "1.5", exponent: "0") == "크레딧 $0.00 남음")
+    check("credits: negative used kept", credits(limit: "100", used: "-50", exponent: "0") == "크레딧 $150.00 남음")
+    check("credits: extreme Ints don't trap",
+          credits(limit: "9223372036854775807", used: "-9223372036854775807", exponent: "0") != nil)
+}
+
 // MARK: result
 
 if failures.isEmpty {

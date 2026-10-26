@@ -83,6 +83,7 @@ swiftc -o "$OUT/auth-tests" \
   "$APP/Services/BoundedHTTP.swift" \
   "$APP/Services/Config.swift" \
   "$APP/Services/Credentials.swift" \
+  "$APP/Services/JSONNumber.swift" \
   "$APP/Services/OAuthTokenClient.swift" \
   "$ROOT/Tests/AuthTests/main.swift"
 

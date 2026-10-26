@@ -173,18 +173,17 @@ enum CredentialStore {
     }
 
     /// Claude Code stores `{ "claudeAiOauth": { accessToken, refreshToken, expiresAt } }`.
-    /// `expiresAt` is epoch milliseconds. Decoded defensively.
-    private static func parseClaudeCodeJSON(_ data: Data) -> OAuthToken? {
+    /// `expiresAt` is epoch milliseconds. Decoded defensively — a JSON bool
+    /// is not a time (#135).
+    static func parseClaudeCodeJSON(_ data: Data) -> OAuthToken? {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         let oauth = (root["claudeAiOauth"] as? [String: Any]) ?? root
         guard let access = oauth["accessToken"] as? String, !access.isEmpty else { return nil }
         let refresh = oauth["refreshToken"] as? String
         var expires: Date?
-        if let ms = oauth["expiresAt"] as? Double {
+        if let ms = JSONNumber.finite(oauth["expiresAt"]) {
             expires = Date(timeIntervalSince1970: ms / 1000)
-        } else if let ms = oauth["expiresAt"] as? Int {
-            expires = Date(timeIntervalSince1970: Double(ms) / 1000)
         }
         return OAuthToken(accessToken: access, refreshToken: refresh, expiresAt: expires)
     }

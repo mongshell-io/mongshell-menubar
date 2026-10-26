@@ -203,10 +203,11 @@ struct UsageAPIClient {
               (spend["enabled"] as? Bool) == true,
               let limit = spend["limit"] as? [String: Any],
               let used = spend["used"] as? [String: Any] else { return nil }
-        let exp = (limit["exponent"] as? Int) ?? 2
+        let exp = JSONNumber.integer(limit["exponent"]) ?? 2
         let divisor = pow(10.0, Double(exp))
-        let remaining = Double((limit["amount_minor"] as? Int ?? 0)
-                               - (used["amount_minor"] as? Int ?? 0)) / divisor
+        // Subtracted as Doubles: two extreme Ints would trap on overflow.
+        let remaining = (Double(JSONNumber.integer(limit["amount_minor"]) ?? 0)
+                         - Double(JSONNumber.integer(used["amount_minor"]) ?? 0)) / divisor
         return String(format: "크레딧 $%.2f 남음", max(0, remaining))
     }
 

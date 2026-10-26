@@ -1,7 +1,8 @@
 import Foundation
 
 /// One rule for numbers read out of a JSONSerialization tree (the GitHub
-/// response, the openclaw status document): a figure is a finite JSON number,
+/// response, the openclaw status document, the usage response, the OAuth
+/// token response, Claude Code's credentials): a figure is a finite JSON number,
 /// never a JSON `true` / `false`. JSONSerialization hands a bool back as an
 /// NSNumber worth 1 or 0, so `as? Double` / `as? Int` would read `true` as 1 —
 /// each caller once kept its own copy of this check, and the copies drifted.
@@ -22,4 +23,10 @@ enum JSONNumber {
     }
 
     static let countCeiling = Double(Int32.max)
+
+    /// An exact integer of either sign — what `as? Int` used to accept, minus
+    /// the bools. nil for a fraction or a value `Int` can't hold.
+    static func integer(_ any: Any?) -> Int? {
+        finite(any).flatMap { Int(exactly: $0) }
+    }
 }
