@@ -1226,6 +1226,31 @@ do {
     check("Keychain queue: drain gives up at the cap while a job hangs (a prompt left up)",
           cappedAt.map { (0.15..<2).contains($0.timeIntervalSince(cappedStart)) } ?? false,
           "\(String(describing: cappedAt.map { $0.timeIntervalSince(cappedStart) }))")
+
+    // Quitting from inside a main-queue block (a `Task @MainActor`, a
+    // `DispatchQueue.main.async`) leaves AppKit waiting for the reply in a run
+    // loop nested in that block. The serial main queue cannot start another
+    // block there, so a reply sent through it never arrives and the app never
+    // quits; one handed to the run loop does.
+    final class InBlock: @unchecked Sendable {
+        var replied = false
+        var finished = false
+    }
+    let inBlock = InBlock()
+    DispatchQueue.main.async {
+        KeychainQueue.whenDrained(timeout: 5) { inBlock.replied = true }
+        let nestedDeadline = Date().addingTimeInterval(2)
+        while !inBlock.replied, Date() < nestedDeadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        inBlock.finished = true
+    }
+    let inBlockDeadline = Date().addingTimeInterval(5)
+    while !inBlock.finished, Date() < inBlockDeadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    }
+    check("Keychain queue: drain reply reaches a run loop nested in a main-queue block (quit from a Task)",
+          inBlock.replied)
 }
 
 // MARK: #133 — reset phrases are made at draw time; flat fallbacks are logged
