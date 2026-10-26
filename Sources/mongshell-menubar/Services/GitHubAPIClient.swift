@@ -315,11 +315,15 @@ struct GitHubAPIClient: Sendable {
     /// The one line under a row: flattened by the `DisplayText` rule, anything
     /// shaped like a GitHub token masked, cut to `mergeMessageMaxLength`.
     /// GitHub has no reason to echo a token, but the row is not where to find
-    /// out. The mask runs before the cut, so a shortened token still matches.
+    /// out. `displayText` already caps the text at `Config.githubDisplayTextLimit`
+    /// before the mask runs, and the row cut comes after it; a token either
+    /// cut shortens is still masked as long as its prefix survives.
     static func mergeMessage(_ raw: String) -> String {
         // GitHub splits its rule-violation messages into paragraphs; flattened,
-        // the blank line would leave a run of spaces mid-sentence.
-        let oneLine = displayText(raw).split(separator: " ").joined(separator: " ")
+        // the blank line would leave a run of spaces mid-sentence. Folded on
+        // any whitespace — NBSP, U+2000…U+200A and U+3000 included — not just
+        // the ASCII space.
+        let oneLine = displayText(raw).split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let masked = oneLine.replacingOccurrences(of: tokenPattern, with: "•••", options: .regularExpression)
         guard masked.count > mergeMessageMaxLength else { return masked }
         return String(masked.prefix(mergeMessageMaxLength)) + "…"
@@ -389,7 +393,10 @@ struct GitHubAPIClient: Sendable {
         guard let node, node["__typename"] as? String == "PullRequest",
               let number = JSONNumber.count(node["number"]),
               let repository = ((node["repository"] as? [String: Any])?["nameWithOwner"] as? String)
-                  .map(displayText)
+                  .map(displayText),
+              // Nothing to show and nothing to hide it by: a blank or
+              // control-only name would make a row no repo filter can reach.
+              !repository.isEmpty
         else { return nil }
         let rollup = ((((node["commits"] as? [String: Any])?["nodes"] as? [Any])?.first
                        as? [String: Any])?["commit"] as? [String: Any])?["statusCheckRollup"]
@@ -474,7 +481,8 @@ struct GitHubAPIClient: Sendable {
     /// What makes two runs the same check run again. A CheckRun's `name` is
     /// only the job's, and two workflows on one commit can each have a
     /// `build`, so the workflow (else the app) is part of it. A StatusContext's
-    /// `context` is already its whole identity.
+    /// `context` is already its whole identity. Built from the response's raw
+    /// strings, never the flattened display names.
     enum RerunKey: Hashable, Sendable {
         case checkRun(suite: String, name: String)
         case status(context: String)
@@ -552,23 +560,26 @@ struct GitHubAPIClient: Sendable {
         guard let node else { return nil }
         switch node["__typename"] as? String {
         case "CheckRun":
-            let name = (node["name"] as? String).map(displayText) ?? ""
-            let run = PRCheck(name: name,
+            // The key takes the raw name: flattened and cut, two different
+            // checks (a shared first 256 characters, or names that differ only
+            // in control characters) would collapse into one re-run series.
+            let rawName = node["name"] as? String ?? ""
+            let run = PRCheck(name: displayText(rawName),
                               outcome: checkRunOutcome(status: node["status"] as? String,
                                                        conclusion: node["conclusion"] as? String),
                               startedAt: ResponseDate.parse(node["startedAt"]),
                               completedAt: ResponseDate.parse(node["completedAt"]),
                               url: httpsURL(node["detailsUrl"]))
             return (workflowRun(node["checkSuite"]),
-                    (checkSuiteName(node["checkSuite"]).map { .checkRun(suite: $0, name: name) }, run))
+                    (checkSuiteName(node["checkSuite"]).map { .checkRun(suite: $0, name: rawName) }, run))
         case "StatusContext":
             // Commit statuses carry a creation time only — no duration.
-            let context = (node["context"] as? String).map(displayText) ?? ""
-            let status = PRCheck(name: context,
+            let rawContext = node["context"] as? String ?? ""
+            let status = PRCheck(name: displayText(rawContext),
                                  outcome: statusContextOutcome(state: node["state"] as? String),
                                  startedAt: nil, completedAt: nil,
                                  url: httpsURL(node["targetUrl"]))
-            return (nil, (.status(context: context), status))
+            return (nil, (.status(context: rawContext), status))
         default:
             return nil
         }

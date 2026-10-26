@@ -1453,6 +1453,49 @@ do {
           message == "Pull Request is blocked", message)
 }
 
+// MARK: #136 후속 — 식별 키는 원문, 빈 레포명은 버림, 공백 접기는 isWhitespace
+
+print("▸ GitHub 정규화 후속 (식별 키·빈 레포명·공백 접기)")
+do {
+    func rollupJSON(_ nodes: [[String: Any]]) -> String {
+        let rollup: [String: Any] = ["state": "SUCCESS", "contexts": ["nodes": nodes]]
+        return String(decoding: try! JSONSerialization.data(withJSONObject: rollup), as: UTF8.self)
+    }
+    func checks(_ nodes: [[String: Any]]) -> [PRCheck] {
+        parsed(body(mine: [node(rollup: rollupJSON(nodes))]))?.mine.first?.checks ?? []
+    }
+    let suite: [String: Any] = ["app": ["slug": "ci-app"]]
+    func run(_ name: String) -> [String: Any] {
+        ["__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": "SUCCESS",
+         "checkSuite": suite]
+    }
+    func status(_ context: String) -> [String: Any] {
+        ["__typename": "StatusContext", "context": context, "state": "SUCCESS"]
+    }
+
+    let prefix = String(repeating: "x", count: Config.githubDisplayTextLimit)
+    check("앞 256자가 같은 서로 다른 CheckRun → 둘 다 남음",
+          checks([run(prefix + "-a"), run(prefix + "-b")]).count == 2)
+    check("제어문자만 다른 서로 다른 CheckRun → 둘 다 남음",
+          checks([run("build\u{0000}"), run("build\u{0007}")]).count == 2)
+    check("앞 256자가 같은 서로 다른 StatusContext → 둘 다 남음",
+          checks([status(prefix + "-a"), status(prefix + "-b")]).count == 2)
+    check("제어문자만 다른 서로 다른 StatusContext → 둘 다 남음",
+          checks([status("ci\u{0000}"), status("ci\u{0007}")]).count == 2)
+    let shown = checks([run("build\nlint")]).map(\.name)
+    check("표시 이름은 여전히 정규화", shown == ["build lint"], "\(shown)")
+    check("같은 원문 이름의 CheckRun 은 여전히 하나로", checks([run("test"), run("test")]).count == 1)
+
+    // `node` splices the repo into the JSON as-is, so it carries the escape itself.
+    let blank = parsed(body(mine: [node(#"\u0000\n "#), node()]))
+    check("정규화 후 빈 레포명 PR → 버림, 나머지는 남음",
+          blank?.mine.count == 1 && blank?.mine.first?.repository == "mongshell/bookdam",
+          "\(String(describing: blank?.mine.map(\.repository)))")
+
+    let spaced = GitHubAPIClient.mergeMessage("Pull\u{00A0}\u{00A0}Request\u{2003}is\u{3000}\u{3000}blocked")
+    check("머지 메시지의 NBSP·U+2003·U+3000 연속 → 공백 하나", spaced == "Pull Request is blocked", spaced)
+}
+
 print("")
 if failures.isEmpty {
     print("✓ \(caseCount) cases passed")
