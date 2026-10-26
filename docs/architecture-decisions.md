@@ -35,6 +35,7 @@
 | #79 | probe 시간 초과를 따로 판정 — down + "응답 지연" detail, 시간 초과만이면 4회에서 재시작, probe 25초 · 주기 하한 30초 | active |
 | #81 | 서버 에이전트 버전을 git 에서 찍어(`v1.2.0` / `v1.2.0+N`) 상태 문서 `agentVersion` 으로 싣고 팝오버에 보인다 | active |
 | #100 | 서버 에이전트를 이 repo 의 두 번째 제품으로 — PHILOSOPHY 에 가치·범위·원칙을 두고, repo·패키지는 하나로 유지 | active |
+| #109 | 자체 Keychain 항목을 같은 사용자 프로세스가 선점할 수 있음을 수용한다 — 레거시 키체인 유지, DP 키체인 미도입 | active (의식적 수용) |
 
 ---
 
@@ -462,3 +463,15 @@
   - Design Principles 5 의 재검토, 그리고 두 제품의 경계를 포함한 구조 검토는 이 결정 위에서 따로 다룬다.
 - **트레이드오프**: 철학 문서 하나가 두 제품을 다뤄 길어진다. 두 제품의 버전 번호가 같은 태그 계열을 공유한다 — 에이전트 버전은 앱과 같은 태그 뒤의 커밋 수로 찍힌다 (#81). 배포 주기는 묶이지 않는다 (서버는 main 을 그대로 설치한다).
 - **폐기 조건**: 에이전트가 메뉴바 앱 없이도 쓰이는 독립 제품이 되거나(다른 클라이언트가 상태 문서를 읽는 등), 에이전트에 독립된 버전 체계가 필요해지면 repo 분리를 검토한다.
+
+## Decision #109: 자체 Keychain 항목을 같은 사용자 프로세스가 선점할 수 있음을 수용한다
+
+- **도입**: 미정 (#109)
+- **컨텍스트**: 자체 OAuth 토큰은 파일 기반 login 키체인(레거시 키체인)에 있고, #102 이후 `saveOwnToken` 은 `SecItemUpdate` 로 기존 항목의 접근 목록을 둔 채 값만 바꾼다. #102 보안 리뷰는 다른 프로세스가 같은 service/account 로 항목을 미리 만들어 두면 새 토큰이 그 항목에 기록될 수 있다고 추론했다. 2026-10-26 macOS 27.0.1 에서 실험용 서비스 이름으로 재현했다: `security add-generic-password` 로 만든 항목에 별도 ad-hoc 서명 바이너리의 `SecItemUpdate` 가 프롬프트 없이 성공했고, 만든 쪽이 `security find-generic-password -w` 로 새 값을 프롬프트 없이 읽었다. 레거시 키체인의 접근 목록은 값 쓰기를 아무 앱에나 허용하고 읽기는 만든 쪽에 남긴다.
+- **결정**: 이 노출을 수용하고 저장 방식을 바꾸지 않는다.
+- **이유**: 대안은 둘이었다. (a) 선점 항목을 지우고 다시 만들기 — 다른 바이너리가 만든 항목의 `SecItemDelete` 는 `errSecInvalidOwnerEdit`(-25244)로 거부되고, update 가 성공하므로 그 분기에 들어가지도 않는다. (b) Data Protection 키체인(`kSecUseDataProtectionKeychain`) — `keychain-access-groups` 엔타이틀먼트와 이를 허가하는 프로비저닝 프로파일이 필요하다 (ad-hoc 서명에서 `errSecMissingEntitlement` -34018). 서명 흐름(#68)과 "Xcode 없이 빌드" 전제(Decision 3·#11-1)에 프로파일 관리가 더해지고, Claude Code·gh CLI 항목은 여전히 레거시 키체인에 남는다 (#68 의 대안 (b) 와 같은 이유).
+- **결과**:
+  - 공격 전제는 사용자 권한으로 이미 실행 중인 악성 프로세스다. 그 프로세스는 `~/.claude/.credentials.json` 과 `security` 로 열린 `Claude Code-credentials`·`gh:github.com` 을 원래부터 읽는다 (#68). 이 결정으로 새로 열리는 것은 자체 OAuth 토큰뿐이다.
+  - 자체 GitHub PAT(`savePAT`)는 delete→add 라, 선점 항목이 있으면 delete 가 거부되고 add 가 `errSecDuplicateItem` 으로 실패한다. 값은 새지 않고 저장만 실패한다.
+- **트레이드오프**: 같은 사용자로 도는 악성 코드가 자체 OAuth 토큰(그리고 그 refresh token)을 가져갈 수 있다.
+- **폐기 조건**: 앱을 남에게 배포하거나(Developer ID 경로, Decision 3), 프로비저닝 프로파일을 빌드에 넣을 이유가 따로 생기면 Data Protection 키체인 전환을 다시 검토한다.
