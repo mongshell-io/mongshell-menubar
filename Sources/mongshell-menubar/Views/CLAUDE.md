@@ -18,6 +18,7 @@ non_goals:
 - 상태는 `Models/` 의 `@MainActor ObservableObject` (`UsageModel.shared`, `Preferences.shared`, `OpenClawModel`) 를 `@ObservedObject`/`@EnvironmentObject` 로 관찰한다.
 - 뷰 안에서 `URLSession`·`Process`·`FileManager`·Keychain 을 직접 부르지 않는다. 필요하면 모델에 메서드를 만들고 그것을 호출한다.
 - 사용자 액션은 모델 메서드 호출로 끝난다 (`refreshNow()`, `applyStatusURL(_:)` 등).
+- 두 팝오버의 머리말(제목·연결 배지·⋯ 메뉴)과 배너는 `PopoverHeader`·`PopoverBanner` 를 함께 쓴다. ⋯ 메뉴의 "설정…"·"종료" 는 `PopoverHeader` 가 고정하고, 영역은 자기 항목만 넣는다 — 따로 구현하다 GitHub 메뉴에서 종료가 빠진 적이 있다(#74).
 - 사용량의 배지·배너·버튼·계정 행은 뷰가 `loadState` 를 직접 `switch` 해 정하지 않고 `UsagePresentation` 을 읽는다 (#104). 뷰에 남는 것은 문구와 색이다. GitHub 의 PR 행 배지·머지 버튼은 `GitHubPullRequest`·`GitHubMergePolicy` 가 정하고, GitHub 연결 상태의 배지·배너·토큰 행은 아직 뷰가 직접 판정한다.
 
 ## 뷰 로컬 상태는 `@State` 대신 수동 펼침
@@ -45,8 +46,6 @@ private var pulsing: Bool {
 | 메뉴바 | `MenuBarIconView`, `ClaudeMarkView`, `GitHubMenuBarView` | 폭이 유한하다. 상시 표시 항목 추가는 무엇을 뺄지 함께 제시해야 한다. 신호등은 세로로 **두 줄까지** 쌓는다 (Decision #31). 옵트인 두 번째 영역(Decision #45)은 글리프 · 점 · 숫자 하나까지 — 글리프가 머지 가능 여부를 겸하고, 상태와 무관하게 칸 폭은 고정이다 (Decision #52 후속 (#56)) |
 | hover 요약 | `HoverSummaryView`, `GitHubHoverSummaryView` | 즉시 표시가 존재 이유다 — 지연을 만드는 애니메이션·비동기 로드 금지. hover 는 갱신을 일으키지 않는다 |
 | 클릭 팝오버 / 설정창 | `PopoverView`, `SettingsView`, `ClaudeSettingsSection`, `OpenClawSettingsSection`, `GitHubPopoverView`, `GitHubSettingsSection` | 정확한 숫자와 상세는 여기로 미룬다 |
-
-두 팝오버의 머리말(제목·연결 배지·⋯ 메뉴)과 배너는 `PopoverHeader`·`PopoverBanner` 를 함께 쓴다. ⋯ 메뉴의 "설정…"·"종료" 는 `PopoverHeader` 가 고정하고, 영역은 자기 항목만 넣는다 — 따로 구현하다 GitHub 메뉴에서 종료가 빠진 적이 있다(#74).
 
 메뉴바에 무언가를 더하려는 변경은 [docs/PHILOSOPHY.md](../../../docs/PHILOSOPHY.md) § Design Principles 1 을 먼저 통과해야 한다. Claude 사용량 외의 신호라면 같은 문서의 § Admission Criteria 도 통과해야 한다.
 
