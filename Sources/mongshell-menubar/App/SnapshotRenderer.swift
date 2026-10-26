@@ -65,13 +65,15 @@ enum SnapshotRenderer {
             write(PopoverPreview(), to: base, "popover_usage_\(name)", scale: 2)
         }
         // A declined own-token prompt, remembered (#143): one banner, worded
-        // by what is shown in its stead, with "다시 허용" (#146).
+        // by what is shown in its stead, with "다시 허용" (#146). The own
+        // login is shown then only through a held token (#151).
         for (state, name) in [
             (LoadState.loaded(.claudeCodeCLI), "cli_account"),
             (.loaded(.oauthLogin), "held_login"),
             (.signedOut, "sample"),
         ] {
-            UsageModel.shared.presentForSnapshot(sample, state: state, keychainDeclined: true)
+            UsageModel.shared.presentForSnapshot(sample, state: state, keychainDeclined: true,
+                                                 holdsUnsavedLogin: state == .loaded(.oauthLogin))
             write(PopoverPreview(), to: base, "popover_usage_keychain_declined_\(name)", scale: 2)
         }
         // The remembered decline with a 5-hour row gone missing: the format
@@ -79,7 +81,8 @@ enum SnapshotRenderer {
         for (state, name) in [(LoadState.loaded(.claudeCodeCLI), "cli_account"), (.loaded(.oauthLogin), "held_login")] {
             var unread = sample
             unread.fiveHourPercent = nil
-            UsageModel.shared.presentForSnapshot(unread, state: state, keychainDeclined: true)
+            UsageModel.shared.presentForSnapshot(unread, state: state, keychainDeclined: true,
+                                                 holdsUnsavedLogin: state == .loaded(.oauthLogin))
             write(PopoverPreview(), to: base, "popover_usage_keychain_declined_unread_\(name)", scale: 2)
         }
         // A response whose 5-hour row went missing: grey ring and the format

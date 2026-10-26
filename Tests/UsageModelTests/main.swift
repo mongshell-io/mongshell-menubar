@@ -39,6 +39,10 @@ struct TransientRefreshFailure: Error {}
     var cli: OAuthToken?
     /// Replies for the nth own-token read, in place of what the item holds.
     var lookupReplies: [Int: OwnTokenLookup] = [:]
+    /// Replies for the nth own-token save; missing means `.saved`.
+    var saveReplies: [Int: OwnTokenSave] = [:]
+    /// Replies for the nth delete; missing means it worked.
+    var clearReplies: [Int: Bool] = [:]
     /// What `refresh` turns an access token into; missing means `invalid_grant`.
     var renewals: [String: OAuthToken] = [:]
     var signInToken: OAuthToken?
@@ -76,16 +80,24 @@ struct TransientRefreshFailure: Error {}
 
     func save(_ token: OAuthToken) async -> OwnTokenSave {
         saved.append(token.accessToken)
-        own = token
-        await pass("save#\(saved.count)")
-        return .saved
+        let n = saved.count
+        let reply = saveReplies[n] ?? .saved
+        switch reply {
+        case .saved: own = token
+        case .failedAfterDelete: own = nil
+        case .failed, .cancelled: break
+        }
+        await pass("save#\(n)")
+        return reply
     }
 
     func clear() async -> Bool {
         clears += 1
-        own = nil
-        await pass("clear#\(clears)")
-        return true
+        let n = clears
+        let reply = clearReplies[n] ?? true
+        if reply { own = nil }
+        await pass("clear#\(n)")
+        return reply
     }
 
     func readCLI() async -> OAuthToken? {
@@ -396,6 +408,148 @@ struct TransientRefreshFailure: Error {}
         check("(f) they fold into one follow-up refresh",
               fake.lookups == 2 && fake.fetched == ["a-T", "a-T"],
               "lookups=\(fake.lookups) fetched=\(fake.fetched)")
+    }
+
+    // MARK: (g) a sign-in the Keychain did not take is held (#151)
+
+    do {
+        // The old `signIn` dropped the token on a failed save and showed an
+        // error whose [재시도] only re-read the Keychain.
+        let fake = Fake()
+        fake.cli = token("C")
+        fake.signInToken = token("N")
+        fake.saveReplies = [1: .cancelled]
+        let model = UsageModel(boundaries: fake.boundaries)
+        await model.signIn()
+        check("(g) sign-in save cancelled: polled with the held login, not the CLI token",
+              fake.fetched == ["a-N"] && fake.cliReads == 0 && model.loadState == .loaded(.oauthLogin)
+                  && model.holdsUnsavedLogin && model.keychainDeclined,
+              "fetched=\(fake.fetched) cliReads=\(fake.cliReads) state=\(model.loadState) held=\(model.holdsUnsavedLogin)")
+        check("(g) …and the banner says so, with [다시 허용]",
+              model.presentation.banner == .keychainDeclined(.heldLogin, limitsUnread: false)
+                  && model.presentation.bannerAction == .allowKeychain,
+              "banner=\(model.presentation.banner)")
+        let lookupsBefore = fake.lookups
+        await model.refreshOnce()
+        check("(g) a poll under the decline neither reads nor stores the item again",
+              fake.lookups == lookupsBefore && fake.saved == ["a-N"] && fake.fetched == ["a-N", "a-N"],
+              "lookups=\(fake.lookups) saved=\(fake.saved) fetched=\(fake.fetched)")
+        model.refreshNow()
+        await settle()
+        check("(g) [다시 허용] stores the held login, and the banner clears",
+              fake.saved == ["a-N", "a-N"] && fake.own?.accessToken == "a-N" && !model.holdsUnsavedLogin
+                  && !model.keychainDeclined && model.presentation.banner == UsagePresentation.Banner.none,
+              "saved=\(fake.saved) own=\(fake.own?.accessToken ?? "nil") held=\(model.holdsUnsavedLogin) banner=\(model.presentation.banner)")
+    }
+
+    do {
+        // Removing the check after the save in `signIn`: the sign-in the
+        // user signed out of is held and polled — and stored — after all.
+        let fake = Fake()
+        fake.signInToken = token("N")
+        fake.saveReplies = [1: .cancelled]
+        fake.holds = ["save#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let signIn = Task { await model.signIn() }
+        await until("sign-in save held") { fake.isHeld("save#1") }
+        await model.signOut()
+        fake.release("save#1")
+        await signIn.value
+        await model.refreshOnce()
+        check("(g) sign-out during the sign-in save: nothing held, nothing stored or polled",
+              !model.holdsUnsavedLogin && fake.saved == ["a-N"] && fake.fetched.isEmpty
+                  && fake.own == nil && model.loadState == .signedOut,
+              "held=\(model.holdsUnsavedLogin) saved=\(fake.saved) fetched=\(fake.fetched) state=\(model.loadState)")
+    }
+
+    do {
+        // Same check, another sign-in: the first sign-in's token is held
+        // and stored over the second login.
+        let fake = Fake()
+        fake.signInToken = token("N")
+        fake.saveReplies = [1: .cancelled]
+        fake.holds = ["save#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let first = Task { await model.signIn() }
+        await until("first sign-in save held") { fake.isHeld("save#1") }
+        fake.signInToken = token("M")
+        await model.signIn()
+        fake.release("save#1")
+        await first.value
+        await model.refreshOnce()
+        check("(g) another sign-in during the sign-in save: the second login stays, the first is not held",
+              fake.own?.accessToken == "a-M" && fake.saved == ["a-N", "a-M"] && fake.fetched == ["a-M", "a-M"]
+                  && !model.holdsUnsavedLogin,
+              "own=\(fake.own?.accessToken ?? "nil") saved=\(fake.saved) fetched=\(fake.fetched)")
+    }
+
+    do {
+        // Clearing `pendingOwnToken` on `.drop` in `adoptRenewed` without the
+        // generation check: a refresh that started before the sign-in drops
+        // the sign-in's held token, and the login falls through to nothing.
+        let fake = Fake()
+        fake.own = token("T", expired: true)
+        fake.renewals = ["a-T": token("R")]
+        fake.signInToken = token("N")
+        fake.saveReplies = [1: .cancelled]
+        fake.holds = ["lookup#2"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let refresh = Task { await model.refreshOnce() }
+        await until("adopt's Keychain check held") { fake.isHeld("lookup#2") }
+        await model.signIn()
+        fake.release("lookup#2")
+        await refresh.value
+        check("(g) sign-in (save cancelled) during adopt's check: the old refresh leaves the held sign-in alone",
+              model.holdsUnsavedLogin && fake.saved == ["a-N"] && fake.fetched == ["a-N"]
+                  && model.loadState == .loaded(.oauthLogin),
+              "held=\(model.holdsUnsavedLogin) saved=\(fake.saved) fetched=\(fake.fetched) state=\(model.loadState)")
+    }
+
+    // MARK: (h) the guards #150 left unpinned
+
+    do {
+        // Removing the check after the delete in `signOut`: a delete that
+        // failed reports its error over the login that came after it.
+        let fake = Fake()
+        fake.own = token("T")
+        fake.signInToken = token("N")
+        fake.clearReplies = [1: false]
+        fake.holds = ["clear#1"]
+        let model = UsageModel(boundaries: fake.boundaries)
+        let signOut = Task { await model.signOut() }
+        await until("sign-out delete held") { fake.isHeld("clear#1") }
+        await model.signIn()
+        fake.release("clear#1")
+        await signOut.value
+        check("(h) sign-in during a failing sign-out delete: no delete error over the new login",
+              model.loadState == .loaded(.oauthLogin) && fake.own?.accessToken == "a-N",
+              "state=\(model.loadState) own=\(fake.own?.accessToken ?? "nil")")
+    }
+
+    do {
+        // Removing the check after the save in `resolvePendingToken`: the
+        // held renewal is held again after the sign-out, its Keychain
+        // expectation "maybe empty", and the next poll stores it — the
+        // signed-out login comes back.
+        let fake = Fake()
+        fake.own = token("T", expired: true)
+        fake.renewals = ["a-T": token("R")]
+        fake.saveReplies = [1: .failed, 2: .failedAfterDelete]
+        let model = UsageModel(boundaries: fake.boundaries)
+        await model.refreshOnce()
+        let heldFirst = model.holdsUnsavedLogin
+        fake.holds = ["save#2"]
+        let refresh = Task { await model.refreshOnce() }
+        await until("held renewal's save held") { fake.isHeld("save#2") }
+        await model.signOut()
+        fake.release("save#2")
+        await refresh.value
+        await model.refreshOnce()
+        check("(h) the renewal is held after its save failed", heldFirst)
+        check("(h) sign-out during the held renewal's save: it is not held or stored again",
+              !model.holdsUnsavedLogin && fake.saved == ["a-R", "a-R"] && fake.fetched == ["a-R"]
+                  && fake.own == nil && model.loadState == .signedOut,
+              "held=\(model.holdsUnsavedLogin) saved=\(fake.saved) fetched=\(fake.fetched) state=\(model.loadState)")
     }
 }
 

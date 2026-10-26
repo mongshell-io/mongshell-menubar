@@ -56,6 +56,10 @@ final class UsageModel: ObservableObject {
     /// Every own-token read folds its answer into this flag (#146), so it
     /// too is assigned only when it differs.
     @Published private(set) var keychainDeclined = false
+    /// Whether an own token the Keychain did not take is held — the banner
+    /// reads it rather than guess from `loadState` (#151). Mirrors
+    /// `pendingOwnToken`, assigned only when it differs, like the rest.
+    @Published private(set) var holdsUnsavedLogin = false
 
     /// The one place the state above changes (#103).
     private var session = UsageSession() {
@@ -67,8 +71,14 @@ final class UsageModel: ObservableObject {
         }
     }
     private var thresholds = UsageThresholdWatch()
-    /// A renewed own token the Keychain has not taken yet (#108).
-    private var pendingOwnToken: PendingOwnToken?
+    /// An own token the Keychain has not taken yet — a renewal (#108) or a
+    /// sign-in (#151).
+    private var pendingOwnToken: PendingOwnToken? {
+        didSet {
+            let holds = pendingOwnToken != nil
+            if holdsUnsavedLogin != holds { holdsUnsavedLogin = holds }
+        }
+    }
     /// Bumped by every sign-in and sign-out. A refresh that started under an
     /// older value must not adopt or show what it got (#108).
     ///
@@ -122,7 +132,8 @@ final class UsageModel: ObservableObject {
     /// What the usage surfaces show and offer right now (#104).
     var presentation: UsagePresentation {
         UsagePresentation(loadState: loadState, accountSource: accountSource,
-                          limitsUnread: snapshot.hasUnreadLimit, keychainDeclined: keychainDeclined, now: Date())
+                          limitsUnread: snapshot.hasUnreadLimit, keychainDeclined: keychainDeclined,
+                          holdsUnsavedLogin: holdsUnsavedLogin, now: Date())
     }
 
     private var pollBase: Int { max(Config.minPollInterval, boundaries.pollIntervalSeconds()) }
@@ -320,10 +331,15 @@ final class UsageModel: ObservableObject {
 
     /// Snapshot hook: shows a given snapshot and state without any network,
     /// so reference images are deterministic and never carry real usage.
-    func presentForSnapshot(_ snap: UsageSnapshot, state: LoadState, keychainDeclined: Bool = false) {
+    /// `holdsUnsavedLogin` stands in for a held token, which the hook has
+    /// no real one for.
+    func presentForSnapshot(_ snap: UsageSnapshot, state: LoadState, keychainDeclined: Bool = false,
+                            holdsUnsavedLogin: Bool = false) {
         pollTask?.cancel()
         pollTask = nil
+        pendingOwnToken = nil
         session.present(snap, state: state, keychainDeclined: keychainDeclined)
+        self.holdsUnsavedLogin = holdsUnsavedLogin
     }
 
     private func renewOwnToken(_ token: OAuthToken) async -> OwnTokenRenewal {
@@ -384,14 +400,16 @@ final class UsageModel: ObservableObject {
         let step = UsageRefreshPolicy.adopt(match: match, sameLogin: generation == loginGeneration)
         switch step {
         case .drop:
-            pendingOwnToken = nil
+            // After a sign-in or sign-out the held token is theirs — a
+            // sign-in the Keychain did not take holds its own (#151).
+            if generation == loginGeneration { pendingOwnToken = nil }
             return false
         case .store:
             let result = await saveOwnToken(renewed)
             guard generation == loginGeneration else { return false }
-            pendingOwnToken = UsageRefreshPolicy.pending(after: result, renewed: renewed, expected: expected)
+            pendingOwnToken = UsageRefreshPolicy.pending(after: result, token: renewed, expected: expected)
         case .hold:
-            pendingOwnToken = UsageRefreshPolicy.pending(after: nil, renewed: renewed, expected: expected)
+            pendingOwnToken = UsageRefreshPolicy.pending(after: nil, token: renewed, expected: expected)
         }
         if pendingOwnToken != nil {
             AuthDebugLog.write("renewed own token held in memory until the Keychain takes it")
@@ -422,11 +440,14 @@ final class UsageModel: ObservableObject {
             let save = await saveOwnToken(token)
             // A sign-out or another sign-in while the save was out wins.
             guard generation == loginGeneration else { return }
-            // A token that did not reach the Keychain is gone at the next
-            // poll, which would then quietly fall back to the CLI token.
-            guard save == .saved else {
-                session.failed("로그인 정보를 Keychain 에 저장하지 못했습니다", now: Date())
-                return
+            // A token that did not reach the Keychain is held, not dropped:
+            // dropped, the next poll fell back to the CLI token and the
+            // user had to go through OAuth again (#151). The poll uses it
+            // and stores it by the held-token rules — every poll after a
+            // failure, on [다시 허용] or a manual refresh after a cancel.
+            pendingOwnToken = UsageRefreshPolicy.pending(after: save, token: token, expected: .replacesAny)
+            if pendingOwnToken != nil {
+                AuthDebugLog.write("sign-in token held in memory until the Keychain takes it")
             }
             session.signedIn()
             await refreshOnce()

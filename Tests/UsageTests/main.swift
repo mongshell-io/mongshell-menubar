@@ -658,7 +658,8 @@ do {
     check("signing out lifts it — the login banner, not 다시 허용, after the item is gone",
           !d2.keychainDeclined
           && UsagePresentation(loadState: d2.loadState, accountSource: d2.accountSource,
-                               limitsUnread: false, keychainDeclined: d2.keychainDeclined, now: now).banner
+                               limitsUnread: false, keychainDeclined: d2.keychainDeclined,
+                               holdsUnsavedLogin: false, now: now).banner
               == .signedOut)
 
     var p = UsageSession()
@@ -721,6 +722,29 @@ do {
     check("…but anything written there since → changed",
           UsageRefreshPolicy.keychainMatch(own: .found(other), expects: .maybeEmpty) == .changed)
 
+    // #151 — a sign-in the Keychain did not take replaces whatever is there.
+    check("held sign-in: an older login or nothing in the item → current (store over it)",
+          UsageRefreshPolicy.keychainMatch(own: .found(other), expects: .replacesAny) == .current
+          && UsageRefreshPolicy.keychainMatch(own: .missing, expects: .replacesAny) == .current)
+    check("held sign-in: locked or refused → unknown",
+          UsageRefreshPolicy.keychainMatch(own: locked, expects: .replacesAny) == .unknown
+          && UsageRefreshPolicy.keychainMatch(own: .refused(errSecUserCanceled), expects: .replacesAny) == .unknown)
+    let heldSignIn = PendingOwnToken(token: renewed, keychain: .replacesAny)
+    check("held sign-in: the Keychain reads again → store it",
+          UsageRefreshPolicy.resolvePending(heldSignIn, own: .found(old)) == .save(renewed)
+          && UsageRefreshPolicy.resolvePending(heldSignIn, own: .missing) == .save(renewed))
+    check("held sign-in: a remembered decline → poll with it, no save",
+          UsageRefreshPolicy.resolvePending(heldSignIn, own: UsageRefreshPolicy.rememberedRefusal)
+              == .useInMemory(renewed))
+    check("held sign-in renewed → the renewal expects what the sign-in did",
+          UsageRefreshPolicy.expectation(pending: heldSignIn, polling: renewed) == .replacesAny)
+    check("sign-in save cancelled or failed → held over anything; lost the item → maybe empty",
+          UsageRefreshPolicy.pending(after: .cancelled, token: renewed, expected: .replacesAny) == heldSignIn
+          && UsageRefreshPolicy.pending(after: .failed, token: renewed, expected: .replacesAny) == heldSignIn
+          && UsageRefreshPolicy.pending(after: .failedAfterDelete, token: renewed, expected: .replacesAny)
+              == PendingOwnToken(token: renewed, keychain: .maybeEmpty)
+          && UsageRefreshPolicy.pending(after: .saved, token: renewed, expected: .replacesAny) == nil)
+
     let pending = PendingOwnToken(token: renewed, keychain: holdsR1)
     check("nothing held → nothing to do",
           UsageRefreshPolicy.resolvePending(nil, own: .found(old)) == PendingResolution.none)
@@ -759,15 +783,15 @@ do {
 
     let newer = OAuthToken(accessToken: "a3", refreshToken: "r3", expiresAt: nil)
     check("stored → nothing held",
-          UsageRefreshPolicy.pending(after: .saved, renewed: newer, expected: holdsR1) == nil)
+          UsageRefreshPolicy.pending(after: .saved, token: newer, expected: holdsR1) == nil)
     check("save failed, item untouched → held, Keychain still as before",
-          UsageRefreshPolicy.pending(after: .failed, renewed: newer, expected: holdsR1)
+          UsageRefreshPolicy.pending(after: .failed, token: newer, expected: holdsR1)
               == PendingOwnToken(token: newer, keychain: holdsR1))
     check("held without trying → Keychain still as before",
-          UsageRefreshPolicy.pending(after: nil, renewed: newer, expected: holdsR1)
+          UsageRefreshPolicy.pending(after: nil, token: newer, expected: holdsR1)
               == PendingOwnToken(token: newer, keychain: holdsR1))
     check("save failed after our delete → held, Keychain may be empty",
-          UsageRefreshPolicy.pending(after: .failedAfterDelete, renewed: newer, expected: holdsR1)
+          UsageRefreshPolicy.pending(after: .failedAfterDelete, token: newer, expected: holdsR1)
               == PendingOwnToken(token: newer, keychain: .maybeEmpty))
 
     // Storing a held renewal at the start of a refresh (#131): what stays
@@ -804,9 +828,9 @@ do {
     let now = Date(timeIntervalSince1970: 1_790_000_000)
     let retryAt = now.addingTimeInterval(600)
     func p(_ state: LoadState, _ source: DataSource?, limitsUnread: Bool = false,
-           declined: Bool = false) -> UsagePresentation {
+           declined: Bool = false, held: Bool = false) -> UsagePresentation {
         UsagePresentation(loadState: state, accountSource: source, limitsUnread: limitsUnread,
-                          keychainDeclined: declined, now: now)
+                          keychainDeclined: declined, holdsUnsavedLogin: held, now: now)
     }
 
     // #90 — the own login keeps "로그아웃" and never gets a login button
@@ -862,17 +886,27 @@ do {
           p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).banner == .keychainDeclined(.cliAccount, limitsUnread: false)
           && p(.loaded(.claudeCodeCLI), .claudeCodeCLI, declined: true).bannerAction == .allowKeychain)
     check("declined, polling with the held renewal → the declined banner says so (not a clean 'no banner')",
-          p(.loaded(.oauthLogin), .oauthLogin, declined: true).banner == .keychainDeclined(.heldLogin, limitsUnread: false)
-          && p(.loaded(.oauthLogin), .oauthLogin, declined: true).bannerAction == .allowKeychain)
+          p(.loaded(.oauthLogin), .oauthLogin, declined: true, held: true).banner
+              == .keychainDeclined(.heldLogin, limitsUnread: false)
+          && p(.loaded(.oauthLogin), .oauthLogin, declined: true, held: true).bannerAction == .allowKeychain)
+    // #151/#156 — under a decline the own login is polled only through a
+    // held token; `.loaded(.oauthLogin)` without one is the poll that read
+    // the decline, still falling through. It does not claim a held login.
+    check("declined, own login on screen but nothing held → not 'held login' (#156)",
+          p(.loaded(.oauthLogin), .oauthLogin, declined: true).banner == UsagePresentation.Banner.none
+          && p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true, declined: true).banner == .unreadLimits)
+    check("a held token with no decline (a save that failed, retried every poll) → no declined banner",
+          p(.loaded(.oauthLogin), .oauthLogin, held: true).banner == UsagePresentation.Banner.none)
     check("declined, nothing to poll with → the declined banner on the sample, 다시 허용 rather than 로그인",
           p(.signedOut, nil, declined: true).banner == .keychainDeclined(.sample, limitsUnread: false)
           && p(.signedOut, nil, declined: true).bannerAction == .allowKeychain)
     check("declined outranks the format notice but carries it (a grey gauge keeps its reason)",
           p(.loaded(.claudeCodeCLI), .claudeCodeCLI, limitsUnread: true, declined: true).banner
               == .keychainDeclined(.cliAccount, limitsUnread: true)
-          && p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true, declined: true).banner
+          && p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true, declined: true, held: true).banner
               == .keychainDeclined(.heldLogin, limitsUnread: true)
-          && p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true, declined: true).bannerAction == .allowKeychain)
+          && p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true, declined: true, held: true).bannerAction
+              == .allowKeychain)
     check("declined does not hide a lapsed login, loading, a rate limit or an error",
           p(.sessionExpired, nil, declined: true).banner == .sessionExpired
           && p(.sessionExpired, nil, declined: true).bannerAction == .signIn
@@ -1406,7 +1440,8 @@ do {
     check("locked own item under the lapsed notice → the notice and its login button stay",
           locked.loadState == .sessionExpired && locked.snapshot == .sample(now: now)
           && UsagePresentation(loadState: locked.loadState, accountSource: locked.accountSource,
-                               limitsUnread: false, keychainDeclined: false, now: now).bannerAction == .signIn)
+                               limitsUnread: false, keychainDeclined: false, holdsUnsavedLogin: false,
+                               now: now).bannerAction == .signIn)
     var lockedPlain = UsageSession()
     lockedPlain.loaded(snap, source: .oauthLogin)
     lockedPlain.ownTokenUnreadable("locked", now: now)

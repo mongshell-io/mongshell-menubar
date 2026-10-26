@@ -27,9 +27,10 @@ enum UsageTokenChoice: Equatable {
     case ownUnavailable(OSStatus)
 }
 
-/// A renewed own token the Keychain has not taken yet (#108). The refresh
-/// token is single use: once renewed, the one in the Keychain is spent, and
-/// dropping the new one would end the login at the next expiry.
+/// An own token the Keychain has not taken yet: a renewal (#108) or a fresh
+/// sign-in (#151). The refresh token is single use: once renewed, the one in
+/// the Keychain is spent, and dropping the new one would end the login at
+/// the next expiry; a sign-in dropped meant going through OAuth again.
 struct PendingOwnToken: Equatable {
     let token: OAuthToken
     /// What the Keychain holds meanwhile — the item `token` is to replace.
@@ -42,6 +43,12 @@ enum KeychainExpectation: Equatable {
     /// A save of ours deleted the item and could not add the new one: an
     /// empty Keychain is then our doing, not a sign-out (#108).
     case maybeEmpty
+    /// A sign-in the Keychain did not take (#151): the new login is to
+    /// replace whatever the item holds, an older login or nothing. Only a
+    /// sign-in or sign-out here moves it on, and both drop the held token
+    /// first; another build signing in meanwhile is accepted under the
+    /// single-user premise, as for a refused read.
+    case replacesAny
 }
 
 /// What to do with a renewed own token.
@@ -141,6 +148,7 @@ enum UsageRefreshPolicy {
         case (.missing, .holds): return .changed
         case (.found, .maybeEmpty): return .changed
         case (.missing, .maybeEmpty): return .current
+        case (.found, .replacesAny), (.missing, .replacesAny): return .current
         }
     }
 
@@ -162,14 +170,15 @@ enum UsageRefreshPolicy {
         }
     }
 
-    /// What stays held after a renewal was stored (`save`) or held without
-    /// trying (`save` nil). `expected` is what the Keychain held before.
-    static func pending(after save: OwnTokenSave?, renewed: OAuthToken,
+    /// What stays held after a new own token — a renewal, or a sign-in
+    /// (#151) — was stored (`save`) or held without trying (`save` nil).
+    /// `expected` is what the Keychain held before.
+    static func pending(after save: OwnTokenSave?, token: OAuthToken,
                         expected: KeychainExpectation) -> PendingOwnToken? {
         switch save {
         case .saved: return nil
-        case .failed, .cancelled, nil: return PendingOwnToken(token: renewed, keychain: expected)
-        case .failedAfterDelete: return PendingOwnToken(token: renewed, keychain: .maybeEmpty)
+        case .failed, .cancelled, nil: return PendingOwnToken(token: token, keychain: expected)
+        case .failedAfterDelete: return PendingOwnToken(token: token, keychain: .maybeEmpty)
         }
     }
 
@@ -177,7 +186,7 @@ enum UsageRefreshPolicy {
     /// The Keychain still holds what `held` was to replace — or may hold
     /// nothing, once a save of ours deleted the item (#108).
     static func pending(afterSaving held: PendingOwnToken, result: OwnTokenSave) -> PendingOwnToken? {
-        pending(after: result, renewed: held.token, expected: held.keychain)
+        pending(after: result, token: held.token, expected: held.keychain)
     }
 
     /// The login lapsed whatever the Keychain says — the server turned its
