@@ -402,6 +402,33 @@ struct TransientRefreshFailure: Error {}
               "notices=\(fake.expiryNotices) clears=\(fake.clears) state=\(model.loadState)")
     }
 
+    do {
+        // Letting `UsageSession.begin` name the account under the lapsed
+        // notice (#156): the dead token the Keychain could not confirm reads
+        // again, and while its renewal is out the settings row says "내 로그인"
+        // with a sign-out button under the "login lapsed" banner.
+        let fake = Fake()
+        fake.own = token("T", expired: true)
+        fake.lookupReplies = [2: .unavailable(errSecInteractionNotAllowed)] // item kept
+        let model = UsageModel(boundaries: fake.boundaries)
+        await model.refreshOnce()
+        let first = model.loadState
+        fake.holds = ["refresh#2"]
+        let refresh = Task { await model.refreshOnce() }
+        await until("second renewal of the dead token held") { fake.isHeld("refresh#2") }
+        let during = (model.loadState, model.accountSource, model.presentation.offersSignOut)
+        fake.release("refresh#2")
+        await refresh.value
+        check("(e) the lapse the Keychain could not confirm puts the notice up", first == .sessionExpired,
+              "state=\(first)")
+        check("(e) the dead token read again: no account named while its renewal is out",
+              during.0 == .sessionExpired && during.1 == nil && !during.2,
+              "state=\(during.0) account=\(String(describing: during.1)) signOut=\(during.2)")
+        check("(e) and it lapses again: deleted, notice up, one notification",
+              fake.clears == 1 && model.loadState == .sessionExpired && fake.expiryNotices == 1,
+              "clears=\(fake.clears) state=\(model.loadState) notices=\(fake.expiryNotices)")
+    }
+
     // MARK: (f) refreshes asked for while one is out
 
     do {
