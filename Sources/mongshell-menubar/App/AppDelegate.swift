@@ -9,7 +9,32 @@ import Combine
 final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
     var onMouseEntered: (() -> Void)?
     var onMouseExited: (() -> Void)?
+    /// Called after the SwiftUI content's size may have changed — at most
+    /// once per run-loop turn, however many invalidations it coalesces.
+    var onIntrinsicSizeChange: (() -> Void)?
     private var hoverTracking: NSTrackingArea?
+    private var sizeChangePending = false
+    /// The width last reported through `onIntrinsicSizeChange`.
+    private var reportedWidth: CGFloat?
+
+    /// NSHostingView invalidates its intrinsic size whenever what SwiftUI
+    /// draws changes size, whichever model or preference caused it — so the
+    /// status item follows the content without a list of inputs (#116). It
+    /// also invalidates on every frame of an animation that keeps the size,
+    /// such as the ≥90% pulse, so only an actual width change is reported.
+    override func invalidateIntrinsicContentSize() {
+        super.invalidateIntrinsicContentSize()
+        guard !sizeChangePending else { return }
+        sizeChangePending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            sizeChangePending = false
+            let width = fittingSize.width
+            guard width != reportedWidth else { return }
+            reportedWidth = width
+            onIntrinsicSizeChange?()
+        }
+    }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
@@ -188,27 +213,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         githubHover.contentViewController = githubHoverHC
         hoverPopovers[.github] = githubHover
 
-        // Keep the status-item width in sync with icon content.
-        model.$snapshot.receive(on: RunLoop.main).sink { [weak self] _ in self?.resizeStatusItem() }
-            .store(in: &cancellables)
-        prefs.objectWillChange.receive(on: RunLoop.main).sink { [weak self] _ in
-            // menuBarTarget may have flipped, which shows/hides the unified
-            // openclaw indicator and changes the bar width — resize to match.
-            DispatchQueue.main.async { self?.resizeStatusItem() }
-        }.store(in: &cancellables)
-        // The server host indicator appearing or going away swaps the single
-        // openclaw indicator for the stacked pair, which isn't the same width.
-        openClaw.$hostHealth.map { $0 == .absent }.removeDuplicates()
-            .receive(on: RunLoop.main).sink { [weak self] _ in
-                DispatchQueue.main.async { self?.resizeStatusItem() }
-            }.store(in: &cancellables)
-        // The GitHub region's count comes and goes (and changes digit count).
-        // Switching the region on or off is covered by the `prefs` sink above.
-        github.$glance.removeDuplicates()
-            .receive(on: RunLoop.main).sink { [weak self] _ in
-                DispatchQueue.main.async { self?.resizeStatusItem() }
-            }.store(in: &cancellables)
-
+        // Later width changes arrive through each host's
+        // `onIntrinsicSizeChange` (see `install`).
         resizeStatusItem()
         model.start()
 
@@ -231,16 +237,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         host.translatesAutoresizingMaskIntoConstraints = false
         host.onMouseEntered = { [weak self] in self?.showHoverSummary(region) }
         host.onMouseExited = { [weak self] in self?.hideHoverSummary(region) }
+        host.onIntrinsicSizeChange = { [weak self] in self?.resizeStatusItem() }
         hosts[region] = host
     }
 
+    /// Keeps the item's length equal to the regions' total width. Setting the
+    /// length doesn't invalidate the hosts again — their size depends on their
+    /// content only — and a length that is already right isn't written.
     private func resizeStatusItem() {
+        guard let statusItem else { return }
         let width = Region.allCases.reduce(CGFloat(0)) { sum, region in
             guard let host = hosts[region] else { return sum }
             host.layoutSubtreeIfNeeded()
             return sum + host.fittingSize.width
         }
-        statusItem.length = max(Self.minimumStatusItemWidth, width)
+        let length = max(Self.minimumStatusItemWidth, width)
+        if statusItem.length != length { statusItem.length = length }
     }
 
     /// Show a region's instant hover summary below it. Suppressed while a
