@@ -250,8 +250,8 @@ enum UsageRefreshPolicy {
     }
 
     /// Whether the decline stands after this read. It is only lifted by the
-    /// user acting (sign-in, a manual refresh) or a relaunch — never by a
-    /// poll, which is what kept the dialog coming back.
+    /// user acting (sign-in, sign-out, a manual refresh — [다시 허용]) or a
+    /// relaunch — never by a poll, which is what kept the dialog coming back.
     ///
     /// `declined` is the flag as it is when the read comes back, not as it
     /// was when the read went out: the read runs off the main thread (#141),
@@ -259,17 +259,22 @@ enum UsageRefreshPolicy {
     /// from the read must not lift that. `sameLogin` is false when a sign-in
     /// or sign-out came while the read was out: that lifted the flag (or
     /// stands on its own), and an answer about the item before it does not
-    /// set it again.
-    static func declined(_ declined: Bool, after own: OwnTokenLookup, sameLogin: Bool) -> Bool {
-        guard sameLogin else { return declined }
+    /// set it again. `sameAllowance` is false when the user lifted the
+    /// decline while the read was out (`UsageSession.declineLifts`): a
+    /// cancel from before the lift setting the flag again made [다시 허용]
+    /// do nothing once (#146).
+    static func declined(_ declined: Bool, after own: OwnTokenLookup, sameLogin: Bool,
+                         sameAllowance: Bool) -> Bool {
+        guard sameLogin, sameAllowance else { return declined }
         if case .refused(let status) = own, OwnTokenLookup.isUserRefusal(status) { return true }
         return declined
     }
 
     /// Whether the decline stands after this save — under the same rules
     /// as after a read.
-    static func declined(_ declined: Bool, afterSaving result: OwnTokenSave, sameLogin: Bool) -> Bool {
-        guard sameLogin else { return declined }
+    static func declined(_ declined: Bool, afterSaving result: OwnTokenSave, sameLogin: Bool,
+                         sameAllowance: Bool) -> Bool {
+        guard sameLogin, sameAllowance else { return declined }
         return result == .cancelled || declined
     }
 

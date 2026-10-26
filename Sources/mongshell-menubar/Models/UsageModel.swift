@@ -108,20 +108,22 @@ final class UsageModel: ObservableObject {
     /// read comes back — a save the user cancelled meanwhile keeps it set.
     private func lookupOwnToken() async -> OwnTokenLookup {
         if let remembered = UsageRefreshPolicy.ownLookup(declined: session.keychainDeclined) { return remembered }
-        let generation = loginGeneration
+        let generation = loginGeneration, lifts = session.declineLifts
         let own = await CredentialStore.lookupOwnToken()
         if case .refused(let status) = own { AuthDebugLog.write("own token refused status=\(status)") }
         rememberDecline(UsageRefreshPolicy.declined(session.keychainDeclined, after: own,
-                                                    sameLogin: generation == loginGeneration))
+                                                    sameLogin: generation == loginGeneration,
+                                                    sameAllowance: lifts == session.declineLifts))
         return own
     }
 
     /// Every own-token save goes through here, for the same reason.
     private func saveOwnToken(_ token: OAuthToken) async -> OwnTokenSave {
-        let generation = loginGeneration
+        let generation = loginGeneration, lifts = session.declineLifts
         let result = await CredentialStore.saveOwnToken(token)
         rememberDecline(UsageRefreshPolicy.declined(session.keychainDeclined, afterSaving: result,
-                                                    sameLogin: generation == loginGeneration))
+                                                    sameLogin: generation == loginGeneration,
+                                                    sameAllowance: lifts == session.declineLifts))
         return result
     }
 

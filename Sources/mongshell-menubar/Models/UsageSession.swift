@@ -43,6 +43,12 @@ struct UsageSession: Equatable {
     /// (`allowKeychainAgain()`, `signedOut`); a relaunch starts without it,
     /// like GitHub's `ghKeychainDenied`. The popover's banner reads it (#146).
     private(set) var keychainDeclined = false
+    /// Bumped wherever the user lifts the decline. A read or save that went
+    /// out before the lift answers for the dialog the user acted past, so it
+    /// does not set the flag again (`UsageRefreshPolicy.declined`). Kept
+    /// apart from the model's login generation: [다시 허용] is no new login,
+    /// and a refresh under it still adopts what it gets.
+    private(set) var declineLifts = 0
 
     static let backoffCap = 4
 
@@ -144,6 +150,7 @@ struct UsageSession: Equatable {
     /// Keychain prompt may show again.
     mutating func allowKeychainAgain() {
         keychainDeclined = false
+        declineLifts += 1
     }
 
     /// A new login reached the Keychain; the lapsed-login notice has done
@@ -158,6 +165,7 @@ struct UsageSession: Equatable {
     mutating func signedOut(now: Date) {
         expiredUnresolved = false
         keychainDeclined = false
+        declineLifts += 1
         accountSource = nil
         loadState = .signedOut
         snapshot = .sample(now: now)
