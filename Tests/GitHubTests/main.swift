@@ -1361,6 +1361,141 @@ do {
     check("영역 프레임 없음 → Claude", !go(260, nil, 52))
 }
 
+// MARK: #138 PR 행 보조 배지 · 막힘 개수
+// 뷰에 남아 있던 판정 — 보조 배지 목록과 그 순서, 팝오버 "내 PR" 의 막힘 개수.
+
+print("▸ 보조 배지 (PRSecondaryBadge)")
+do {
+    func badges(_ p: GitHubPullRequest) -> [PRSecondaryBadge] {
+        PRSecondaryBadge.of(p, verdict: PRVerdict.of(p))
+    }
+    check("검사 진행중: 롤업 PENDING 만으로도 (칩 없음)",
+          badges(pr(rollup: .pending)) == [.checksPending])
+    check("검사 진행중: 목록이 잘려 롤업이 SUCCESS 여도 도는 칩이 있으면",
+          badges(pr(rollup: .success, checks: [chk("build", .running, end: nil)])) == [.checksPending])
+    check("검사 진행중: 실패가 이긴 PR 이라도 대기 칩이 있으면",
+          badges(pr(rollup: .failure, checks: [chk("a", .failed), chk("b", .queued, end: nil)],
+                    complete: true)) == [.checksPending])
+    check("검사 끝 → 진행중 배지 없음", badges(pr(rollup: .success)) == [])
+    check("승인 + 판정이 다른 것(변경 요청 아님, Draft) → 보조 승인 배지",
+          badges(pr(draft: true, review: .approved)) == [.approved])
+    check("판정이 이미 승인 → 보조 승인 배지 없음",
+          PRSecondaryBadge.of(pr(review: .approved), verdict: .approved) == [])
+    check("판정이 머지 가능 → 보조 승인 배지 없음",
+          badges(pr(review: .approved, merge: .clean)) == [])
+    check("둘 다 (승인된 Draft, 검사 진행중) → 검사 진행중이 먼저",
+          badges(pr(draft: true, review: .approved, rollup: .pending)) == [.checksPending, .approved])
+}
+
+print("▸ 팝오버 막힘 개수 (glance.lines.blocked)")
+do {
+    let s = snap(mine: [pr("o/a", 1, mergeable: .conflicting), pr("o/b", 2, rollup: .failure),
+                        pr("o/c", 3, review: .changesRequested), pr("o/d", 4)])
+    let lines = GitHubGlance.of(s, state: .loaded(.pat), hidden: [], mergeActivity: [:]).lines
+    check("막힘 = 충돌·검사 실패·변경 요청", lines?.mine == 4 && lines?.blocked == 3)
+    let hiddenLines = GitHubGlance.of(s, state: .loaded(.pat), hidden: ["o/a"], mergeActivity: [:]).lines
+    check("숨긴 레포는 개수에서 빠진다 (목록과 같은 기준)",
+          hiddenLines?.mine == 3 && hiddenLines?.blocked == 2)
+}
+
+// MARK: #136 GitHub 문자열은 DisplayText 규칙을 거친다
+// PR 제목·레포 이름·검사 이름·StatusContext 이름은 파싱 경계에서 한 줄·유한 길이가 된다.
+
+print("▸ GitHub 문자열 정규화 (DisplayText)")
+do {
+    /// A Swift string as a JSON string literal, escapes and all.
+    func jsonString(_ raw: String) -> String {
+        let array = String(decoding: try! JSONSerialization.data(withJSONObject: [raw]), as: UTF8.self)
+        return String(array.dropFirst().dropLast())
+    }
+    func titled(_ title: String, repo: String = "mongshell/bookdam", rollup: String? = nil) -> GitHubPullRequest? {
+        let raw = rollup.map { node(repo, rollup: $0) } ?? node(repo)
+        return parsed(body(mine: [raw.replacingOccurrences(of: #""title":"t""#,
+                                                           with: "\"title\":\(jsonString(title))")]))?.mine.first
+    }
+    func isOneLine(_ s: String) -> Bool {
+        !s.unicodeScalars.contains { CharacterSet.controlCharacters.union(.newlines).contains($0) }
+    }
+
+    let multiLine = titled("첫 줄\n둘째 줄\u{0007}끝\u{2028}")
+    check("제목의 개행·제어문자 → 공백, 한 줄", multiLine?.title == "첫 줄 둘째 줄 끝",
+          "\(String(describing: multiLine?.title))")
+
+    let long = titled(String(repeating: "가", count: 5_000))
+    check("과다 길이 제목 → Config 한도로 잘림",
+          long?.title.count == Config.githubDisplayTextLimit, "\(String(describing: long?.title.count))")
+    let zalgo = titled("a" + String(repeating: "\u{0301}", count: 2_000))
+    check("조합문자 누적 제목 → 스칼라 한도",
+          (zalgo?.title.unicodeScalars.count ?? .max) <= DisplayText.scalarLimit,
+          "\(String(describing: zalgo?.title.unicodeScalars.count))")
+
+    // `node` splices the repo into the JSON as-is, so it carries the escape itself.
+    let repo = titled("t", repo: #"mongshell/book\ndam\u0000"#)
+    check("레포 이름의 개행·제어문자 → 한 줄", repo?.repository == "mongshell/book dam",
+          "\(String(describing: repo?.repository))")
+
+    let checkRun: [String: Any] = ["__typename": "CheckRun", "name": "build\nlint\u{0000}",
+                                   "status": "COMPLETED", "conclusion": "SUCCESS"]
+    let status: [String: Any] = ["__typename": "StatusContext",
+                                 "context": "ci/\u{2029}" + String(repeating: "s", count: 5_000),
+                                 "state": "SUCCESS"]
+    let rollup: [String: Any] = ["state": "SUCCESS", "contexts": ["nodes": [checkRun, status]]]
+    let rollupJSON = String(decoding: try! JSONSerialization.data(withJSONObject: rollup), as: UTF8.self)
+    let names = titled("t", rollup: rollupJSON)?.checks.map(\.name) ?? []
+    let heads = names.map { String($0.prefix(16)) }
+    check("검사 이름·StatusContext 이름 → 한 줄", names.count == 2 && names.allSatisfy(isOneLine), "\(heads)")
+    check("CheckRun 이름 개행 → 공백", names.contains("build lint"), "\(heads)")
+    check("과다 길이 StatusContext 이름 → Config 한도",
+          names.contains { $0.hasPrefix("ci/") && $0.count == Config.githubDisplayTextLimit }, "\(names.map(\.count))")
+
+    let message = GitHubAPIClient.mergeMessage("Pull\u{0000}Request\u{0007}is\u{2028}blocked")
+    check("머지 메시지의 제어문자·줄 구분자 → 공백 (DisplayText 규칙)",
+          message == "Pull Request is blocked", message)
+}
+
+// MARK: #136 후속 — 식별 키는 원문, 빈 레포명은 버림, 공백 접기는 isWhitespace
+
+print("▸ GitHub 정규화 후속 (식별 키·빈 레포명·공백 접기)")
+do {
+    func rollupJSON(_ nodes: [[String: Any]]) -> String {
+        let rollup: [String: Any] = ["state": "SUCCESS", "contexts": ["nodes": nodes]]
+        return String(decoding: try! JSONSerialization.data(withJSONObject: rollup), as: UTF8.self)
+    }
+    func checks(_ nodes: [[String: Any]]) -> [PRCheck] {
+        parsed(body(mine: [node(rollup: rollupJSON(nodes))]))?.mine.first?.checks ?? []
+    }
+    let suite: [String: Any] = ["app": ["slug": "ci-app"]]
+    func run(_ name: String) -> [String: Any] {
+        ["__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": "SUCCESS",
+         "checkSuite": suite]
+    }
+    func status(_ context: String) -> [String: Any] {
+        ["__typename": "StatusContext", "context": context, "state": "SUCCESS"]
+    }
+
+    let prefix = String(repeating: "x", count: Config.githubDisplayTextLimit)
+    check("앞 256자가 같은 서로 다른 CheckRun → 둘 다 남음",
+          checks([run(prefix + "-a"), run(prefix + "-b")]).count == 2)
+    check("제어문자만 다른 서로 다른 CheckRun → 둘 다 남음",
+          checks([run("build\u{0000}"), run("build\u{0007}")]).count == 2)
+    check("앞 256자가 같은 서로 다른 StatusContext → 둘 다 남음",
+          checks([status(prefix + "-a"), status(prefix + "-b")]).count == 2)
+    check("제어문자만 다른 서로 다른 StatusContext → 둘 다 남음",
+          checks([status("ci\u{0000}"), status("ci\u{0007}")]).count == 2)
+    let shown = checks([run("build\nlint")]).map(\.name)
+    check("표시 이름은 여전히 정규화", shown == ["build lint"], "\(shown)")
+    check("같은 원문 이름의 CheckRun 은 여전히 하나로", checks([run("test"), run("test")]).count == 1)
+
+    // `node` splices the repo into the JSON as-is, so it carries the escape itself.
+    let blank = parsed(body(mine: [node(#"\u0000\n "#), node()]))
+    check("정규화 후 빈 레포명 PR → 버림, 나머지는 남음",
+          blank?.mine.count == 1 && blank?.mine.first?.repository == "mongshell/bookdam",
+          "\(String(describing: blank?.mine.map(\.repository)))")
+
+    let spaced = GitHubAPIClient.mergeMessage("Pull\u{00A0}\u{00A0}Request\u{2003}is\u{3000}\u{3000}blocked")
+    check("머지 메시지의 NBSP·U+2003·U+3000 연속 → 공백 하나", spaced == "Pull Request is blocked", spaced)
+}
+
 print("")
 if failures.isEmpty {
     print("✓ \(caseCount) cases passed")

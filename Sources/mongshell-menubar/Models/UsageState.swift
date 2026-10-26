@@ -17,9 +17,8 @@ struct ExtraLimit: Identifiable, Equatable {
     /// `scope.model.display_name` when the entry has one.
     let scopeModel: String?
     let percent: Int
+    /// The popover phrases it at draw time (`TimeText.resetsAt`).
     let resetAt: Date?
-    /// e.g. "일요일 21:59 초기화"; empty when `resetAt` is nil.
-    let resetText: String
     /// `is_active` as sent; nil when absent. Logged only — the response marks
     /// `weekly_all` inactive too, so it does not mean "currently in effect".
     let isActive: Bool?
@@ -49,18 +48,18 @@ struct UnknownBucket: Equatable {
 /// Note: the usage endpoint carries no peak/off-peak-pricing info, so this
 /// model deliberately omits it rather than fabricating an "Off-peak" label.
 struct UsageSnapshot: Equatable {
-    /// 5-hour rolling window usage, 0…100.
-    var fiveHourPercent: Int
-    /// Human text like "3시간 8분 후 초기화".
-    var fiveHourResetText: String
-    /// Raw reset instant of the 5-hour window — the menu bar formats this itself.
+    /// 5-hour rolling window usage, 0…100. nil when the response carried no
+    /// readable value for it (a renamed `kind`, say) — never folded to 0, which
+    /// would draw a reassuring green ring over a limit nobody read (#130).
+    var fiveHourPercent: Int?
+    /// Reset instant of the 5-hour window. Only the instant is kept: each
+    /// surface phrases it when it draws ("3시간 8분 후 초기화" counts down),
+    /// so the text never freezes at the moment the response arrived (#133).
     var fiveHourResetAt: Date?
 
-    /// Weekly all-models usage, 0…100.
-    var weeklyAllPercent: Int
-    /// e.g. "일요일 21:59 초기화".
-    var weeklyResetText: String
-    /// Raw reset instant of the weekly window.
+    /// Weekly all-models usage, 0…100; nil when unread, as above.
+    var weeklyAllPercent: Int?
+    /// Reset instant of the weekly window, phrased at draw time as above.
     var weeklyResetAt: Date?
     /// Per-model weekly rows (Opus/Fable/…).
     var models: [ModelUsage]
@@ -68,6 +67,10 @@ struct UsageSnapshot: Equatable {
     var extraLimits: [ExtraLimit]
     /// Top-level objects the app does not read, sorted by key. Debug log only.
     var unknownTopLevel: [UnknownBucket]
+    /// Windows (`five_hour`, `seven_day`) read from their flat object although
+    /// the response carried a `limits` array — its row for that window went
+    /// missing or unreadable. Debug log only: an early sign of a format change.
+    var flatFallbacks: [String] = []
 
     /// Usage-credits status when meaningful (e.g. "$4.20 남음" / "크레딧 소진"),
     /// else nil. Derived from the response `spend`/`extra_usage`.
@@ -75,22 +78,33 @@ struct UsageSnapshot: Equatable {
 
     var lastUpdated: Date
 
-    static let sample = UsageSnapshot(
-        fiveHourPercent: 19,
-        fiveHourResetText: "3시간 8분 후 초기화",
-        fiveHourResetAt: Date().addingTimeInterval(3 * 3600 + 8 * 60),
-        weeklyAllPercent: 19,
-        weeklyResetText: "일요일 21:59 초기화",
-        weeklyResetAt: Calendar.current.nextDate(
-            after: Date(),
-            matching: DateComponents(hour: 21, minute: 59, weekday: 1),
-            matchingPolicy: .nextTime),
-        models: [ModelUsage(name: "Fable 5", percent: 25)],
-        extraLimits: [],
-        unknownTopLevel: [],
-        creditsText: nil,
-        lastUpdated: .distantPast
-    )
+    /// The 5-hour or the weekly limit could not be read from the response.
+    var hasUnreadLimit: Bool { fiveHourPercent == nil || weeklyAllPercent == nil }
+
+    /// The placeholder numbers shown while signed out, with its resets
+    /// counted from `now`. A function, not a stored constant: the countdown
+    /// is phrased at draw time (#133), so a reset fixed at first read would
+    /// tick down to "곧 초기화" about three hours after launch and stay there.
+    /// The half-minute of slack keeps "3시간 8분" through the seconds between
+    /// building it and drawing it.
+    static func sample(now: Date) -> UsageSnapshot {
+        UsageSnapshot(
+            fiveHourPercent: 19,
+            fiveHourResetAt: now.addingTimeInterval(sampleFiveHourLeft),
+            weeklyAllPercent: 19,
+            weeklyResetAt: Calendar.current.nextDate(
+                after: now,
+                matching: DateComponents(hour: 21, minute: 59, weekday: 1),
+                matchingPolicy: .nextTime),
+            models: [ModelUsage(name: "Fable 5", percent: 25)],
+            extraLimits: [],
+            unknownTopLevel: [],
+            creditsText: nil,
+            lastUpdated: .distantPast
+        )
+    }
+
+    private static let sampleFiveHourLeft: TimeInterval = 3 * 3600 + 8 * 60 + 30
 }
 
 /// Where the current data came from — drives the popover's status/footer.

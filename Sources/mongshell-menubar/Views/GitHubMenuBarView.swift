@@ -36,10 +36,9 @@ struct GitHubMenuBarContent: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // The boundary between the two regions. `.secondary` so it follows
-            // the status bar's light/dark appearance like the glyph does.
+            // The boundary between the two regions.
             Rectangle()
-                .fill(Color.secondary.opacity(0.3))
+                .fill(Palette.menuBarRegionDivider)
                 .frame(width: 1, height: 12)
                 .padding(.horizontal, 6)
             HStack(spacing: 4) {

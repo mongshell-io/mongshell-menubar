@@ -161,3 +161,31 @@ struct OpenClawHealWatch: Equatable, Sendable {
         self = OpenClawHealWatch()
     }
 }
+
+/// A server auto-heal to announce, with the words to say so.
+struct OpenClawHealAlert: Equatable, Sendable {
+    let heal: OpenClawHealEvent
+
+    /// Fixed, so a newer heal replaces the older one in Notification Center.
+    var identifier: String { "openclaw-heal" }
+
+    var title: String {
+        heal.ok ? "openclaw 자동 재시작됨 (서버)" : "openclaw 자동 재시작 실패 (서버)"
+    }
+
+    var body: String {
+        heal.ok
+            ? "\(cause) — 서버에서 하드 재시작했습니다."
+            : "\(cause) — 서버에서 재시작을 시도했지만 실패했습니다."
+    }
+
+    /// The verdict that triggered the heal; one the app doesn't know is
+    /// still announced, just without naming it.
+    private var cause: String {
+        switch heal.reason {
+        case "down":     return "게이트웨이 다운 감지"
+        case "degraded": return "채널 이상 감지"
+        default:         return "이상 감지"
+        }
+    }
+}

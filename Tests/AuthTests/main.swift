@@ -255,6 +255,33 @@ do {
     check("session line never contains the token", !line.contains("a\"") && !line.contains("accessToken"))
 }
 
+// MARK: #135 — a JSON bool is not a number of seconds or milliseconds
+
+do {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    func expiry(_ expiresIn: String) -> Date? {
+        (try? OAuthTokenClient.interpret(
+            statusCode: 200, data: body(#"{"access_token":"acc","expires_in":\#(expiresIn)}"#), now: now))?.expiresAt
+    }
+    check("expires_in true → no expiry (not 1 s)", expiry("true") == nil)
+    check("expires_in false → no expiry", expiry("false") == nil)
+    check("expires_in fraction kept", expiry("1.5") == now.addingTimeInterval(1.5))
+    check("expires_in negative kept (already expired)", expiry("-60") == now.addingTimeInterval(-60))
+    check("expires_in string → no expiry", expiry(#""3600""#) == nil)
+
+    func claudeExpiry(_ expiresAt: String) -> Date?? {
+        CredentialStore.parseClaudeCodeJSON(
+            body(#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":\#(expiresAt)}}"#))
+            .map(\.expiresAt)
+    }
+    check("Claude Code expiresAt ms → seconds",
+          claudeExpiry("1700000000000") == .some(Date(timeIntervalSince1970: 1_700_000_000)))
+    check("Claude Code expiresAt fractional ms kept",
+          claudeExpiry("1500.5") == .some(Date(timeIntervalSince1970: 1.5005)))
+    check("Claude Code expiresAt true → token without expiry (not 1 ms)", claudeExpiry("true") == .some(nil))
+    check("Claude Code expiresAt string → token without expiry", claudeExpiry(#""1700000000000""#) == .some(nil))
+}
+
 // MARK: result
 
 if failures.isEmpty {

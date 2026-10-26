@@ -117,7 +117,20 @@ final class ClaudeSettingsModel: ObservableObject {
             lastError = nil
         } catch {
             lastError = error.localizedDescription
-            reload() // roll the UI back to the truth on disk
+            revertToDisk()
+        }
+    }
+
+    /// Rolls the UI back to the truth on disk after a failed save. Unlike
+    /// `reload()`, a successful read here must not clear `lastError` — the
+    /// common failure is a write that fails while reads still work, and
+    /// clearing would leave the toggle silently snapping back with no message.
+    /// A failed read keeps the write error, the one the user's action caused;
+    /// `settings` was never published for the failed write, so it already
+    /// holds the last value we know landed.
+    private func revertToDisk() {
+        if let dict = try? ClaudeSettingsStore.load() {
+            settings = Self.parse(dict)
         }
     }
 

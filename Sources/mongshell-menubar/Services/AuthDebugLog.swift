@@ -44,7 +44,8 @@ enum AuthDebugLog {
     // MARK: usage response — limits the app has no rule for
 
     /// One line naming what the usage response carried that the app has no
-    /// rule for, or nil when there is nothing to report. Percentages and
+    /// rule for — or a window it had to read from the flat object because
+    /// its `limits` row went missing — or nil when there is nothing to report. Percentages and
     /// reset times only — never tokens or amounts.
     static func usageUnknownLine(_ snap: UsageSnapshot) -> String? {
         var parts: [String] = []
@@ -62,6 +63,9 @@ enum AuthDebugLog {
             }
             parts.append("top-level " + buckets.joined(separator: ", "))
         }
+        if !snap.flatFallbacks.isEmpty {
+            parts.append("limits row missing, read flat " + snap.flatFallbacks.joined(separator: ", "))
+        }
         guard !parts.isEmpty else { return nil }
         return parts.joined(separator: " | ")
     }
@@ -71,11 +75,13 @@ enum AuthDebugLog {
     /// moving numbers — a percentage ticking up must not write a line per
     /// poll. nil when there is nothing unknown.
     static func usageUnknownKey(_ snap: UsageSnapshot) -> String? {
-        guard !snap.extraLimits.isEmpty || !snap.unknownTopLevel.isEmpty else { return nil }
+        guard !snap.extraLimits.isEmpty || !snap.unknownTopLevel.isEmpty
+              || !snap.flatFallbacks.isEmpty else { return nil }
         let limits = snap.extraLimits.map { limit in
             "\(limit.kind)/\(limit.scopeModel ?? "-")/\(limit.isActive.map { "\($0)" } ?? "-")/\(iso(limit.resetAt))"
         }
         let buckets = snap.unknownTopLevel.map(\.key)
         return "limits=\(limits.joined(separator: ",")) top=\(buckets.joined(separator: ","))"
+            + " flat=\(snap.flatFallbacks.joined(separator: ","))"
     }
 }

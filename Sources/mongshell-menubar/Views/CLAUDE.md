@@ -15,7 +15,7 @@ non_goals:
 
 뷰는 **그리기만 한다.** 데이터를 가져오거나 저장하지 않는다.
 
-- 상태는 `Models/` 의 `@MainActor ObservableObject` (`UsageModel.shared`, `Preferences.shared`, `OpenClawModel`) 를 `@ObservedObject`/`@EnvironmentObject` 로 관찰한다.
+- 상태는 `Models/` 의 `@MainActor ObservableObject` (`UsageModel`, `Preferences`, `OpenClawModel`, `GitHubModel`, `ClaudeSettingsModel`, `LoginItemModel`) 를 `@ObservedObject` 로 관찰한다. 인스턴스는 AppDelegate(와 스냅샷 렌더러)가 뷰를 만들 때 넘겨 준다 — `@EnvironmentObject` 는 쓰지 않는다.
 - 뷰 안에서 `URLSession`·`Process`·`FileManager`·Keychain 을 직접 부르지 않는다. 필요하면 모델에 메서드를 만들고 그것을 호출한다.
 - 사용자 액션은 모델 메서드 호출로 끝난다 (`refreshNow()`, `applyStatusURL(_:)` 등).
 - 두 팝오버의 머리말(제목·연결 배지·⋯ 메뉴)과 배너는 `PopoverHeader`·`PopoverBanner` 를 함께 쓴다. ⋯ 메뉴의 "설정…"·"종료" 는 `PopoverHeader` 가 고정하고, 영역은 자기 항목만 넣는다 — 따로 구현하다 GitHub 메뉴에서 종료가 빠진 적이 있다(#74).
@@ -83,7 +83,7 @@ UI 를 추가·변경하면 `App/SnapshotRenderer.swift` 의 렌더 목록에 �
 
 `Form` 기반 화면은 `ImageRenderer` 로 **빈 이미지가 나온다.** 설정창 계열은 오프스크린 윈도우 캡처 경로에 등록해야 한다.
 
-시간이 흐르는 요소는 스냅샷에서 시계를 고정한다 — GitHub 팝오버의 검사 칩과 hover CI 줄의 경과 시간은 `TimelineView` 로 1초마다 흐르고, 스냅샷은 `frozenNow` 를 넘겨 렌더마다 같은 값을 그린다.
+시간이 흐르는 요소는 스냅샷에서 시계를 고정한다 — GitHub 팝오버의 검사 칩과 hover CI 줄의 경과 시간은 `TimelineView` 로 1초마다 흐르고, 스냅샷은 `frozenNow` 를 넘겨 렌더마다 같은 값을 그린다. 분 단위 문구(사용량 5시간 초기화 카운트다운, 두 팝오버의 "N분 후 자동 재시도")는 `TimeText.minuteTick` 주기의 `TimelineView` 로 흐른다 (#133). 사용량 쪽은 시계를 따로 두지 않고, 스냅샷이 초기화 시각을 렌더 시계에 맞춰 둔다.
 
 ## 선택 기능의 비가시성
 

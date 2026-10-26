@@ -141,17 +141,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.action = #selector(statusItemClicked)
         }
 
-        let popover = NSPopover()
-        popover.behavior = .transient
-        let content = PopoverView(
+        clickPopovers[.claude] = Self.makePopover(PopoverView(
             model: model, prefs: prefs, openClaw: openClaw,
             onOpenSettings: { [weak self] in self?.openSettings() },
             onQuit: { NSApp.terminate(nil) }
-        )
-        let hc = NSHostingController(rootView: content)
-        hc.sizingOptions = [.preferredContentSize]
-        popover.contentViewController = hc
-        clickPopovers[.claude] = popover
+        ), behavior: .transient)
 
         // Instant hover summary: a lightweight popover shown the moment the
         // cursor enters a region and closed when it leaves — no native-tooltip
@@ -168,25 +162,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the region, app switches included (.transient closed it on those).
         // The watchdog in `showHoverSummary` only cleans up the case where the
         // cursor has left but mouseExited never arrived.
-        let hoverPopover = NSPopover()
-        hoverPopover.behavior = .applicationDefined
-        hoverPopover.animates = false
-        let hoverHC = NSHostingController(rootView: HoverSummaryView(model: model, prefs: prefs))
-        hoverHC.sizingOptions = [.preferredContentSize]
-        hoverPopover.contentViewController = hoverHC
-        hoverPopovers[.claude] = hoverPopover
+        hoverPopovers[.claude] = Self.makePopover(
+            HoverSummaryView(model: model, prefs: prefs),
+            behavior: .applicationDefined, animates: false)
 
-        let githubPopover = NSPopover()
-        githubPopover.behavior = .transient
-        let githubHC = NSHostingController(rootView: GitHubPopoverView(
+        let githubPopover = Self.makePopover(GitHubPopoverView(
             model: github, prefs: prefs,
             onOpenSettings: { [weak self] in self?.openSettings() },
-            onQuit: { NSApp.terminate(nil) }))
-        githubHC.sizingOptions = [.preferredContentSize]
-        githubPopover.contentViewController = githubHC
+            onQuit: { NSApp.terminate(nil) }), behavior: .transient)
         clickPopovers[.github] = githubPopover
-        // The model hears the popover: open = refresh at once; closed = a
-        // pending merge confirm is void. AppKit closes a .transient popover
+        // The model hears the popover: open = refresh at once; closed = only
+        // recorded, so the next open refreshes again. AppKit closes a .transient popover
         // itself, so the close is learned from its notification rather than
         // from `togglePopover`.
         NotificationCenter.default.publisher(for: NSPopover.didCloseNotification, object: githubPopover)
@@ -206,13 +192,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        let githubHover = NSPopover()
-        githubHover.behavior = .applicationDefined
-        githubHover.animates = false
-        let githubHoverHC = NSHostingController(rootView: GitHubHoverSummaryView(model: github))
-        githubHoverHC.sizingOptions = [.preferredContentSize]
-        githubHover.contentViewController = githubHoverHC
-        hoverPopovers[.github] = githubHover
+        // Same hover rules as the Claude summary above.
+        hoverPopovers[.github] = Self.makePopover(
+            GitHubHoverSummaryView(model: github),
+            behavior: .applicationDefined, animates: false)
 
         // Later width changes arrive through each host's
         // `onIntrinsicSizeChange` (see `install`).
@@ -230,6 +213,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Parks in .off (no polling, no Keychain read) until switched on in
         // settings.
         github.start()
+    }
+
+    /// A popover hosting `content`, sized to it. Click popovers stay
+    /// `.transient` and animated; the hover summaries pass
+    /// `.applicationDefined` and no animation (why: at the Claude summary in
+    /// `applicationDidFinishLaunching`).
+    private static func makePopover(_ content: some View, behavior: NSPopover.Behavior,
+                                    animates: Bool = true) -> NSPopover {
+        let popover = NSPopover()
+        popover.behavior = behavior
+        popover.animates = animates
+        let host = NSHostingController(rootView: content)
+        host.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = host
+        return popover
     }
 
     /// Registers a region's host view. The hover callbacks capture the region

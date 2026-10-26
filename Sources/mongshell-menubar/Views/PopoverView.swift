@@ -9,7 +9,13 @@ struct PopoverView: View {
     var onQuit: () -> Void
 
     private var snap: UsageSnapshot { model.snapshot }
-    private var fiveMeter: Meter { Meter(usedPercent: snap.fiveHourPercent, showRemaining: prefs.showRemaining, colorCoding: prefs.colorCoding) }
+    /// nil when the 5-hour limit could not be read (#130).
+    private var fiveMeter: Meter? { meter(snap.fiveHourPercent) }
+    private func meter(_ used: Int?) -> Meter? {
+        used.map { Meter(usedPercent: $0, showRemaining: prefs.showRemaining, colorCoding: prefs.colorCoding) }
+    }
+    /// Stands in for the number of a limit that could not be read.
+    private static let unreadText = "—"
     /// Explicit label (both modes) so it's never ambiguous whether the
     /// numbers/graphs show consumed vs remaining amount.
     private var modeSuffix: String { prefs.showRemaining ? " · 남은 양" : " · 사용량" }
@@ -188,7 +194,7 @@ struct PopoverView: View {
         let presentation = model.presentation
         return PopoverHeader(title: "mongshell-menubar", badge: statusBadge,
                              onOpenSettings: onOpenSettings, onQuit: onQuit) {
-            RingView(percent: fiveMeter.displayPercent, color: fiveMeter.color, lineWidth: 3, diameter: 18)
+            usageRing(fiveMeter, lineWidth: 3, diameter: 18)
         } beforeSettings: {
             if let until = presentation.manualRefreshBlockedUntil {
                 Button("새로고침 — \(TimeText.minutesLeft(until: until))분 후 가능") {}
@@ -234,7 +240,7 @@ struct PopoverView: View {
             banner(text: "불러오는 중…", tint: Palette.textSecondary) { bannerButton(action) }
         case .rateLimited(let retryAt):
             // Nothing is published until `retryAt`, so the minutes tick here.
-            TimelineView(.periodic(from: .now, by: 60)) { context in
+            TimelineView(.periodic(from: .now, by: TimeText.minuteTick)) { context in
                 banner(text: "요청이 제한되었습니다 — \(TimeText.minutesLeft(until: retryAt, now: context.date))분 후 자동 재시도",
                        tint: Palette.amber) { bannerButton(action) }
             }
@@ -242,6 +248,9 @@ struct PopoverView: View {
             banner(text: message, tint: Palette.red) { bannerButton(action) }
         case .cliAccount:
             banner(text: "Claude Code 계정 사용 중", tint: Palette.onlineDot) { bannerButton(action) }
+        case .unreadLimits:
+            banner(text: "사용량 형식을 읽지 못했습니다 — 읽지 못한 한도는 비워 둡니다",
+                   tint: Palette.red) { bannerButton(action) }
         }
     }
 
@@ -269,15 +278,17 @@ struct PopoverView: View {
     private var primaryGauge: some View {
         VStack(spacing: 0) {
             ZStack {
-                RingView(percent: fiveMeter.displayPercent, color: fiveMeter.color, lineWidth: 8, diameter: 132)
+                usageRing(fiveMeter, lineWidth: 8, diameter: 132)
                 HStack(alignment: .lastTextBaseline, spacing: 1) {
-                    Text("\(fiveMeter.displayPercent)")
+                    Text(fiveMeter.map { "\($0.displayPercent)" } ?? Self.unreadText)
                         .font(.system(size: 42, weight: .semibold))
-                        .foregroundStyle(Palette.textPrimary)
+                        .foregroundStyle(fiveMeter == nil ? Palette.textTertiary : Palette.textPrimary)
                         .tracking(-1)
-                    Text("%")
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(Palette.textSecondary)
+                    if fiveMeter != nil {
+                        Text("%")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(Palette.textSecondary)
+                    }
                 }
             }
             .frame(width: 132, height: 132)
@@ -287,9 +298,14 @@ struct PopoverView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Palette.textSecondary)
                 .padding(.bottom, 3)
-            Text(snap.fiveHourResetText)
-                .font(.system(size: 14))
-                .foregroundStyle(Palette.textPrimary)
+            // The countdown is phrased here, not stored, so it keeps moving
+            // between polls (#133). With no reset time the line stays empty
+            // rather than claiming "곧 초기화".
+            TimelineView(.periodic(from: .now, by: TimeText.minuteTick)) { context in
+                Text(TimeText.resetsIn(snap.fiveHourResetAt, now: context.date))
+                    .font(.system(size: 14))
+                    .foregroundStyle(Palette.textPrimary)
+            }
         }
         .padding(.horizontal, 18)
         .padding(.top, 22)
@@ -305,14 +321,13 @@ struct PopoverView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Palette.textSecondary)
                 Spacer()
-                Text(snap.weeklyResetText)
+                Text(TimeText.resetsAt(snap.weeklyResetAt))
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.textTertiary)
             }
             .padding(.bottom, 14)
 
-            usageBar(meter: Meter(usedPercent: snap.weeklyAllPercent, showRemaining: prefs.showRemaining, colorCoding: prefs.colorCoding),
-                     label: "전체 모델", color: nil)
+            usageBar(meter: meter(snap.weeklyAllPercent), label: "전체 모델", color: nil)
 
             ForEach(snap.models) { m in
                 Spacer().frame(height: 16)
@@ -327,8 +342,8 @@ struct PopoverView: View {
                 Spacer().frame(height: 16)
                 usageBar(meter: Meter(usedPercent: limit.percent, showRemaining: prefs.showRemaining, colorCoding: prefs.colorCoding),
                          label: limit.name, color: nil)
-                if limit.resetAt != nil {
-                    Text(limit.resetText)
+                if let resetAt = limit.resetAt {
+                    Text(TimeText.resetsAt(resetAt))
                         .font(.system(size: 12))
                         .foregroundStyle(Palette.textTertiary)
                         .padding(.top, 6)
@@ -342,27 +357,41 @@ struct PopoverView: View {
 
     /// `color` nil = use the meter's risk color; non-nil = fixed brand color
     /// (e.g. Fable purple). Fill width + number follow the display mode.
-    private func usageBar(meter: Meter, label: String, color: Color?) -> some View {
-        let pct = meter.displayPercent
+    /// `meter` nil = the limit was not read: a dash and the bare track.
+    private func usageBar(meter: Meter?, label: String, color: Color?) -> some View {
+        let pct = meter?.displayPercent ?? 0
         return VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Text(label)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(Palette.textPrimary)
                 Spacer()
-                Text("\(pct)%")
+                Text(meter == nil ? Self.unreadText : "\(pct)%")
                     .font(.system(size: 14, weight: .medium))
                     .monospacedDigit()
-                    .foregroundStyle(Palette.textPrimary)
+                    .foregroundStyle(meter == nil ? Palette.textTertiary : Palette.textPrimary)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Palette.trackBar)
-                    Capsule().fill(color ?? meter.color)
-                        .frame(width: max(0, geo.size.width * CGFloat(pct) / 100))
+                    if let meter {
+                        Capsule().fill(color ?? meter.color)
+                            .frame(width: max(0, geo.size.width * CGFloat(pct) / 100))
+                    }
                 }
             }
             .frame(height: 5)
+        }
+    }
+
+    /// The meter's ring, or the dashed grey one when there is no value.
+    @ViewBuilder private func usageRing(_ meter: Meter?, lineWidth: CGFloat, diameter: CGFloat) -> some View {
+        if let meter {
+            RingView(percent: meter.displayPercent, color: meter.color, lineWidth: lineWidth, diameter: diameter)
+        } else {
+            Circle()
+                .stroke(Palette.usageUnknown, style: Palette.usageUnknownStroke(lineWidth: lineWidth))
+                .frame(width: diameter, height: diameter)
         }
     }
 

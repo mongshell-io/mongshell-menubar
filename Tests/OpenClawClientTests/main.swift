@@ -375,6 +375,25 @@ do {
     check("재기준 뒤 새 복구 — 알림", late.observe(h4) == h4)
 }
 
+// MARK: - 자동복구 알림 문구
+
+print("▸ 자동복구 알림 문구")
+do {
+    func alert(ok: Bool, reason: String?) -> OpenClawHealAlert {
+        OpenClawHealAlert(heal: OpenClawHealEvent(at: now, ok: ok, reason: reason))
+    }
+    check("식별자 고정 — 새 복구가 옛 알림을 대체", alert(ok: true, reason: "down").identifier == "openclaw-heal"
+          && alert(ok: false, reason: nil).identifier == "openclaw-heal")
+    check("성공 제목", alert(ok: true, reason: "down").title == "openclaw 자동 재시작됨 (서버)")
+    check("실패 제목", alert(ok: false, reason: "down").title == "openclaw 자동 재시작 실패 (서버)")
+    check("down 성공 본문", alert(ok: true, reason: "down").body == "게이트웨이 다운 감지 — 서버에서 하드 재시작했습니다.")
+    check("degraded 실패 본문",
+          alert(ok: false, reason: "degraded").body == "채널 이상 감지 — 서버에서 재시작을 시도했지만 실패했습니다.")
+    check("모르는 원인 → 이상 감지", alert(ok: true, reason: "weird").body == "이상 감지 — 서버에서 하드 재시작했습니다.")
+    check("원인 없음 → 이상 감지",
+          alert(ok: false, reason: nil).body == "이상 감지 — 서버에서 재시작을 시도했지만 실패했습니다.")
+}
+
 // MARK: - 서버 호스트 (Decision #31)
 
 print("▸ 서버 호스트 왕복 (에이전트 인코더 → 앱 파서)")

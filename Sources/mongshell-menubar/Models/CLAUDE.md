@@ -18,7 +18,7 @@ non_goals:
 | 종류 | 예 | 규칙 |
 |---|---|---|
 | 상태 소유 객체 | `UsageModel`, `OpenClawModel`, `ClaudeSettingsModel`, `Preferences`, `LoginItemModel`, `GitHubModel` | `@MainActor final class … : ObservableObject` |
-| 값 타입 | `UsageSnapshot`, `ModelUsage`, `OpenClawHealth`, `ServerHost` / `ServerHostPower` / `ServerHostDisk` / `ServerHostRunners` / `ServerHostLevel`, `ServerHostHealth` | `struct`/`enum`, `Equatable`, 로직 없음에 가깝게. 단 판정 규칙을 테스트 가능하게 담는 순수 값 타입은 허용 (`OpenClawReading` — 두절 판정, `OpenClawHealWatch` — 복구 알림 판정, `ServerHostAlertWatch` — 서버 호스트 알림 판정, `GitHubPullRequest` — PR 배지·점·숫자 판정, `GitHubCILine` — hover CI 줄 판정, `GitHubMergePolicy` — 머지 버튼 노출·요청·머지 상태 이월 판정, `UsageRetryPolicy` — 429 대기·수동 새로고침 차단 판정, `UsageRefreshPolicy` — 사용량 토큰 선택·선제 갱신·401 → 갱신 → 재요청 판정, `UsageSession` — 사용량 표시 상태와 세션 플래그의 전이, `UsageThresholdWatch` — 사용량 임계 알림 판정, `UsagePresentation` — 사용량 배지·배너·버튼·계정 행 노출 판정, `GitHubPresentation` — GitHub 연결 배지·배너·버튼·토큰 행 노출 판정) |
+| 값 타입 | `UsageSnapshot`, `ModelUsage`, `OpenClawHealth`, `ServerHost` / `ServerHostPower` / `ServerHostDisk` / `ServerHostRunners` / `ServerHostLevel`, `ServerHostHealth` | `struct`/`enum`, `Equatable`, 로직 없음에 가깝게. 단 판정 규칙을 테스트 가능하게 담는 순수 값 타입은 허용 (`OpenClawReading` — 두절 판정, `OpenClawHealWatch` — 복구 알림 판정, `OpenClawHealAlert` — 복구 알림 문구, `ServerHostAlertWatch` — 서버 호스트 알림 판정, `GitHubPullRequest` — PR 배지·점·숫자 판정, `GitHubCILine` — hover CI 줄 판정, `GitHubMergePolicy` — 머지 버튼 노출·요청·머지 상태 이월 판정, `UsageRetryPolicy` — 429 대기·수동 새로고침 차단 판정, `UsageRefreshPolicy` — 사용량 토큰 선택·선제 갱신·401 → 갱신 → 재요청 판정, `UsageSession` — 사용량 표시 상태와 세션 플래그의 전이, `UsageThresholdWatch` — 사용량 임계 알림 판정, `UsagePresentation` — 사용량 배지·배너·버튼·계정 행 노출 판정, `GitHubPresentation` — GitHub 연결 배지·배너·버튼·토큰 행 노출 판정) |
 
 ## `@MainActor` 격리
 
@@ -45,8 +45,8 @@ non_goals:
 ## 스냅샷 타입 설계
 
 - **없는 데이터를 지어내지 않는다.** 엔드포인트가 주지 않는 정보는 필드를 만들지 않는다 (`UsageSnapshot` 이 peak/off-peak 를 의도적으로 생략하는 이유).
-- 원본(`Date?`)과 표시용 문자열(`"3시간 8분 후 초기화"`)을 **둘 다** 들고 있어도 된다 — 표시 맥락마다 포맷이 다르기 때문. 단, 포맷 로직은 `Services/TimeText.swift` 에 두고 모델은 저장만 한다.
-- 로그아웃·미인증 상태는 에러가 아니라 `.sample` 스냅샷으로 렌더한다. 빈 화면을 만들지 않는다.
+- 시각은 원본(`Date?`)만 저장하고, 표시 문구(`"3시간 8분 후 초기화"`)는 뷰가 그릴 때 `Services/TimeText.swift` 로 만든다 (이유: [docs/architecture.md § 1. 사용량 폴링](../../../docs/architecture.md#1-사용량-폴링-주-경로)).
+- 로그아웃·미인증 상태는 에러가 아니라 샘플 스냅샷 `UsageSnapshot.sample(now:)` 로 렌더한다. 빈 화면을 만들지 않는다. 샘플은 상수가 아니라 함수다 — 초기화 시각을 받은 `now` 부터 세므로, 샘플로 돌아가는 전이(`UsageSession`)마다 새로 만든다 (#133).
 
 ## 상태 열거형
 
@@ -71,7 +71,7 @@ Decision #45·#49·#52 의 모델 쪽 규약은 넷이다. 주기와 요청 정�
 
 - 임계 알림은 **레벨이 올라갈 때 한 번만** 보낸다 (`UsageThresholdWatch`). 폴링마다 재발송하지 않는다. 알림이 꺼져 있는 동안은 `observe` 를 부르지 않는다 — 보일 수 있었던 레벨만 센다 (아래 서버 호스트 알림이 문 닫힘을 감시에 넘기는 것과 다르다).
 - 서버 호스트 알림(Decision #31 · CI 러너는 #75)은 **신호별**(전원·디스크·CI 러너 따로)로 같은 원칙을 따른다. 규칙(기준점·상승 시 알림·쿨다운·미뤄 둔 알림·게이트)은 [docs/architecture.md § 3. openclaw 상태](../../../docs/architecture.md#3-openclaw-상태-선택-경로) 의 서버 호스트 신호 절이 권위이고, 여기서 지킬 규약은 넷이다.
-  - 판정은 순수 값 타입 `ServerHostAlertWatch` 에 둔다. 모델은 결과를 받아 보내기만 한다.
+  - 판정은 순수 값 타입 `ServerHostAlertWatch` 에 둔다. 모델은 결과를 받아 보내기만 한다 (발송은 `Services/Notifier` — 모델이 `UNUserNotificationCenter` 를 직접 부르지 않는다).
   - 감시에는 **신선한 문서의 `host` 만** 넘긴다 — `hostHealth.reportedHost` (두절·부재는 `nil`; 배경: Decision #31).
   - 알림 발송 여부는 복구 알림과 같은 문(`canNotifyAboutServer`)을 지나고, **문이 닫혀 있으면 그 사실을 감시에 넘긴다** (`observe(_:now:canNotify: false)`) — 감시가 그 관측으로 초기화된다.
   - `observe` 는 성공 응답이 도착할 때만 부른다. 실패 응답에서 부르면 게이트 초기화 시점이 사양과 달라진다.

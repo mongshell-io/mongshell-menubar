@@ -74,16 +74,20 @@ enum PendingResolution: Equatable {
     case drop
 }
 
-/// What came of refreshing an expired own token before polling with it.
-enum UpFrontRenewal: Equatable {
-    case renewed
+/// What came of one refresh of the own token — before polling with an
+/// expired one, or after a 401. Both paths read it through this policy.
+enum OwnTokenRenewal: Equatable {
+    case renewed(OAuthToken)
+    /// The server rejected the refresh token for good — keeping it only
+    /// buys a 400 every poll and blocks the CLI-token fallback.
     case sessionExpired
-    case renewalFailed
+    /// Network or server trouble; the token may still be fine, so keep it.
+    case transientFailure
 }
 
 enum UpFrontStep: Equatable {
     /// Poll with the new token.
-    case useRenewed
+    case useRenewed(OAuthToken)
     case expireSession
     /// Poll with the expired token anyway — a refresh blip is no reason to
     /// stop, and a 401 then earns the usual one refresh.
@@ -157,8 +161,29 @@ enum UsageRefreshPolicy {
         }
     }
 
+    /// What stays held after a `.save` resolution tried to store `held`.
+    /// The Keychain still holds what `held` was to replace — or may hold
+    /// nothing, once a save of ours deleted the item (#108).
+    static func pending(afterSaving held: PendingOwnToken, result: OwnTokenSave) -> PendingOwnToken? {
+        pending(after: result, renewed: held.token, expected: held.keychain)
+    }
+
     static func resolvePending(_ pending: PendingOwnToken?, own: OwnTokenLookup) -> PendingResolution {
         guard let pending else { return .none }
+        // A refusal may not pass on its own, but a save can clear it — it
+        // recreates an item this build may not update — so it is retried
+        // every poll (#132). A refused read cannot show that the Keychain
+        // moved on, and nothing new says it did: the own item is written by
+        // this app alone, and a sign-in or sign-out here drops the held
+        // renewal before the next poll (`signIn`/`signOut`, `adopt`'s
+        // `sameLogin`). What is left is another build of the app signing in
+        // while its item refuses us — accepted under the single-user,
+        // single-account premise. A locked Keychain is still only waited out.
+        // So is a prompt the user cancelled: that refusal was their answer,
+        // and storing again every poll would put the dialog back each time.
+        if case .refused(let status) = own {
+            return status == errSecUserCanceled ? .useInMemory(pending.token) : .save(pending.token)
+        }
         switch keychainMatch(own: own, expects: pending.keychain) {
         case .current: return .save(pending.token)
         case .changed: return .drop
@@ -170,11 +195,11 @@ enum UsageRefreshPolicy {
         source == .oauthLogin && tokenExpired
     }
 
-    static func step(afterUpFront renewal: UpFrontRenewal) -> UpFrontStep {
+    static func step(afterUpFront renewal: OwnTokenRenewal) -> UpFrontStep {
         switch renewal {
-        case .renewed: return .useRenewed
+        case .renewed(let token): return .useRenewed(token)
         case .sessionExpired: return .expireSession
-        case .renewalFailed: return .pollAnyway
+        case .transientFailure: return .pollAnyway
         }
     }
 
@@ -191,6 +216,16 @@ enum UsageRefreshPolicy {
         case .found(let token): return .token(token, .oauthLogin)
         case .unavailable(let status): return .ownUnavailable(status)
         case .missing, .refused: return cli().map { .token($0, .claudeCodeCLI) } ?? .none
+        }
+    }
+
+    /// A held renewal the refresh is storing or keeps in memory is polled
+    /// with ahead of whatever the Keychain read said (#108).
+    static func chooseToken(resolution: PendingResolution, own: OwnTokenLookup,
+                            cli: () -> OAuthToken?) -> UsageTokenChoice {
+        switch resolution {
+        case .save(let token), .useInMemory(let token): return .token(token, .oauthLogin)
+        case .none, .drop: return chooseToken(own: own, cli: cli)
         }
     }
 

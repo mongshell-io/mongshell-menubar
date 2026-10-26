@@ -312,11 +312,18 @@ struct GitHubAPIClient: Sendable {
         message.lowercased().contains("head branch was modified")
     }
 
-    /// The one line under a row: whitespace folded, anything shaped like a
-    /// GitHub token masked, cut to `mergeMessageMaxLength`. GitHub has no
-    /// reason to echo a token, but the row is not where to find out.
+    /// The one line under a row: flattened by the `DisplayText` rule, anything
+    /// shaped like a GitHub token masked, cut to `mergeMessageMaxLength`.
+    /// GitHub has no reason to echo a token, but the row is not where to find
+    /// out. `displayText` already caps the text at `Config.githubDisplayTextLimit`
+    /// before the mask runs, and the row cut comes after it; a token either
+    /// cut shortens is still masked as long as its prefix survives.
     static func mergeMessage(_ raw: String) -> String {
-        let oneLine = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        // GitHub splits its rule-violation messages into paragraphs; flattened,
+        // the blank line would leave a run of spaces mid-sentence. Folded on
+        // any whitespace — NBSP, U+2000…U+200A and U+3000 included — not just
+        // the ASCII space.
+        let oneLine = displayText(raw).split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let masked = oneLine.replacingOccurrences(of: tokenPattern, with: "•••", options: .regularExpression)
         guard masked.count > mergeMessageMaxLength else { return masked }
         return String(masked.prefix(mergeMessageMaxLength)) + "…"
@@ -370,8 +377,9 @@ struct GitHubAPIClient: Sendable {
 
     private static func rateLimit(_ any: Any?) -> GitHubRateLimit? {
         guard let dict = any as? [String: Any],
-              let cost = int(dict["cost"]), let remaining = int(dict["remaining"]),
-              let limit = int(dict["limit"]) else { return nil }
+              let cost = JSONNumber.count(dict["cost"]),
+              let remaining = JSONNumber.count(dict["remaining"]),
+              let limit = JSONNumber.count(dict["limit"]) else { return nil }
         return GitHubRateLimit(cost: cost, remaining: remaining, limit: limit,
                                resetAt: ResponseDate.parse(dict["resetAt"]))
     }
@@ -383,8 +391,12 @@ struct GitHubAPIClient: Sendable {
 
     private static func pullRequest(_ node: [String: Any]?) -> GitHubPullRequest? {
         guard let node, node["__typename"] as? String == "PullRequest",
-              let number = int(node["number"]),
-              let repository = (node["repository"] as? [String: Any])?["nameWithOwner"] as? String
+              let number = JSONNumber.count(node["number"]),
+              let repository = ((node["repository"] as? [String: Any])?["nameWithOwner"] as? String)
+                  .map(displayText),
+              // Nothing to show and nothing to hide it by: a blank or
+              // control-only name would make a row no repo filter can reach.
+              !repository.isEmpty
         else { return nil }
         let rollup = ((((node["commits"] as? [String: Any])?["nodes"] as? [Any])?.first
                        as? [String: Any])?["commit"] as? [String: Any])?["statusCheckRollup"]
@@ -392,7 +404,7 @@ struct GitHubAPIClient: Sendable {
         return GitHubPullRequest(
             repository: repository,
             number: number,
-            title: node["title"] as? String ?? "",
+            title: (node["title"] as? String).map(displayText) ?? "",
             url: pullRequestURL(node["url"]),
             isDraft: node["isDraft"] as? Bool ?? false,
             reviewDecision: reviewDecision(node["reviewDecision"]),
@@ -463,13 +475,14 @@ struct GitHubAPIClient: Sendable {
               let nodes = contexts["nodes"] as? [Any]
         else { return ([], false) }
         let runs = nodes.compactMap { check($0 as? [String: Any]) }
-        return (runs, int(contexts["totalCount"]) == runs.count)
+        return (runs, JSONNumber.count(contexts["totalCount"]) == runs.count)
     }
 
     /// What makes two runs the same check run again. A CheckRun's `name` is
     /// only the job's, and two workflows on one commit can each have a
     /// `build`, so the workflow (else the app) is part of it. A StatusContext's
-    /// `context` is already its whole identity.
+    /// `context` is already its whole identity. Built from the response's raw
+    /// strings, never the flattened display names.
     enum RerunKey: Hashable, Sendable {
         case checkRun(suite: String, name: String)
         case status(context: String)
@@ -547,23 +560,26 @@ struct GitHubAPIClient: Sendable {
         guard let node else { return nil }
         switch node["__typename"] as? String {
         case "CheckRun":
-            let name = node["name"] as? String ?? ""
-            let run = PRCheck(name: name,
+            // The key takes the raw name: flattened and cut, two different
+            // checks (a shared first 256 characters, or names that differ only
+            // in control characters) would collapse into one re-run series.
+            let rawName = node["name"] as? String ?? ""
+            let run = PRCheck(name: displayText(rawName),
                               outcome: checkRunOutcome(status: node["status"] as? String,
                                                        conclusion: node["conclusion"] as? String),
                               startedAt: ResponseDate.parse(node["startedAt"]),
                               completedAt: ResponseDate.parse(node["completedAt"]),
                               url: httpsURL(node["detailsUrl"]))
             return (workflowRun(node["checkSuite"]),
-                    (checkSuiteName(node["checkSuite"]).map { .checkRun(suite: $0, name: name) }, run))
+                    (checkSuiteName(node["checkSuite"]).map { .checkRun(suite: $0, name: rawName) }, run))
         case "StatusContext":
             // Commit statuses carry a creation time only — no duration.
-            let context = node["context"] as? String ?? ""
-            let status = PRCheck(name: context,
+            let rawContext = node["context"] as? String ?? ""
+            let status = PRCheck(name: displayText(rawContext),
                                  outcome: statusContextOutcome(state: node["state"] as? String),
                                  startedAt: nil, completedAt: nil,
                                  url: httpsURL(node["targetUrl"]))
-            return (nil, (.status(context: context), status))
+            return (nil, (.status(context: rawContext), status))
         default:
             return nil
         }
@@ -582,9 +598,9 @@ struct GitHubAPIClient: Sendable {
     /// `workflowRun`, and a partial answer can't place the run in a series.
     private static func workflowRun(_ any: Any?) -> WorkflowRun? {
         guard let run = (any as? [String: Any])?["workflowRun"] as? [String: Any],
-              let workflowID = int((run["workflow"] as? [String: Any])?["databaseId"]),
+              let workflowID = JSONNumber.count((run["workflow"] as? [String: Any])?["databaseId"]),
               let event = nonEmptyString(run["event"]),
-              let number = int(run["runNumber"])
+              let number = JSONNumber.count(run["runNumber"])
         else { return nil }
         return WorkflowRun(series: .init(workflowID: workflowID, event: event), number: number)
     }
@@ -642,14 +658,11 @@ struct GitHubAPIClient: Sendable {
 
     private static let pullRequestHost = "github.com"
 
-    /// JSONSerialization hands `true` back as an NSNumber worth 1 — a bool is
-    /// not a count.
-    private static func int(_ any: Any?) -> Int? {
-        guard let number = any as? NSNumber,
-              CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
-        let value = number.doubleValue
-        guard value.isFinite, value >= 0, value < Double(Int32.max) else { return nil }
-        return Int(value)
+    /// Every response string that reaches a row, a chip or a tooltip goes
+    /// through here: one line, at most `Config.githubDisplayTextLimit`
+    /// characters. A check name is whatever an outside integration chose.
+    private static func displayText(_ raw: String) -> String {
+        DisplayText.flatten(raw, limit: Config.githubDisplayTextLimit)
     }
 
     private static func nonEmptyString(_ any: Any?) -> String? {

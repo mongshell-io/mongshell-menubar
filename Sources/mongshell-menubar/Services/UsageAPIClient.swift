@@ -99,7 +99,9 @@ struct UsageAPIClient {
             throw APIError.badResponse
         }
 
-        var fivePct = 0, weeklyPct = 0
+        // nil until read: a limit the response no longer names stays unread
+        // rather than showing as 0% (#130).
+        var fivePct: Int?, weeklyPct: Int?
         var fiveReset: Date?, weeklyReset: Date?
         var models: [ModelUsage] = []
         var extraLimits: [ExtraLimit] = []
@@ -113,10 +115,15 @@ struct UsageAPIClient {
             // under two spellings ("Fable" / "Fable 5") in the same section.
             let scopeModel = scopeModelName(limit).map(prettyModelName)
             switch limit["kind"] as? String {
+            // A row whose percent cannot be read leaves its reset unread too:
+            // the window has no value, so no reset time or countdown is drawn
+            // beside the empty ring (#130).
             case "session":
-                fivePct = pct; fiveReset = reset
+                fivePct = percentValue(limit["percent"])
+                fiveReset = fivePct == nil ? nil : reset
             case "weekly_all":
-                weeklyPct = pct; weeklyReset = reset
+                weeklyPct = percentValue(limit["percent"])
+                weeklyReset = weeklyPct == nil ? nil : reset
             case "weekly_scoped":
                 models.append(ModelUsage(name: scopeModel ?? "모델", percent: pct))
             case let rawKind?:
@@ -130,31 +137,37 @@ struct UsageAPIClient {
                     scopeModel: scopeModel,
                     percent: pct,
                     resetAt: reset,
-                    resetText: TimeText.resetsAt(reset),
                     isActive: limit["is_active"] as? Bool))
             case nil:
                 break
             }
         }
 
-        // Fallback to the flat objects if `limits` is absent.
-        if limits.isEmpty {
-            let five = root["five_hour"] as? [String: Any]
-            let weekly = root["seven_day"] as? [String: Any]
-            fivePct = percentInt(five?["utilization"]); fiveReset = ResponseDate.parse(five?["resets_at"])
-            weeklyPct = percentInt(weekly?["utilization"]); weeklyReset = ResponseDate.parse(weekly?["resets_at"])
+        // The flat objects mirror session/weekly_all, so each is the
+        // fallback for its own window when `limits` is absent or no longer
+        // carries a readable row for it. A fallback taken while `limits` is
+        // there is noted for the debug log: the row it replaced went away.
+        var flatFallbacks: [String] = []
+        if fivePct == nil, let five = root["five_hour"] as? [String: Any],
+           let pct = percentValue(five["utilization"]) {
+            fivePct = pct; fiveReset = ResponseDate.parse(five["resets_at"])
+            if !limits.isEmpty { flatFallbacks.append("five_hour") }
+        }
+        if weeklyPct == nil, let weekly = root["seven_day"] as? [String: Any],
+           let pct = percentValue(weekly["utilization"]) {
+            weeklyPct = pct; weeklyReset = ResponseDate.parse(weekly["resets_at"])
+            if !limits.isEmpty { flatFallbacks.append("seven_day") }
         }
 
         return UsageSnapshot(
             fiveHourPercent: fivePct,
-            fiveHourResetText: TimeText.resetsIn(fiveReset),
             fiveHourResetAt: fiveReset,
             weeklyAllPercent: weeklyPct,
-            weeklyResetText: TimeText.resetsAt(weeklyReset),
             weeklyResetAt: weeklyReset,
             models: models,
             extraLimits: extraLimits,
             unknownTopLevel: unknownTopLevel(in: root),
+            flatFallbacks: flatFallbacks,
             creditsText: creditsText(from: root),
             lastUpdated: Date()
         )
@@ -186,6 +199,13 @@ struct UsageAPIClient {
         return Array(buckets.prefix(Config.usageUnknownTopLevelCap))
     }
 
+    /// Cents: the exponent is the currency's minor-unit count (ISO 4217),
+    /// 2 for USD, which is what an absent one has always meant here.
+    private static let defaultCreditsExponent = 2
+    /// ISO 4217 minor units run 0 (JPY) to 4 (CLF); a little headroom past
+    /// that, nothing negative.
+    private static let creditsExponentRange = 0...6
+
     /// Usage-credits balance — shown ONLY when the user has the pay-as-you-go
     /// credits feature enabled (amounts are minor units, e.g. cents). We
     /// deliberately don't surface the "disabled/out_of_credits" state, since
@@ -195,10 +215,15 @@ struct UsageAPIClient {
               (spend["enabled"] as? Bool) == true,
               let limit = spend["limit"] as? [String: Any],
               let used = spend["used"] as? [String: Any] else { return nil }
-        let exp = (limit["exponent"] as? Int) ?? 2
+        let exp = JSONNumber.integer(limit["exponent"]) ?? defaultCreditsExponent
+        // A wrong figure is worse than none: an exponent past any currency's
+        // minor-unit count misreads the amount, and at the extremes 10^exp
+        // becomes 0 or inf and the line reads "$inf", "$nan" or a false "$0.00".
+        guard creditsExponentRange.contains(exp) else { return nil }
         let divisor = pow(10.0, Double(exp))
-        let remaining = Double((limit["amount_minor"] as? Int ?? 0)
-                               - (used["amount_minor"] as? Int ?? 0)) / divisor
+        // Subtracted as Doubles: two extreme Ints would trap on overflow.
+        let remaining = (Double(JSONNumber.integer(limit["amount_minor"]) ?? 0)
+                         - Double(JSONNumber.integer(used["amount_minor"]) ?? 0)) / divisor
         return String(format: "크레딧 $%.2f 남음", max(0, remaining))
     }
 
@@ -220,15 +245,12 @@ struct UsageAPIClient {
         percentValue(any) ?? 0
     }
 
-    /// nil when the field is absent, not a number, or not finite. Clamped
-    /// while still a Double: `Int(_:)` traps on a value outside Int's range,
-    /// and a hostile `1e300` must fold to 100, not crash the poll.
+    /// nil when the field is absent, not a number (a JSON `true` included —
+    /// it is not 1%), or not finite. Clamped while still a Double: `Int(_:)`
+    /// traps on a value outside Int's range, and a hostile `1e300` must fold
+    /// to 100, not crash the poll.
     private static func percentValue(_ any: Any?) -> Int? {
-        let v: Double
-        if let d = any as? Double { v = d }
-        else if let i = any as? Int { v = Double(i) }
-        else { return nil }
-        guard v.isFinite else { return nil }
+        guard let v = JSONNumber.finite(any) else { return nil }
         return Int(max(0, min(100, v.rounded())))
     }
 

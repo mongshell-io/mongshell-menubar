@@ -65,6 +65,7 @@ macOS 메뉴바에 Claude 구독 사용량을 상시 표시하는 1인용 네이
 - [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md) — 프로덕트 가치·범위·설계 원칙
 - [docs/architecture.md](docs/architecture.md) — Tech Stack·데이터 흐름·인증·배포 사양
 - [docs/architecture-decisions.md](docs/architecture-decisions.md) — 아키텍처 결정 기록
+- [docs/decisions-archive.md](docs/decisions-archive.md) — 번복·대체가 확정된 Decision 원문 보관 (상태 권위는 architecture-decisions.md)
 - [docs/harness-decisions.md](docs/harness-decisions.md) — 하네스 운영 결정 기록
 - [docs/development.md](docs/development.md) — 빌드·테스트·스냅샷·릴리스 명령
 - [docs/code-standards.md](docs/code-standards.md) — 코드 작성/리팩토링 기준 (위 `@` 로 자동 로드)

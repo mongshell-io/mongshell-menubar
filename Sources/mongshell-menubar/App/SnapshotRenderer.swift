@@ -47,8 +47,10 @@ enum SnapshotRenderer {
         }
         // Every usage state is set explicitly: an image must not lean on
         // whatever the one before it left behind (#104).
-        UsageModel.shared.presentForSnapshot(.sample, state: .signedOut)
+        let sample = UsageSnapshot.sample(now: now)
+        UsageModel.shared.presentForSnapshot(sample, state: .signedOut)
         write(PopoverPreview(), to: base, "popover", scale: 2)
+        write(HoverPreview(), to: base, "hover", scale: 2)
         UsageModel.shared.presentForSnapshot(.snapshotExtraLimit(now: now), state: .loaded(.oauthLogin))
         write(PopoverPreview(), to: base, "popover_extra_limit", scale: 2)
         // The states the usage banner and its buttons turn on (#104).
@@ -58,10 +60,26 @@ enum SnapshotRenderer {
             (.error("사용량을 불러오지 못했습니다"), "error"),
             (.loaded(.claudeCodeCLI), "cli_account"),
         ] {
-            UsageModel.shared.presentForSnapshot(.sample, state: state)
+            UsageModel.shared.presentForSnapshot(sample, state: state)
             write(PopoverPreview(), to: base, "popover_usage_\(name)", scale: 2)
         }
-        UsageModel.shared.presentForSnapshot(.sample, state: .signedOut)
+        // A response whose 5-hour row went missing: grey ring and the format
+        // banner, the weekly limit still read (#130).
+        var unread = sample
+        unread.fiveHourPercent = nil
+        UsageModel.shared.presentForSnapshot(unread, state: .loaded(.oauthLogin))
+        write(PopoverPreview(), to: base, "popover_usage_unread_limits", scale: 2)
+        // Neither limit read and no reset times: dashes, and no "곧 초기화"
+        // under the ring or beside the hover rows (#133).
+        var noValues = sample
+        noValues.fiveHourPercent = nil
+        noValues.fiveHourResetAt = nil
+        noValues.weeklyAllPercent = nil
+        noValues.weeklyResetAt = nil
+        UsageModel.shared.presentForSnapshot(noValues, state: .loaded(.oauthLogin))
+        write(PopoverPreview(), to: base, "popover_usage_no_values", scale: 2)
+        write(HoverPreview(), to: base, "hover_no_values", scale: 2)
+        UsageModel.shared.presentForSnapshot(sample, state: .signedOut)
         OpenClawModel.shared.presentForSnapshot(
             .snapshotOK(now: now, host: .snapshotOnBattery), now: now)
         write(PopoverPreview(), to: base, "popover_host_on_battery", scale: 2)
@@ -154,6 +172,9 @@ enum SnapshotRenderer {
         write(GitHubPopoverPreview(github: github), to: base, "github_popover_no_token", scale: 2)
         github.presentForSnapshot(nil, state: .unauthorized, now: now)
         write(GitHubPopoverPreview(github: github), to: base, "github_popover_unauthorized", scale: 2)
+        github.presentForSnapshot(.sample(now: now), state: .rateLimited(retryAt: now.addingTimeInterval(600)),
+                                  now: now)
+        write(GitHubPopoverPreview(github: github), to: base, "github_popover_rate_limited", scale: 2)
 
         // The section's rows only appear with the region on; switch it on in
         // the volatile argument domain for this one image and off again, so
@@ -295,19 +316,36 @@ private extension ServerHost {
         disk: ServerHostDisk(level: .critical, availableBytes: 4_200_000_000))
 }
 
+/// Backdrops the snapshot images are drawn on — snapshot-only, not app
+/// colors, so they stay here rather than in `Palette`.
+private enum SnapshotBackdrop {
+    /// The light backdrop; also the light menu bar.
+    static let light = Color(hex: 0xE8E6E1)
+    /// A status-bar stand-in, per appearance.
+    static func menuBar(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color(hex: 0x2C2C30) : light
+    }
+    /// The desktop around the menu-bar band in `MenuBarHostStrip`.
+    static func desktop(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color(hex: 0x1A1A1D) : Color(hex: 0xCFCDC8)
+    }
+}
+
 /// Menu-bar mock: Claude mark + `5h · 7d` text at three usage-level pairs, each
 /// with a different openclaw dot (ok / server unreachable / gateway down) so the
-/// grey-vs-red distinction is visible side by side.
+/// grey-vs-red distinction is visible side by side; last, an unread 5-hour
+/// limit (dashed grey ring, #130) next to a read weekly one.
 private struct MenuBarStrip: View {
     let scheme: ColorScheme
-    private let items: [(five: Int, weekly: Int, openClaw: OpenClawHealth)] = [
-        (12, 34, .ok(detail: "")),
-        (62, 45, .unreachable(detail: "")),
-        (95, 91, .down(detail: "")),
+    private let items: [(id: Int, five: Int?, weekly: Int?, openClaw: OpenClawHealth)] = [
+        (0, 12, 34, .ok(detail: "")),
+        (1, 62, 45, .unreachable(detail: "")),
+        (2, 95, 91, .down(detail: "")),
+        (3, nil, 34, .ok(detail: "")),
     ]
     var body: some View {
         HStack(spacing: 26) {
-            ForEach(items, id: \.five) { item in
+            ForEach(items, id: \.id) { item in
                 MenuBarContent(fiveHourUsed: item.five, weeklyUsed: item.weekly,
                                showRemaining: false, colorCoding: true,
                                showPercent: true,
@@ -317,7 +355,7 @@ private struct MenuBarStrip: View {
         }
         .padding(.horizontal, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(scheme == .dark ? Color(hex: 0x2C2C30) : Color(hex: 0xE8E6E1))
+        .background(SnapshotBackdrop.menuBar(scheme))
     }
 }
 
@@ -352,9 +390,9 @@ private struct MenuBarHostStrip: View {
         .frame(maxWidth: .infinity)
         .frame(height: Self.menuBarThickness)
         .clipped()
-        .background(scheme == .dark ? Color(hex: 0x2C2C30) : Color(hex: 0xE8E6E1))
+        .background(SnapshotBackdrop.menuBar(scheme))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(scheme == .dark ? Color(hex: 0x1A1A1D) : Color(hex: 0xCFCDC8))
+        .background(SnapshotBackdrop.desktop(scheme))
     }
 }
 
@@ -516,7 +554,7 @@ private struct GitHubMenuBarStrip: View {
         }
         .padding(.horizontal, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(scheme == .dark ? Color(hex: 0x2C2C30) : Color(hex: 0xE8E6E1))
+        .background(SnapshotBackdrop.menuBar(scheme))
     }
 }
 
@@ -527,7 +565,7 @@ private struct GitHubHoverPreview: View {
         GitHubHoverSummaryView(model: github)
             .background(Palette.popoverBG)
             .padding(24)
-            .background(Color(hex: 0xE8E6E1))
+            .background(SnapshotBackdrop.light)
     }
 }
 
@@ -536,7 +574,7 @@ private struct GitHubPopoverPreview: View {
     var body: some View {
         GitHubPopoverView(model: github, prefs: .shared, onOpenSettings: {}, onQuit: {})
             .padding(24)
-            .background(Color(hex: 0xE8E6E1))
+            .background(SnapshotBackdrop.light)
     }
 }
 
@@ -557,10 +595,10 @@ private struct GitHubSectionPreview: View {
 private extension UsageSnapshot {
     /// The sample plus one limit of a kind the app does not know — what a
     /// reset/bonus from the settings page would look like. Kept out of
-    /// `.sample` itself: the signed-out popover must not show a fake bonus.
+    /// `.sample(now:)` itself: the signed-out popover must not show a fake bonus.
     static func snapshotExtraLimit(now: Date) -> UsageSnapshot {
-        var snapshot = UsageSnapshot.sample
-        // Pinned to a weekday + clock like `.sample.weeklyResetAt`, so the
+        var snapshot = UsageSnapshot.sample(now: now)
+        // Pinned to a weekday + clock like the sample's `weeklyResetAt`, so the
         // caption reads "수요일 21:59 초기화" whenever the render runs.
         let resetAt = Calendar.current.nextDate(
             after: now,
@@ -568,8 +606,18 @@ private extension UsageSnapshot {
             matchingPolicy: .nextTime)
         snapshot.extraLimits = [ExtraLimit(
             id: "bonus", kind: "bonus", scopeModel: nil, percent: 12,
-            resetAt: resetAt, resetText: TimeText.resetsAt(resetAt), isActive: true)]
+            resetAt: resetAt, isActive: true)]
         return snapshot
+    }
+}
+
+/// The Claude hover summary, on the same backdrop as `GitHubHoverPreview`.
+private struct HoverPreview: View {
+    var body: some View {
+        HoverSummaryView(model: .shared, prefs: .shared)
+            .background(Palette.popoverBG)
+            .padding(24)
+            .background(SnapshotBackdrop.light)
     }
 }
 
@@ -581,6 +629,6 @@ private struct PopoverPreview: View {
             onOpenSettings: {}, onQuit: {}
         )
         .padding(24)
-        .background(Color(hex: 0xE8E6E1))
+        .background(SnapshotBackdrop.light)
     }
 }

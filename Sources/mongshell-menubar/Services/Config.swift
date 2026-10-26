@@ -52,6 +52,11 @@ enum Config {
 
     static let minPollInterval: Int = 180
 
+    /// Floor on the openclaw status-URL poll interval — the server agent
+    /// itself probes at ≥30s, so polling much faster only re-reads the same
+    /// file.
+    static let openClawMinPollSeconds = 15
+
     /// Bounds on what the usage response may put on screen or in the log,
     /// applied once in `UsageAPIClient.parse`. A limit `kind` or model name
     /// is a short word; a top-level key is a two-word code name — 64 is room
@@ -123,6 +128,13 @@ enum Config {
     static let githubSectionCaps = (mine: 8, merged: 3)
     /// How far back "recently merged" looks.
     static let githubMergedWindowDays = 7
+
+    /// Bounds on what the GitHub response may put on screen, applied once in
+    /// `GitHubAPIClient.parse`: PR titles, repository names, check names and
+    /// merge messages. GitHub caps a title at 256 characters and an
+    /// owner/name pair well under that, so a real value is never cut; the
+    /// row truncates sooner and the tooltip shows the rest.
+    static let githubDisplayTextLimit = 256
 
     /// Largest GraphQL response read. Sixty PRs with thirty check contexts
     /// each come to a few hundred KB; the cap keeps a surprising answer from

@@ -303,6 +303,30 @@ do {
           (attrs?[.type] as? FileAttributeType) == .typeSymbolicLink)
 }
 
+// MARK: - 모델 저장 실패
+
+print("\n모델 저장 실패")
+
+// 쓰기만 실패하고 읽기는 되는 흔한 경우 (#129): 되돌리기 위한 재읽기가 성공해도
+// 오류 문구는 남아야 한다. 폴더를 읽기 전용으로 두면 파일은 읽히지만 atomic
+// 쓰기의 임시 파일을 만들 수 없다.
+do {
+    let file = newCase()
+    let dir = file.deletingLastPathComponent()
+    try! FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+    MainActor.assumeIsolated {
+        let model = ClaudeSettingsModel.shared
+        model.reload()
+        check("읽기 전용 폴더에서도 읽기는 성공", model.lastError == nil, model.lastError ?? "")
+        model.binding(\.autoCompact).wrappedValue = false
+        check("쓰기 실패 후 오류 문구가 남는다", model.lastError != nil)
+        check("쓰기 실패 후 UI 는 디스크 값으로 돌아간다", model.settings.autoCompact == true)
+        model.reload()
+        check("외부 편집 반영용 reload 는 여전히 오류를 지운다", model.lastError == nil)
+    }
+    try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+}
+
 // MARK: - 선택지
 
 print("\n선택지")

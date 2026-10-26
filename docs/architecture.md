@@ -22,7 +22,7 @@ non_goals:
 | 로컬 리스너 | `Network.framework` (`NWListener`) — OAuth 루프백 |
 | 자격증명 | Security.framework Keychain (generic password) |
 | 설정 영속화 | `UserDefaults` (`@AppStorage`) |
-| 알림 | UserNotifications (앱 번들 필수) |
+| 알림 | UserNotifications (앱 번들 필수) — `Notifier` |
 | 로그인 항목 | ServiceManagement (`SMAppService.mainApp`) |
 | 외부 프로세스 | `posix_spawn` (새 프로세스 그룹, 마감 있는 non-blocking 읽기) — `openclaw` CLI, `launchctl` (게이트웨이 재시작·CI 러너 상태 조회. 서버 에이전트 전용 — 메뉴바 앱은 셸아웃하지 않는다) |
 | 호스트 신호 읽기 (서버 에이전트) | IOKit (`IOKit.ps` — 전원 공급원·내장 배터리), Foundation `URL` 리소스 값 (홈 볼륨 여유 공간), `/Library/LaunchDaemons` 목록 + `launchctl print system/<레이블>` (CI 러너, sudo 불필요) |
@@ -37,7 +37,11 @@ DB·백엔드 서비스가 없다. 메뉴바 앱은 단일 프로세스 클라�
 
 ```
 UsageModel.pollLoop()  ──(@MainActor, Task)
-   └─ CredentialStore.token()      ← Keychain (자체 토큰 → Claude Code 토큰 순)
+   └─ CredentialStore.lookupOwnToken()      ← Keychain 자체 토큰 (있음 / 없음 / 잠김 / 거부)
+   └─ UsageRefreshPolicy.resolvePending     ← 보류 토큰(갱신했지만 Keychain 이 받지 못한 것)이 있을 때만
+        └─ 저장 다시 시도(CredentialStore.saveOwnToken) / 메모리의 것으로 폴링 / 버림   (§ Auth)
+   └─ UsageRefreshPolicy.chooseToken        ← 보류 토큰 → 자체 토큰 → CredentialStore.loadClaudeCodeToken() 순
+        (자체 토큰이 잠김이면 Claude Code 토큰으로 넘어가지 않고 오류 배너)
    └─ AuthService.refresh(_:)      ← 자체 토큰이 만료됐을 때, 그리고 사용량 401 뒤 한 번
         └─ POST https://platform.claude.com/v1/oauth/token   (OAuthTokenClient · BoundedHTTP: 타임아웃 30초, 리다이렉트 거부, 200·400·401 만 본문을 64KB 까지 읽음)
    └─ UsageAPIClient.fetch(token:)
@@ -46,20 +50,23 @@ UsageModel.pollLoop()  ──(@MainActor, Task)
              User-Agent: claude-code/<version>      ← 필수
              anthropic-beta: oauth-2025-04-20
         └─ parse() → UsageSnapshot
-   └─ @Published snapshot 갱신
+   └─ UsageRefreshPolicy.step → UsageSession (상태 전이) → @Published snapshot · loadState · accountSource
         ├─ MenuBarIconView   (상태바 링 게이지 + 초기화 시각)
         ├─ HoverSummaryView  (hover 즉시 팝오버)
-        ├─ PopoverView       (클릭 팝오버)
-        └─ 임계 알림 (UserNotifications)
+        ├─ PopoverView       (클릭 팝오버 — 배지·배너는 UsagePresentation)
+        └─ 임계 알림 (UsageThresholdWatch → Notifier)
 ```
 
 - 폴링 주기는 사용자 설정값과 `Config.minPollInterval` 중 큰 값. 기본이자 하한이 180초다.
 - `429` 응답 시 지수 백오프 (`base * 2^n`, 상한 3600초) — 서버의 `Retry-After` 가 그보다 길면 그 시각까지 (같은 3600초 상한). 그 시각(`LoadState.rateLimited(retryAt:)`, 규칙은 `UsageRetryPolicy`)까지는 팝오버의 수동 새로고침(⋯ 메뉴)도 요청을 보내지 않는다 — ⋯ 메뉴의 항목은 "새로고침 — N분 후 가능" 으로 비활성되고, 배너는 "N분 후 자동 재시도" 를 보인다 (#86). 비공식 엔드포인트(Decision 2)라 제한 중 재요청이 제한을 늘릴 수 있어서다.
 - 응답 스키마가 비공개라 `parse()` 는 후보 키 경로를 여러 개 탐색하고 채울 수 있는 것만 채운다.
+- 5시간·7일 한도는 `limits` 의 `session`·`weekly_all` 행이 먼저, 없거나 숫자가 아니면 같은 창의 `five_hour`·`seven_day` 객체가 대신한다. 둘 다 없으면 그 한도는 **값 없음**이다 — 0% 로 접지 않는다. 메뉴바·팝오버·hover 는 점선 회색 링과 "—" 로 그리고, 팝오버는 "사용량 형식을 읽지 못했습니다" 배너를 띄우며(`UsagePresentation` — 연결된 상태에서만 뜨고 Claude Code 계정 안내보다 앞선다. 다른 상태는 제 배너를 그대로 보인다), 임계 알림은 값 없음을 관측하지 않는다 — 5시간 한도가 값 없음이면 그 폴링은 임계 감시를 건너뛰어, 다시 읽혔을 때 이미 알린 레벨을 또 알리지 않는다 (#130). `limits` 배열이 있는데 그 창의 행을 읽지 못해 flat 객체로 대신 읽었으면 그 창 이름을 `flatFallbacks` 에 실어 디버그 로그에 `read flat five_hour` 처럼 남긴다 — 형식이 바뀌는 조짐이라서다. 같은 집합이 이어지는 동안은 한 번만 쓴다 (아래 모르는 것의 로그와 같은 dedupe 키). `limits` 배열이 아예 없는 응답의 flat 읽기는 남기지 않는다.
 - `limits` 의 모르는 `kind` 는 버리지 않고 `extraLimits` 로 실어 팝오버의 7일 한도 아래에 그리고(설정 화면의 제한 초기화/보너스가 이 경로로 보인다), 최상위의 모르는 객체 키는 `unknownTopLevel` 로 실어 디버그 로그에만 남긴다 — 모르는 것의 집합이 바뀔 때 한 줄. 필터 규칙 셋: (1) 최상위 키 중 값이 null 인 것과 모양을 아는 것(`seven_day_breakdown`·`weekly_scoped_shares`·`member_dashboard_available`)은 세지 않고, 모르는 **객체** 키만 `unknownTopLevel` 에 든다. (2) 로그 줄은 kind·percent·resets_at(과 is_active·scope 모델명·utilization)만 담고 토큰·금액은 넣지 않는다. (3) 응답에서 온 문자열(`kind`·모델명·키 이름)은 `parse()` 에서 한 줄로 평탄화하고 글자 수 상한을 두며, `extraLimits`·`unknownTopLevel` 은 각각 개수 상한까지만 싣고 초과분은 버린다 — 상한값은 `Config`(`usageDisplayTextLimit`·`usageExtraLimitsCap`·`usageUnknownTopLevelCap`)가 권위다.
-- 토큰이 없으면 네트워크를 타지 않고 `UsageSnapshot.sample` 로 렌더한다.
+- 토큰이 없으면 네트워크를 타지 않고 샘플 스냅샷(`UsageSnapshot.sample(now:)`)으로 렌더한다. 샘플의 초기화 시각은 고정값이 아니라 샘플을 보이는 전이마다(토큰 없음·401·로그인 만료·로그아웃, 그리고 샘플을 보이던 중의 실패·요청 제한 — 로그아웃 상태에서 Keychain 이 잠긴 폴링 등) 그 시각부터 다시 잡는다 — 앱을 켤 때 한 번 잡으면 약 세 시간 뒤 "곧 초기화" 에 멈춘다 (#133).
 - 자체 토큰 갱신이 `400` + `invalid_grant` 로 실패하면 자체 토큰을 버리고 로그인 만료 안내(`LoadState.sessionExpired` — 배너, 알림은 한 번)를 띄운다. 다음 폴링은 Claude Code 토큰으로 넘어가고, 그 토큰이 없거나 `401` 이면 사용량 요청이 한 번 성공하거나 사용자가 다시 로그인·로그아웃할 때까지 로그아웃 대신 이 안내를 유지한다. 그 밖의 실패(전송 오류·5xx·거부된 3xx·응답 크기 상한 초과)는 토큰을 유지하고 다음 폴링에 다시 시도한다.
-- 사용량 요청이 `401` 이면: Claude Code 토큰은 바로 로그아웃으로 보이고 다음 폴링에 다시 읽는다. 자체 토큰은 한 번 갱신해 다시 요청한다 — 재요청의 두 번째 `401` 은 로그아웃으로, 갱신의 `invalid_grant` 는 로그인 만료 안내(`LoadState.sessionExpired`)로, 갱신이나 재요청의 일시 실패는 계정을 유지한 채 오류 배너로, 재요청의 `429` 는 위 백오프로 보인다. 재요청이 성공하면 일반 성공과 같이 임계 알림을 확인한다 (#92·#93·#95). 규칙은 `UsageRefreshPolicy` 가 권위다.
+- 사용량 요청이 `401` 이면: Claude Code 토큰은 바로 로그아웃으로 보이고 다음 폴링에 다시 읽는다. 로그아웃으로 보일 때는 직전에 받은 실제 숫자를 남기지 않고 샘플로 되돌린다 — 배너가 "샘플 데이터" 라고 말하는 것과 맞추려는 것이다 (#134). 자체 토큰은 한 번 갱신해 다시 요청한다 — 재요청의 두 번째 `401` 은 로그아웃으로, 갱신의 `invalid_grant` 는 로그인 만료 안내(`LoadState.sessionExpired`)로, 갱신이나 재요청의 일시 실패는 계정을 유지한 채 오류 배너로, 재요청의 `429` 는 위 백오프로 보인다. 재요청이 성공하면 일반 성공과 같이 임계 알림을 확인한다 (#92·#93·#95). 규칙은 `UsageRefreshPolicy` 가, 그 결과로 바뀌는 표시 상태(`snapshot`·`loadState`·계정 출처·백오프 단계·로그인 만료 안내 유지)의 전이는 `UsageSession` 이 권위다.
+- 남은 시간 문구는 응답이 아니라 그릴 때 만든다 — 응답 시점에 만든 문구는 다음 폴링까지 멈춰 있기 때문이다. `UsageSnapshot` 은 초기화 시각(`Date?`)만 들고, "N시간 M분 후 초기화" 와 요청 제한 배너의 "N분 후 자동 재시도" 는 뷰가 `TimeText` 로 그릴 때마다 만든다 — `TimeText.minuteTick` 주기의 `TimelineView` 가 다시 그린다 (#133). 초기화 시각이 없으면 문구 없이 비운다("곧 초기화" 로 접지 않는다).
+- 알림은 `Notifier`(Services) 하나로 나가고, 보낼지 말지는 각 모델이 정한다 — 이 규칙은 사용량뿐 아니라 openclaw·서버 호스트 알림에도 같다. 임계 알림은 설정의 "25/50/75/90% 도달 알림" 이 켜져 있고 앱 번들로 실행 중일 때만 `UsageThresholdWatch` 에 관측을 넘기고, 로그인 만료 알림은 그 토글과 무관하게 그 자리에서 알림 권한을 묻고 허용되면 보낸다.
 
 ### 2. Claude Code 설정 편집 (양방향)
 
@@ -187,7 +194,7 @@ GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주�
                    + rateLimit { cost remaining limit resetAt }
         └─ interpret(statusCode:headers:data:)  →  .snapshot / .unauthorized(401) / .rateLimited(403·429 + retry-after, x-ratelimit-remaining: 0, errors[].type == RATE_LIMITED)
              그 밖의 코드(3xx·5xx)·`data` 없는 본문 → throws GitHubAPIError (배너)
-        └─ parse() → GitHubSnapshot  (alias 누락은 빈 목록, PullRequest 아닌 노드·rateLimit 누락은 건너뜀, 검사는 (워크플로 id, event)별 가장 최근 실행(runNumber)보다 앞선 실행의 CheckRun 을 버린 뒤 (워크플로 이름 ?? 앱 slug, job 이름)별·StatusContext 는 context 별 최신 실행 하나, x-oauth-scopes 에 repo 없음 → tokenScopesLackRepo)
+        └─ parse() → GitHubSnapshot  (alias 누락은 빈 목록, PullRequest 아닌 노드·rateLimit 누락은 건너뜀, 정규화 후 레포 이름이 빈 PR 은 버림, 검사는 (워크플로 id, event)별 가장 최근 실행(runNumber)보다 앞선 실행의 CheckRun 을 버린 뒤 (워크플로 이름 ?? 앱 slug, job 이름)별·StatusContext 는 context 별 최신 실행 하나, x-oauth-scopes 에 repo 없음 → tokenScopesLackRepo)
    └─ @Published snapshot / loadState / glance 갱신
         ├─ GitHubMenuBarView       (헤어라인 · 글리프(머지 가능한 내 PR 있으면 merge 초록) · 점 · 처리할 PR 수 — 0 이면 숫자 없음)
         ├─ GitHubHoverSummaryView  (CI 줄 + 내 PR N · 막힘 N + 머지 가능 N 세 줄)
@@ -206,6 +213,14 @@ GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주�
 - 숨긴 레포(`Preferences.githubHiddenRepos`, "owner/name" 소문자)는 스냅샷을 읽는 모든 소비자가 `hiding(_:)` 을 거치므로 메뉴바 숫자·hover·팝오버·주기 판정 어디에도 세지 않는다.
 - 꺼져 있으면 폴링도 없고 메뉴바·팝오버·hover 어디에도 흔적이 없다. 설정의 "GitHub 표시" 토글은 PHILOSOPHY 원칙 2 의 설정 진입점 예외로 항상 보인다. 켜는 동작이 첫 Keychain 읽기이며, gh 항목 접근 거부는 세션 동안 기억해 설정에서만 재시도한다.
 
+### 응답 읽기 공통 규칙
+
+바깥에서 받은 JSON(사용량 응답·OAuth 토큰 응답·Claude Code 자격증명·openclaw 상태 문서·GitHub 응답)을 읽는 규칙 셋은 한 타입씩에 모여 있다 (`Services/`). 규칙마다 적용 범위가 다르므로 각 항목에 적는다.
+
+- **숫자는 `JSONNumber`** (#135). JSON `true`/`false` 는 숫자가 아니다 — `JSONSerialization` 이 bool 을 1/0 으로 돌려주므로 그대로 읽으면 `true` 가 1% · 1초 · 1센트가 된다. NaN·무한대도 버린다. 적용 범위: 사용량 응답(퍼센트·크레딧 금액과 지수), OAuth 토큰 응답의 `expires_in`, Claude Code 자격증명의 `expiresAt`, openclaw 상태 문서(배터리·디스크·러너 수치), GitHub 응답(PR 번호·검사 개수·워크플로 id·실행 번호·한도). bool 이 온 자리는 그 값이 없는 것으로 읽는다(토큰 만료 시각이면 만료 없음, 크레딧 지수면 기본값 2).
+- **화면·로그에 닿는 문자열은 `DisplayText`** (#136). 제어문자·줄바꿈은 공백이 되고, 호출자가 정한 글자 상한(`Config`)과 유니코드 스칼라 480개 상한으로 자른다. 적용 범위: openclaw 상태 문서(detail · `agentVersion` · 모르는 health 값), 사용량 응답(`kind` · 모델명 · 최상위 키 이름), GitHub 응답(PR 제목 · 레포 이름 · 검사 이름 · 머지 실패 메시지). 정규화는 표시용 문자열에만 쓴다 — 검사 재실행을 묶는 식별 키는 응답 원문으로 만든다(정규화로 잘리거나 제어문자만 다른 서로 다른 검사가 하나로 합쳐지지 않게). 정규화 후 레포 이름이 빈 PR 은 보일 것도 레포 숨김으로 가릴 키도 없어 버린다.
+- **시각은 `ResponseDate`** — ISO 8601, 소수 초 있음·없음 둘 다.
+
 ## Auth
 
 **단일 사용자·단일 계정 전제.** 서버 세션이나 멀티유저 개념이 없다.
@@ -215,7 +230,13 @@ GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주�
 1. **자체 OAuth 토큰** — Keychain (`Config.ownKeychainService`)
 2. **Claude Code CLI 토큰** — Keychain `Claude Code-credentials`, 없으면 `~/.claude/.credentials.json`
 
-자체 토큰 항목이 없거나 읽기가 거부되면 2 로 넘어간다. Keychain 이 잠겨 있어 읽지 못하면 넘어가지 않는다 — 토큰과 숫자를 유지한 채 오류 배너를 보이고 다음 폴링에 다시 읽는다. 저장된 값이 해석되지 않는 항목은 없음으로 친다. 로그인 직후 토큰을 Keychain 에 저장하지 못하면 오류로 보인다. 자체 토큰 저장은 항목을 제자리에서 교체하므로 항목의 접근 권한("항상 허용" 등)이 그대로 남는다. 이 빌드가 고칠 수 없는 항목만 지우고 다시 만든다 (#102). 갱신한 자체 토큰을 Keychain 이 받지 못하면(잠김·거부·저장 실패) 버리지 않고 메모리에 들고 폴링하며, 다음 폴링마다 다시 저장한다 — 그동안은 거부여도 2 로 넘어가지 않는다. Keychain 이 다른 로그인이나 로그아웃으로 바뀌거나, 갱신이 오가는 사이 이 앱에서 로그인·로그아웃하거나, 로그인이 만료되면 들고 있던 것을 버린다 — 새 로그인을 덮어쓰지도, 로그아웃한 로그인을 되살리지도 않는다. 단, 우리 저장이 항목을 지운 뒤 새 것을 쓰지 못해 비었으면 로그아웃으로 보지 않고 다시 저장한다. 로그아웃 때 Keychain 에서 지우지 못하면 오류로 보인다 (#108).
+자체 토큰 항목이 없거나 읽기가 거부되면 2 로 넘어간다. Keychain 이 잠겨 있어 읽지 못하면 넘어가지 않는다 — 토큰과 숫자를 유지한 채 오류 배너를 보이고 다음 폴링에 다시 읽는다. 저장된 값이 해석되지 않는 항목은 없음으로 친다. 로그인 직후 토큰을 Keychain 에 저장하지 못하면 오류로 보인다. 자체 토큰 저장은 항목을 제자리에서 교체하므로 항목의 접근 권한("항상 허용" 등)이 그대로 남는다. 이 빌드가 고칠 수 없는 항목만 지우고 다시 만든다 — Keychain 이 잠겨 있거나 사용자가 대화상자를 취소했을 때는 다시 만들지 않는다 (#102). 갱신한 자체 토큰을 Keychain 이 받지 못하면(잠김·거부·저장 실패) 버리지 않고 메모리에 **보류**해 그것으로 폴링한다 — 그동안은 거부여도 2 로 넘어가지 않는다. 보류한 토큰은 다음 폴링 시작에 이렇게 다룬다 (`UsageRefreshPolicy.resolvePending`).
+
+- Keychain 이 다시 읽히고 보류 전의 항목 그대로면 저장한다.
+- 읽기가 거부되는 동안에도 폴링마다 저장을 다시 시도한다 — 저장이 고칠 수 없는 항목을 다시 만들어 거부를 풀 수 있어서다 (#132). 거부된 읽기로는 Keychain 이 바뀌었는지 알 수 없지만, 이 항목은 이 앱만 쓰고 이 앱의 로그인·로그아웃은 보류를 먼저 버리므로 덮어쓸 새 로그인이 없다고 본다(다른 빌드가 그 사이 로그인한 경우는 단일 사용자 전제로 감수).
+- 사용자가 Keychain 대화상자를 취소했거나 Keychain 이 잠겨 있으면 저장하지 않고 메모리의 것으로만 폴링한다 — 취소는 사용자의 답이라, 폴링마다 저장해 대화상자를 다시 띄우지 않는다 (#132).
+
+보류 중에 Keychain 이 다른 로그인이나 로그아웃으로 바뀌거나, 갱신이 오가는 사이 이 앱에서 로그인·로그아웃하거나, 로그인이 만료되면 들고 있던 것을 버린다 — 새 로그인을 덮어쓰지도, 로그아웃한 로그인을 되살리지도 않는다. 단, 우리 저장이 항목을 지운 뒤 새 것을 쓰지 못해 비었으면 로그아웃으로 보지 않고 다시 저장한다. 로그아웃 때 Keychain 에서 지우지 못하면 오류로 보인다 (#108).
 
 Claude Code 사용자는 로그인 없이 기존 토큰을 재사용한다. 다른 앱의 Keychain 항목을 읽으므로 **첫 실행 시 "키체인 접근 허용" 프롬프트**가 뜬다.
 

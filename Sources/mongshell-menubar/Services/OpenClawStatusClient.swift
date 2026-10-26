@@ -271,7 +271,7 @@ struct OpenClawStatusClient: Sendable {
     /// The free space is the signal: without a usable figure there is no disk.
     private static func hostDisk(_ any: Any?) -> ServerHostDisk? {
         guard let dict = any as? [String: Any],
-              let bytes = number(dict["availableBytes"]),
+              let bytes = JSONNumber.finite(dict["availableBytes"]),
               bytes >= 0, bytes < Double(Int64.max) else { return nil }
         return ServerHostDisk(level: hostLevel(dict["health"]) ?? unjudgedLevel,
                               availableBytes: Int64(bytes))
@@ -289,12 +289,9 @@ struct OpenClawStatusClient: Sendable {
                                  running: running, total: total)
     }
 
-    /// Bounds a count far above any real runner fleet, so `Int(_:)` can't trap.
-    private static let maxCount = Double(Int32.max)
-
     /// A whole, non-negative JSON number.
     private static func count(_ any: Any?) -> Int? {
-        guard let value = number(any), value >= 0, value < maxCount,
+        guard let value = JSONNumber.finite(any), value >= 0, value < JSONNumber.countCeiling,
               value.rounded(.towardZero) == value else { return nil }
         return Int(value)
     }
@@ -302,7 +299,7 @@ struct OpenClawStatusClient: Sendable {
     private static let percentRange = 0.0...100.0
 
     private static func batteryPercent(_ any: Any?) -> Int? {
-        guard let value = number(any), percentRange.contains(value) else { return nil }
+        guard let value = JSONNumber.finite(any), percentRange.contains(value) else { return nil }
         return Int(value)
     }
 
@@ -314,23 +311,10 @@ struct OpenClawStatusClient: Sendable {
         return number.boolValue
     }
 
-    /// A finite JSON number. JSONSerialization hands `true` back as an
-    /// NSNumber worth 1 — a bool is not a figure.
-    private static func number(_ any: Any?) -> Double? {
-        guard let number = any as? NSNumber,
-              CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
-        let value = number.doubleValue
-        return value.isFinite ? value : nil
-    }
-
     private static func positiveInt(_ any: Any?) -> Int? {
-        // JSONSerialization hands `true` back as an NSNumber worth 1 — a bool
-        // is not an interval.
-        guard let number = any as? NSNumber,
-              CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
-        let value = number.doubleValue
         // Bounded so `3 × interval` can't overflow downstream.
-        guard value.isFinite, value > 0, value < Double(Int32.max) else { return nil }
+        guard let value = JSONNumber.finite(any), value > 0,
+              value < JSONNumber.countCeiling else { return nil }
         return Int(value)
     }
 

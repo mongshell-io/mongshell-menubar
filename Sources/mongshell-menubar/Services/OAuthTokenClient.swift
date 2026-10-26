@@ -60,7 +60,7 @@ struct OAuthTokenClient {
         }
 
         var expires: Date?
-        if let secs = json["expires_in"] as? Double { expires = now.addingTimeInterval(secs) }
+        if let secs = JSONNumber.finite(json["expires_in"]) { expires = now.addingTimeInterval(secs) }
         return OAuthToken(accessToken: access,
                           refreshToken: json["refresh_token"] as? String,
                           expiresAt: expires)

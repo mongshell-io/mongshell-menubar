@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import UserNotifications
 
 /// Owns the usage snapshot + connection state and drives polling.
 /// Shared singleton so the AppKit status item and SwiftUI views agree.
@@ -8,9 +7,16 @@ import UserNotifications
 final class UsageModel: ObservableObject {
     static let shared = UsageModel()
 
-    // Mirrors of `session`, published one by one so `$snapshot` subscribers
-    // (the status item's width) hear only what changed. See `UsageSession`.
-    @Published private(set) var snapshot: UsageSnapshot = .sample
+    // Mirrors of `session`'s visible state. `@Published` sends
+    // `objectWillChange` on every assignment, equal value or not, so the
+    // `didSet` below assigns only what differs: a session change that shows
+    // nothing new (a refresh starting under the same account, a flag, an
+    // error repeated while real numbers are shown) leaves the views
+    // observing this model — the menu bar icon among them — alone. While the
+    // sample is up, each failed/rateLimited/noToken pass rebuilds it with
+    // `sample(now:)` (#133), so that snapshot is published again.
+    // See `UsageSession`.
+    @Published private(set) var snapshot: UsageSnapshot = .sample(now: Date())
     @Published private(set) var loadState: LoadState = .signedOut
     @Published private(set) var accountSource: DataSource?
 
@@ -52,7 +58,7 @@ final class UsageModel: ObservableObject {
     // MARK: Lifecycle
 
     func start() {
-        if Preferences.shared.notifyThresholds { requestNotificationAuth() }
+        if Preferences.shared.notifyThresholds { Notifier.requestAuthorization() }
         pollTask?.cancel()
         pollTask = Task { [weak self] in await self?.pollLoop() }
     }
@@ -71,7 +77,8 @@ final class UsageModel: ObservableObject {
 
     /// What the usage surfaces show and offer right now (#104).
     var presentation: UsagePresentation {
-        UsagePresentation(loadState: loadState, accountSource: accountSource, now: Date())
+        UsagePresentation(loadState: loadState, accountSource: accountSource,
+                          limitsUnread: snapshot.hasUnreadLimit, now: Date())
     }
 
     private var pollBase: Int { max(Config.minPollInterval, Preferences.shared.pollIntervalSeconds) }
@@ -89,25 +96,30 @@ final class UsageModel: ObservableObject {
 
     // MARK: Token resolution
 
-    private func currentToken() -> UsageTokenChoice {
+    private func lookupOwnToken() -> OwnTokenLookup {
         let own = CredentialStore.lookupOwnToken()
         if case .refused(let status) = own { AuthDebugLog.write("own token refused status=\(status)") }
-        switch UsageRefreshPolicy.resolvePending(pendingOwnToken, own: own) {
-        case .none:
+        return own
+    }
+
+    /// Stores or drops the held renewal as `resolution` says.
+    private func resolvePendingToken(_ resolution: PendingResolution) {
+        switch resolution {
+        case .none, .useInMemory:
             break
         case .drop:
             AuthDebugLog.write("own token changed elsewhere; held renewal dropped")
             pendingOwnToken = nil
-        case .useInMemory(let token):
-            return .token(token, .oauthLogin)
         case .save(let token):
             if let held = pendingOwnToken {
                 pendingOwnToken = UsageRefreshPolicy.pending(
-                    after: CredentialStore.saveOwnToken(token), renewed: token, expected: held.keychain)
+                    afterSaving: held, result: CredentialStore.saveOwnToken(token))
             }
-            return .token(token, .oauthLogin)
         }
-        return UsageRefreshPolicy.chooseToken(own: own, cli: CredentialStore.loadClaudeCodeToken)
+    }
+
+    private func currentToken(_ resolution: PendingResolution, own: OwnTokenLookup) -> UsageTokenChoice {
+        UsageRefreshPolicy.chooseToken(resolution: resolution, own: own, cli: CredentialStore.loadClaudeCodeToken)
     }
 
     // MARK: Refresh
@@ -127,34 +139,33 @@ final class UsageModel: ObservableObject {
 
     private func performRefresh() async {
         let generation = loginGeneration
+        let own = lookupOwnToken()
+        let resolution = UsageRefreshPolicy.resolvePending(pendingOwnToken, own: own)
+        resolvePendingToken(resolution)
         let initialToken: OAuthToken, source: DataSource
-        switch currentToken() {
+        switch currentToken(resolution, own: own) {
         case .token(let found, let foundSource):
             (initialToken, source) = (found, foundSource)
         case .none:
-            session.noToken()
+            session.noToken(now: Date())
             return
         case .ownUnavailable(let status):
             AuthDebugLog.write("own token unavailable status=\(status)")
-            session.failed("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다")
+            session.failed("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다", now: Date())
             return
         }
         var token = initialToken
         session.begin(accessToken: token.accessToken, source: source)
 
         if UsageRefreshPolicy.shouldRenewUpFront(source: source, tokenExpired: token.isExpired) {
-            let renewal = await renewOwnToken(token)
-            switch (UsageRefreshPolicy.step(afterUpFront: renewal.kind), renewal) {
-            case (.useRenewed, .renewed(let renewed)):
+            switch UsageRefreshPolicy.step(afterUpFront: await renewOwnToken(token)) {
+            case .useRenewed(let renewed):
                 guard adoptRenewed(renewed, replacing: token, generation: generation) else { return }
                 token = renewed
-            case (.useRenewed, _):
-                assertionFailure("useRenewed without a renewed token")
-                return
-            case (.expireSession, _):
+            case .expireSession:
                 if generation == loginGeneration { expireSession(token) }
                 return
-            case (.pollAnyway, _):
+            case .pollAnyway:
                 break
             }
         }
@@ -195,15 +206,17 @@ final class UsageModel: ObservableObject {
         case .show(let snap):
             session.loaded(snap, source: source)
             logUnknownLimitsIfChanged(snap)
-            maybeNotify(percent: snap.fiveHourPercent)
+            // An unread 5-hour limit is not "under 25%": skipping it keeps the
+            // watch from re-arming and repeating a level already sent (#130).
+            if let five = snap.fiveHourPercent { maybeNotify(percent: five) }
         case .signOut:
-            session.rejected(accessToken: token.accessToken)
+            session.rejected(accessToken: token.accessToken, now: Date())
         case .expireSession:
             expireSession(token)
         case .rateLimited(let retryAfter):
             session.rateLimited(retryAfter: retryAfter, now: Date(), pollBase: pollBase)
         case .failed:
-            session.failed("사용량을 불러오지 못했습니다")
+            session.failed("사용량을 불러오지 못했습니다", now: Date())
         }
     }
 
@@ -224,23 +237,6 @@ final class UsageModel: ObservableObject {
         pollTask?.cancel()
         pollTask = nil
         session.present(snap, state: state)
-    }
-
-    private enum OwnTokenRenewal {
-        case renewed(OAuthToken)
-        /// The server rejected the refresh token for good — keeping it only
-        /// buys a 400 every poll and blocks the CLI-token fallback.
-        case sessionExpired
-        /// Network or server trouble; the token may still be fine, so keep it.
-        case transientFailure
-
-        var kind: UpFrontRenewal {
-            switch self {
-            case .renewed: return .renewed
-            case .sessionExpired: return .sessionExpired
-            case .transientFailure: return .renewalFailed
-            }
-        }
     }
 
     private func renewOwnToken(_ token: OAuthToken) async -> OwnTokenRenewal {
@@ -264,7 +260,7 @@ final class UsageModel: ObservableObject {
         guard match == .current else { return }
         AuthDebugLog.write("own token discarded (invalid_grant) \(AuthDebugLog.session(token))")
         _ = CredentialStore.clearOwnToken()
-        session.expired()
+        session.expired(now: Date())
         notifySessionExpired()
     }
 
@@ -312,13 +308,13 @@ final class UsageModel: ObservableObject {
             // A token that did not reach the Keychain is gone at the next
             // poll, which would then quietly fall back to the CLI token.
             guard CredentialStore.saveOwnToken(token) == .saved else {
-                session.failed("로그인 정보를 Keychain 에 저장하지 못했습니다")
+                session.failed("로그인 정보를 Keychain 에 저장하지 못했습니다", now: Date())
                 return
             }
             session.signedIn()
             await refreshOnce()
         } catch {
-            session.failed((error as? LocalizedError)?.errorDescription ?? "로그인 실패")
+            session.failed((error as? LocalizedError)?.errorDescription ?? "로그인 실패", now: Date())
         }
     }
 
@@ -326,47 +322,29 @@ final class UsageModel: ObservableObject {
         loginGeneration += 1
         pendingOwnToken = nil
         let cleared = CredentialStore.clearOwnToken()
-        session.signedOut()
+        session.signedOut(now: Date())
         // The token is still there and the next poll would show it again.
-        if !cleared { session.failed("Keychain 에서 로그인 정보를 지우지 못했습니다") }
+        if !cleared { session.failed("Keychain 에서 로그인 정보를 지우지 못했습니다", now: Date()) }
     }
 
     // MARK: Notifications
-
-    /// UserNotifications requires a real app bundle; guard so an unbundled
-    /// `swift run` dev launch doesn't crash.
-    private var notificationsAvailable: Bool { Bundle.main.bundleIdentifier != nil }
-
-    private func requestNotificationAuth() {
-        guard notificationsAvailable else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    }
 
     /// Not tied to `notifyThresholds`: that toggle is about usage levels, and
     /// this is a rare, action-required event of a different kind. Asks for
     /// permission on the spot in case the threshold prompt never ran.
     private func notifySessionExpired() {
-        guard notificationsAvailable else { return }
-        let content = UNMutableNotificationContent()
-        content.title = "Claude 로그인이 만료되었습니다"
-        content.body = "메뉴바 아이콘을 눌러 다시 로그인하세요."
-        let request = UNNotificationRequest(identifier: "mongshell-menubar-session-expired",
-                                            content: content, trigger: nil)
-        Task {
-            let center = UNUserNotificationCenter.current()
-            guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true else { return }
-            try? await center.add(request)
-        }
+        Notifier.postAfterAuthorizing(identifier: "mongshell-menubar-session-expired",
+                                      title: "Claude 로그인이 만료되었습니다",
+                                      body: "메뉴바 아이콘을 눌러 다시 로그인하세요.")
     }
 
+    /// The availability check comes before `observe`: a level the app could
+    /// not have shown is not counted as announced.
     private func maybeNotify(percent: Int) {
-        guard Preferences.shared.notifyThresholds, notificationsAvailable,
+        guard Preferences.shared.notifyThresholds, Notifier.isAvailable,
               let level = thresholds.observe(percent: percent) else { return }
-        let content = UNMutableNotificationContent()
-        content.title = "Claude 사용량 \(level)% 도달"
-        content.body = level >= UsageThresholdWatch.critical ? "곧 한도에 도달합니다." : "사용량이 \(percent)%입니다."
-        UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: "mongshell-menubar-\(level)", content: content, trigger: nil)
-        )
+        Notifier.post(identifier: "mongshell-menubar-\(level)",
+                      title: "Claude 사용량 \(level)% 도달",
+                      body: level >= UsageThresholdWatch.critical ? "곧 한도에 도달합니다." : "사용량이 \(percent)%입니다.")
     }
 }

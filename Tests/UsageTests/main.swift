@@ -10,7 +10,8 @@ import Foundation
 // while null keys and known-shape keys are not; the debug-log line is nil
 // when there is nothing unknown and carries only kind/percent/reset times
 // otherwise; its dedupe key ignores the moving numbers; hostile numbers
-// (1e300, Int.max, non-numbers) fold to 100/0/nil without a trap; response
+// (1e300, Int.max, non-numbers) fold to 100/0/nil without a trap, and a
+// JSON bool is not a percentage (#135); response
 // strings reach labels and the log as one bounded line, and unknown rows
 // stop at the cap; the status code maps onto the error the model branches
 // on (401/403 → re-auth, 429 → back off with Retry-After, a refused 3xx →
@@ -83,9 +84,9 @@ let weeklyReset = iso("2026-10-26T15:00:00+00:00")
 
 do {
     let snap = try UsageAPIClient.parse(response())
-    check("session → fiveHourPercent", snap.fiveHourPercent == 4, "\(snap.fiveHourPercent)")
+    check("session → fiveHourPercent", snap.fiveHourPercent == 4, String(describing: snap.fiveHourPercent))
     check("session → fiveHourResetAt", snap.fiveHourResetAt == sessionReset, "\(String(describing: snap.fiveHourResetAt))")
-    check("weekly_all → weeklyAllPercent", snap.weeklyAllPercent == 23, "\(snap.weeklyAllPercent)")
+    check("weekly_all → weeklyAllPercent", snap.weeklyAllPercent == 23, String(describing: snap.weeklyAllPercent))
     check("weekly_all → weeklyResetAt", snap.weeklyResetAt == weeklyReset, "\(String(describing: snap.weeklyResetAt))")
     check("weekly_scoped → one model row", snap.models.count == 1, "\(snap.models)")
     check("weekly_scoped → pretty name + percent",
@@ -116,8 +117,6 @@ do {
     check("extra percent", extra?.percent == 12, "\(String(describing: extra?.percent))")
     check("extra resetAt", extra?.resetAt == iso("2026-11-05T07:59:00+00:00"),
           "\(String(describing: extra?.resetAt))")
-    check("extra resetText is the popover phrasing",
-          extra?.resetText == TimeText.resetsAt(iso("2026-11-05T07:59:00+00:00")), extra?.resetText ?? "nil")
     check("extra is_active carried", extra?.isActive == true, "\(String(describing: extra?.isActive))")
     check("known three unchanged: session", snap.fiveHourPercent == 4 && snap.fiveHourResetAt == sessionReset)
     check("known three unchanged: weekly_all", snap.weeklyAllPercent == 23 && snap.weeklyResetAt == weeklyReset)
@@ -141,7 +140,6 @@ do {
     check("scoped unknown kind → scopeModel alone matches the weekly_scoped row",
           extra?.scopeModel == snap.models.first?.name, extra?.scopeModel ?? "nil")
     check("no resets_at → resetAt nil", extra?.resetAt == nil, "\(String(describing: extra?.resetAt))")
-    check("no resets_at → resetText empty", extra?.resetText == "", extra?.resetText ?? "nil")
     check("no is_active → nil", extra?.isActive == nil, "\(String(describing: extra?.isActive))")
 } catch {
     check("response with scoped unknown kind parses", false, "\(error)")
@@ -167,12 +165,70 @@ do {
     {"five_hour": {"utilization": 64, "resets_at": "2026-10-21T06:10:00+00:00"},
      "seven_day": {"utilization": 23, "resets_at": "2026-10-26T15:00:00+00:00"}}
     """))
-    check("flat fallback → five_hour read", snap.fiveHourPercent == 64, "\(snap.fiveHourPercent)")
-    check("flat fallback → seven_day read", snap.weeklyAllPercent == 23, "\(snap.weeklyAllPercent)")
+    check("flat fallback → five_hour read", snap.fiveHourPercent == 64, String(describing: snap.fiveHourPercent))
+    check("flat fallback → seven_day read", snap.weeklyAllPercent == 23, String(describing: snap.weeklyAllPercent))
     check("flat fallback → no extra limits", snap.extraLimits.isEmpty, "\(snap.extraLimits)")
     check("flat fallback → no unknown buckets", snap.unknownTopLevel.isEmpty, "\(snap.unknownTopLevel)")
 } catch {
     check("flat response parses", false, "\(error)")
+}
+
+// MARK: (c2) a 5-hour/weekly limit the response no longer names is unread, not 0% (#130)
+
+do {
+    let renamed = try UsageAPIClient.parse(body("""
+    {"limits": [
+      {"kind":"session_v2","percent":64,"resets_at":"2026-10-21T06:10:00+00:00"},
+      {"kind":"weekly_all","percent":23,"resets_at":"2026-10-26T15:00:00+00:00"}]}
+    """))
+    check("renamed session kind → 5-hour unread, not 0%", renamed.fiveHourPercent == nil,
+          String(describing: renamed.fiveHourPercent))
+    check("renamed session kind → weekly still read", renamed.weeklyAllPercent == 23,
+          String(describing: renamed.weeklyAllPercent))
+    check("renamed session kind → snapshot reports an unread limit", renamed.hasUnreadLimit)
+
+    let noWeekly = try UsageAPIClient.parse(body("""
+    {"limits": [{"kind":"session","percent":64,"resets_at":"2026-10-21T06:10:00+00:00"}]}
+    """))
+    check("weekly_all missing → weekly unread, not 0%", noWeekly.weeklyAllPercent == nil,
+          String(describing: noWeekly.weeklyAllPercent))
+    check("weekly_all missing → 5-hour still read", noWeekly.fiveHourPercent == 64)
+
+    let noPercent = try UsageAPIClient.parse(body("""
+    {"limits": [{"kind":"session","resets_at":"2026-10-21T06:10:00+00:00"},
+                {"kind":"weekly_all","percent":"23%"}]}
+    """))
+    check("session row without a number → unread, not 0%",
+          noPercent.fiveHourPercent == nil && noPercent.weeklyAllPercent == nil,
+          "\(String(describing: noPercent.fiveHourPercent)) \(String(describing: noPercent.weeklyAllPercent))")
+
+    let noPercentWithResets = try UsageAPIClient.parse(body("""
+    {"limits": [{"kind":"session","resets_at":"2026-10-21T06:10:00+00:00"},
+                {"kind":"weekly_all","percent":"23%","resets_at":"2026-10-26T15:00:00+00:00"}]}
+    """))
+    check("row without a number, no flat fallback → its reset is unread too",
+          noPercentWithResets.fiveHourResetAt == nil && noPercentWithResets.weeklyResetAt == nil,
+          "\(String(describing: noPercentWithResets.fiveHourResetAt)) \(String(describing: noPercentWithResets.weeklyResetAt))")
+
+    let empty = try UsageAPIClient.parse(body("{}"))
+    check("nothing recognisable → both unread", empty.fiveHourPercent == nil && empty.weeklyAllPercent == nil)
+
+    // The flat objects mirror session/weekly_all, so a renamed row falls
+    // back to its own window's flat object before giving up.
+    let mirrored = try UsageAPIClient.parse(body("""
+    {"five_hour": {"utilization": 41, "resets_at": "2026-10-21T06:10:00+00:00"},
+     "limits": [
+      {"kind":"session_v2","percent":64},
+      {"kind":"weekly_all","percent":23}]}
+    """))
+    check("renamed session kind with five_hour present → five_hour read",
+          mirrored.fiveHourPercent == 41 && mirrored.fiveHourResetAt == iso("2026-10-21T06:10:00+00:00"),
+          String(describing: mirrored.fiveHourPercent))
+    check("weekly_all row wins over the flat seven_day", mirrored.weeklyAllPercent == 23)
+
+    check("real response shape → nothing unread", !(try UsageAPIClient.parse(response())).hasUnreadLimit)
+} catch {
+    check("unread-limit responses parse", false, "\(error)")
 }
 
 // MARK: (d) unknown top-level objects are noted, null keys are not
@@ -204,16 +260,16 @@ let bonusReset = iso("2026-11-05T07:59:00+00:00")
 
 func unknownSnapshot(percent: Int = 12, kind: String = "bonus", resetAt: Date? = bonusReset,
                      utilization: Int? = 100) -> UsageSnapshot {
-    var snap = UsageSnapshot.sample
+    var snap = UsageSnapshot.sample(now: Date())
     snap.extraLimits = [ExtraLimit(id: kind, kind: kind, scopeModel: nil, percent: percent,
-                                   resetAt: resetAt, resetText: "", isActive: true)]
+                                   resetAt: resetAt, isActive: true)]
     snap.unknownTopLevel = [UnknownBucket(key: "iguana_necktie", utilization: utilization, resetAt: nil)]
     return snap
 }
 
 do {
-    check("sample → log line nil", AuthDebugLog.usageUnknownLine(.sample) == nil)
-    check("sample → dedupe key nil", AuthDebugLog.usageUnknownKey(.sample) == nil)
+    check("sample → log line nil", AuthDebugLog.usageUnknownLine(.sample(now: Date())) == nil)
+    check("sample → dedupe key nil", AuthDebugLog.usageUnknownKey(.sample(now: Date())) == nil)
 
     let snap = unknownSnapshot()
     let line = AuthDebugLog.usageUnknownLine(snap) ?? ""
@@ -271,6 +327,33 @@ do {
     check("utilization 1e300 → 100, non-number → nil", utilizations == [100, nil], "\(utilizations)")
 } catch {
     check("response with hostile numbers parses", false, "\(error)")
+}
+
+// MARK: (f2) a JSON bool is not a percentage (#135)
+
+// JSONSerialization hands `true` back as an NSNumber worth 1, which `as? Double`
+// reads as 1% — the openclaw and GitHub readers already refused it.
+do {
+    let limits = try UsageAPIClient.parse(body("""
+        {"limits": [{"kind":"session","percent":true},
+                    {"kind":"weekly_all","percent":false},
+                    {"kind":"weekly_scoped","percent":true,
+                     "scope":{"model":{"display_name":"Opus"}}},
+                    {"kind":"bonus","percent":true}]}
+        """))
+    check("session percent true → unread, not 1%", limits.fiveHourPercent == nil,
+          "\(String(describing: limits.fiveHourPercent))")
+    check("weekly_all percent false → unread, not 0%", limits.weeklyAllPercent == nil,
+          "\(String(describing: limits.weeklyAllPercent))")
+    check("scoped / extra percent true → 0, not 1",
+          limits.models.first?.percent == 0 && limits.extraLimits.first?.percent == 0,
+          "\(limits.models.map(\.percent)) \(limits.extraLimits.map(\.percent))")
+
+    let flat = try UsageAPIClient.parse(body(#"{"five_hour": {"utilization": true}, "seven_day": {"utilization": false}}"#))
+    check("flat utilization bool → unread", flat.fiveHourPercent == nil && flat.weeklyAllPercent == nil,
+          "\(String(describing: flat.fiveHourPercent)) \(String(describing: flat.weeklyAllPercent))")
+} catch {
+    check("response with bool percents parses", false, "\(error)")
 }
 
 // MARK: (g) response strings are bounded single lines; rows stop at the cap
@@ -421,7 +504,7 @@ do {
 // MARK: 401 → refresh → retry (#92, #93, #95)
 
 do {
-    let snap = UsageSnapshot.sample
+    let snap = UsageSnapshot.sample(now: Date())
     let none: OwnTokenRetry? = nil
     check("error mapping: 401 / 429 / anything else",
           UsageFetchResult(.failure(APIError.unauthorized)) == .unauthorized
@@ -485,7 +568,7 @@ do {
 
 do {
     let now = Date(timeIntervalSince1970: 1_790_000_000)
-    var snap = UsageSnapshot.sample
+    var snap = UsageSnapshot.sample(now: now)
     snap.fiveHourPercent = 42
 
     var s = UsageSession()
@@ -497,7 +580,7 @@ do {
     // #90 — the account row survives 429, error and the next fetch in flight.
     s.rateLimited(retryAfter: nil, now: now, pollBase: 180)
     check("429 keeps the account (#90)", s.accountSource == .oauthLogin)
-    s.failed("x")
+    s.failed("x", now: now)
     check("error keeps the account and the numbers (#90, #92)", s.accountSource == .oauthLogin && s.snapshot == snap)
     s.begin(accessToken: "own", source: .oauthLogin)
     check("a fetch in flight does not go back to loading or drop the account",
@@ -516,7 +599,7 @@ do {
     // A rejected CLI token is not named as the account on its next try.
     var c = UsageSession()
     c.begin(accessToken: "cli", source: .claudeCodeCLI)
-    c.rejected(accessToken: "cli")
+    c.rejected(accessToken: "cli", now: now)
     check("401 → signed out, no account", c.loadState == .signedOut && c.accountSource == nil)
     c.begin(accessToken: "cli", source: .claudeCodeCLI)
     check("the same rejected token is not named again", c.accountSource == nil)
@@ -531,29 +614,29 @@ do {
     // #44 — the lapsed-login notice outlives the polls after it.
     var e = UsageSession()
     e.loaded(snap, source: .oauthLogin)
-    e.expired()
+    e.expired(now: now)
     check("invalid_grant → lapsed notice, sample numbers",
-          e.loadState == .sessionExpired && e.snapshot == .sample && e.accountSource == nil)
-    e.noToken()
+          e.loadState == .sessionExpired && e.snapshot == .sample(now: now) && e.accountSource == nil)
+    e.noToken(now: now)
     check("no token afterwards → notice kept (#44)", e.loadState == .sessionExpired)
     e.begin(accessToken: "cli", source: .claudeCodeCLI)
-    e.rejected(accessToken: "cli")
+    e.rejected(accessToken: "cli", now: now)
     check("CLI 401 afterwards → notice kept, not plain signed-out (#44)", e.loadState == .sessionExpired)
     e.rateLimited(retryAfter: nil, now: now, pollBase: 180)
-    e.noToken()
+    e.noToken(now: now)
     check("a 429 in between does not wear the notice off (#44)", e.loadState == .sessionExpired)
     var e2 = e
     e2.loaded(snap, source: .claudeCodeCLI)
-    e2.noToken()
+    e2.noToken(now: now)
     check("a successful fetch resolves the notice", e2.loadState == .signedOut)
     var e3 = e
     e3.signedIn()
-    e3.noToken()
+    e3.noToken(now: now)
     check("signing in resolves the notice", e3.loadState == .signedOut)
     var e4 = e
-    e4.signedOut()
-    check("signing out resolves the notice", e4.loadState == .signedOut && e4.snapshot == .sample)
-    e4.noToken()
+    e4.signedOut(now: now)
+    check("signing out resolves the notice", e4.loadState == .signedOut && e4.snapshot == .sample(now: now))
+    e4.noToken(now: now)
     check("…and it stays resolved", e4.loadState == .signedOut)
 
     var p = UsageSession()
@@ -570,12 +653,13 @@ do {
           UsageRefreshPolicy.shouldRenewUpFront(source: .oauthLogin, tokenExpired: true)
           && !UsageRefreshPolicy.shouldRenewUpFront(source: .oauthLogin, tokenExpired: false)
           && !UsageRefreshPolicy.shouldRenewUpFront(source: .claudeCodeCLI, tokenExpired: true))
+    let renewedUpFront = OAuthToken(accessToken: "a2", refreshToken: "r2", expiresAt: nil)
     check("up-front refresh worked → poll with the new token",
-          UsageRefreshPolicy.step(afterUpFront: .renewed) == .useRenewed)
+          UsageRefreshPolicy.step(afterUpFront: .renewed(renewedUpFront)) == .useRenewed(renewedUpFront))
     check("up-front refresh rejected for good → lapsed login",
           UsageRefreshPolicy.step(afterUpFront: .sessionExpired) == .expireSession)
     check("up-front refresh blip → poll anyway",
-          UsageRefreshPolicy.step(afterUpFront: .renewalFailed) == .pollAnyway)
+          UsageRefreshPolicy.step(afterUpFront: .transientFailure) == .pollAnyway)
 }
 
 // MARK: usage threshold notifications (#95, #103)
@@ -663,6 +747,33 @@ do {
     check("save failed after our delete → held, Keychain may be empty",
           UsageRefreshPolicy.pending(after: .failedAfterDelete, renewed: newer, expected: holdsR1)
               == PendingOwnToken(token: newer, keychain: .maybeEmpty))
+
+    // Storing a held renewal at the start of a refresh (#131): what stays
+    // held keeps pointing at what the Keychain really holds.
+    check("held renewal stored → nothing held",
+          UsageRefreshPolicy.pending(afterSaving: pending, result: .saved) == nil)
+    check("held renewal still not taken → Keychain still holds the spent token, not the held one",
+          UsageRefreshPolicy.pending(afterSaving: pending, result: .failed) == pending)
+    check("held renewal lost the item on our delete → Keychain may be empty",
+          UsageRefreshPolicy.pending(afterSaving: pending, result: .failedAfterDelete)
+              == PendingOwnToken(token: renewed, keychain: .maybeEmpty))
+    let heldAfterDelete = PendingOwnToken(token: renewed, keychain: .maybeEmpty)
+    check("held after our delete, save fails again → still maybe empty (carried over)",
+          UsageRefreshPolicy.pending(afterSaving: heldAfterDelete, result: .failed) == heldAfterDelete)
+
+    // The held renewal is polled with whatever the Keychain read said.
+    let cliToken = OAuthToken(accessToken: "c", refreshToken: nil, expiresAt: nil)
+    check("storing the held renewal → poll with it, not the spent token",
+          UsageRefreshPolicy.chooseToken(resolution: .save(renewed), own: .found(old), cli: { cliToken })
+              == .token(renewed, .oauthLogin))
+    check("Keychain locked with a held renewal → poll with it, not wait",
+          UsageRefreshPolicy.chooseToken(resolution: .useInMemory(renewed), own: locked, cli: { cliToken })
+              == .token(renewed, .oauthLogin))
+    check("held renewal dropped → the Keychain read decides",
+          UsageRefreshPolicy.chooseToken(resolution: .drop, own: .missing, cli: { cliToken })
+              == .token(cliToken, .claudeCodeCLI)
+          && UsageRefreshPolicy.chooseToken(resolution: .none, own: .found(other), cli: { cliToken })
+              == .token(other, .oauthLogin))
 }
 
 // MARK: what the usage surfaces show and offer (#90, #104)
@@ -670,8 +781,8 @@ do {
 do {
     let now = Date(timeIntervalSince1970: 1_790_000_000)
     let retryAt = now.addingTimeInterval(600)
-    func p(_ state: LoadState, _ source: DataSource?) -> UsagePresentation {
-        UsagePresentation(loadState: state, accountSource: source, now: now)
+    func p(_ state: LoadState, _ source: DataSource?, limitsUnread: Bool = false) -> UsagePresentation {
+        UsagePresentation(loadState: state, accountSource: source, limitsUnread: limitsUnread, now: now)
     }
 
     // #90 — the own login keeps "로그아웃" and never gets a login button
@@ -710,6 +821,217 @@ do {
     check("badges: limited / failed / syncing",
           p(.rateLimited(retryAt: retryAt), nil).badge == .limited
           && p(.error("x"), nil).badge == .failed && p(.loading, nil).badge == .syncing)
+
+    // #130 — a limit the response did not carry is explained, not shown as 0%.
+    check("loaded with an unread limit → the format banner, no button, still connected",
+          p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true).banner == .unreadLimits
+          && p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true).bannerAction == UsagePresentation.BannerAction.none
+          && p(.loaded(.oauthLogin), .oauthLogin, limitsUnread: true).badge == .connected)
+    check("unread limit outranks the CLI-account notice",
+          p(.loaded(.claudeCodeCLI), .claudeCodeCLI, limitsUnread: true).banner == .unreadLimits)
+    check("unread limit does not hide an error or a rate limit",
+          p(.error("x"), .oauthLogin, limitsUnread: true).banner == .failed("x")
+          && p(.rateLimited(retryAt: retryAt), .oauthLogin, limitsUnread: true).banner == .rateLimited(retryAt: retryAt))
+}
+
+// MARK: #134 — a 401 sign-out drops the last real numbers like every other sign-out
+
+do {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    var snap = UsageSnapshot.sample(now: now)
+    snap.fiveHourPercent = 42
+
+    var r = UsageSession()
+    r.begin(accessToken: "cli", source: .claudeCodeCLI)
+    r.loaded(snap, source: .claudeCodeCLI)
+    r.rejected(accessToken: "cli", now: now)
+    check("401 after real numbers → sample, signed out (#134)",
+          r.snapshot == .sample(now: now) && r.loadState == .signedOut && r.accountSource == nil)
+
+    // Every sign-out path agrees on what the user sees after real numbers.
+    let paths: [(String, (inout UsageSession) -> Void)] = [
+        ("noToken", { $0.noToken(now: now) }),
+        ("rejected", { $0.rejected(accessToken: "cli", now: now) }),
+        ("expired", { $0.expired(now: now) }),
+        ("signedOut", { $0.signedOut(now: now) }),
+    ]
+    for (name, event) in paths {
+        var x = UsageSession()
+        x.loaded(snap, source: .claudeCodeCLI)
+        event(&x)
+        check("\(name) after real numbers → sample, no account (#134)",
+              x.snapshot == .sample(now: now) && x.accountSource == nil)
+    }
+}
+
+// MARK: #133 — the sample countdown is counted from the latest sign-out, not launch
+
+do {
+    let launch = Date(timeIntervalSince1970: 1_790_000_000)
+    let later = launch.addingTimeInterval(10 * 3600)
+    let samplePhrase = "3시간 8분 후 초기화"
+    check("sample built at a moment reads 3시간 8분 then",
+          TimeText.resetsIn(UsageSnapshot.sample(now: later).fiveHourResetAt, now: later) == samplePhrase)
+
+    // Signed out at launch, still signed out ten hours on: a sample pinned to
+    // launch would read 곧 초기화 by now and stay there.
+    let paths: [(String, (inout UsageSession) -> Void)] = [
+        ("noToken", { $0.noToken(now: later) }),
+        ("rejected", { $0.rejected(accessToken: "cli", now: later) }),
+        ("expired", { $0.expired(now: later) }),
+        ("signedOut", { $0.signedOut(now: later) }),
+    ]
+    for (name, event) in paths {
+        var x = UsageSession()
+        x.present(.sample(now: launch), state: .signedOut)
+        event(&x)
+        let phrase = TimeText.resetsIn(x.snapshot.fiveHourResetAt, now: later)
+        check("\(name) ten hours after launch → sample still reads 3시간 8분 (#133)",
+              phrase == samplePhrase, phrase)
+    }
+}
+
+// MARK: #133 — a locked Keychain while signed out keeps the sample counting from now
+
+do {
+    let launch = Date(timeIntervalSince1970: 1_790_000_000)
+    let later = launch.addingTimeInterval(10 * 3600)
+    let samplePhrase = "3시간 8분 후 초기화"
+
+    var x = UsageSession()
+    x.present(.sample(now: launch), state: .signedOut)
+    x.failed("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다", now: later)
+    let phrase = TimeText.resetsIn(x.snapshot.fiveHourResetAt, now: later)
+    check("failed over a sample ten hours on → sample still reads 3시간 8분 (#133)",
+          phrase == samplePhrase && x.loadState == .error("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다"),
+          phrase)
+    x.failed("again", now: later.addingTimeInterval(3600))
+    check("failed again over the sample → rebuilt again",
+          x.snapshot == .sample(now: later.addingTimeInterval(3600)))
+
+    let real = UsageSnapshot(fiveHourPercent: 40, fiveHourResetAt: launch.addingTimeInterval(600),
+                             weeklyAllPercent: 10, weeklyResetAt: nil, models: [], extraLimits: [],
+                             unknownTopLevel: [], creditsText: nil, lastUpdated: launch)
+    var y = UsageSession()
+    y.loaded(real, source: .oauthLogin)
+    y.failed("x", now: later)
+    check("failed over real numbers → numbers kept as they were", y.snapshot == real)
+
+    // Signed in, first poll 429s: the sample stays up through the backoff.
+    var z = UsageSession()
+    z.present(.sample(now: launch), state: .signedOut)
+    z.rateLimited(retryAfter: nil, now: later, pollBase: 60)
+    let limitedPhrase = TimeText.resetsIn(z.snapshot.fiveHourResetAt, now: later)
+    check("rateLimited over a sample ten hours on → sample still reads 3시간 8분 (#133)",
+          limitedPhrase == samplePhrase, limitedPhrase)
+    var w = UsageSession()
+    w.loaded(real, source: .oauthLogin)
+    w.rateLimited(retryAfter: nil, now: later, pollBase: 60)
+    check("rateLimited over real numbers → numbers kept as they were", w.snapshot == real)
+}
+
+// MARK: #132 — a held renewal is stored again while the Keychain refuses
+
+do {
+    let renewed = OAuthToken(accessToken: "a2", refreshToken: "r2", expiresAt: nil)
+    let refused = OwnTokenLookup.refused(errSecAuthFailed)
+    let held = PendingOwnToken(token: renewed, keychain: .holds(refreshToken: "r1"))
+    let heldAfterDelete = PendingOwnToken(token: renewed, keychain: .maybeEmpty)
+    check("Keychain refuses with a held renewal → try to store it again, every poll",
+          UsageRefreshPolicy.resolvePending(held, own: refused) == .save(renewed)
+          && UsageRefreshPolicy.resolvePending(heldAfterDelete, own: refused) == .save(renewed))
+    check("Keychain locked with a held renewal → still only kept in memory",
+          UsageRefreshPolicy.resolvePending(held, own: .unavailable(errSecInteractionNotAllowed))
+              == .useInMemory(renewed))
+    check("prompt cancelled with a held renewal → kept in memory, not stored again",
+          UsageRefreshPolicy.resolvePending(held, own: .refused(errSecUserCanceled)) == .useInMemory(renewed))
+    check("refused with nothing held → nothing to do",
+          UsageRefreshPolicy.resolvePending(nil, own: refused) == PendingResolution.none)
+    let cliToken = OAuthToken(accessToken: "c", refreshToken: nil, expiresAt: nil)
+    check("retrying the store while refused → poll with the held renewal, not the CLI token",
+          UsageRefreshPolicy.chooseToken(resolution: UsageRefreshPolicy.resolvePending(held, own: refused),
+                                         own: refused, cli: { cliToken })
+              == .token(renewed, .oauthLogin))
+}
+
+// MARK: #133 — reset phrases are made at draw time; flat fallbacks are logged
+
+do {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    let reset = now.addingTimeInterval(3 * 3600 + 8 * 60)
+    check("countdown follows the clock it is drawn with",
+          TimeText.resetsIn(reset, now: now) == "3시간 8분 후 초기화"
+          && TimeText.resetsIn(reset, now: now.addingTimeInterval(3 * 3600)) == "8분 후 초기화",
+          TimeText.resetsIn(reset, now: now.addingTimeInterval(3 * 3600)))
+    check("past the reset → 곧 초기화", TimeText.resetsIn(reset, now: reset) == "곧 초기화")
+    check("no reset time → empty, not 곧 초기화", TimeText.resetsIn(nil, now: now) == "",
+          TimeText.resetsIn(nil, now: now))
+    check("weekly phrase: no reset time → empty", TimeText.resetsAt(nil) == "")
+
+    // The real shape with its session row renamed: the flat `five_hour`
+    // (utilization 4) fills the window and the log says so.
+    let renamedBody = String(decoding: response(), as: UTF8.self)
+        .replacingOccurrences(of: #""kind":"session""#, with: #""kind":"session_v2""#)
+    let renamed = try UsageAPIClient.parse(body(renamedBody))
+    check("session row renamed, five_hour present → read flat and noted",
+          renamed.fiveHourPercent == 4 && renamed.flatFallbacks == ["five_hour"],
+          "\(String(describing: renamed.fiveHourPercent)) \(renamed.flatFallbacks)")
+    let line = AuthDebugLog.usageUnknownLine(renamed) ?? ""
+    check("flat fallback → a log line naming the window",
+          line.contains("read flat five_hour"), line)
+    check("flat fallback → a dedupe key, so the line is written once",
+          AuthDebugLog.usageUnknownKey(renamed) != nil)
+
+    let flatOnly = try UsageAPIClient.parse(body(#"{"five_hour": {"utilization": 41}, "seven_day": {"utilization": 9}}"#))
+    check("no limits array → flat objects read, nothing noted",
+          flatOnly.fiveHourPercent == 41 && flatOnly.weeklyAllPercent == 9 && flatOnly.flatFallbacks.isEmpty,
+          "\(flatOnly.flatFallbacks)")
+    check("real response shape → nothing noted", (try UsageAPIClient.parse(response())).flatFallbacks.isEmpty)
+} catch {
+    check("#133 responses parse", false, "\(error)")
+}
+
+// MARK: #135 — credits amounts read as JSON numbers, never bools
+
+do {
+    func credits(limit: String, used: String = "0", exponent: String = "2") -> String? {
+        let spend = #""spend": {"enabled": true, "limit": {"amount_minor": \#(limit), "exponent": \#(exponent)}, "used": {"amount_minor": \#(used)}}"#
+        let text = String(decoding: response(), as: UTF8.self).replacingOccurrences(of: #""spend": null"#, with: spend)
+        return (try? UsageAPIClient.interpret(statusCode: 200, retryAfter: nil, data: body(text)))?.creditsText
+    }
+    check("credits: minor units over 10^exponent", credits(limit: "1050", used: "630") == "크레딧 $4.20 남음",
+          "\(String(describing: credits(limit: "1050", used: "630")))")
+    check("credits: exponent missing → 2", credits(limit: "500", exponent: "null") == "크레딧 $5.00 남음")
+    check("credits: exponent true → default 2, not 1",
+          credits(limit: "500", exponent: "true") == "크레딧 $5.00 남음",
+          "\(String(describing: credits(limit: "500", exponent: "true")))")
+    check("credits: exponent 0 kept", credits(limit: "5", exponent: "0") == "크레딧 $5.00 남음")
+    check("credits: amount true → 0, not 1 cent",
+          credits(limit: "true", exponent: "0") == "크레딧 $0.00 남음",
+          "\(String(describing: credits(limit: "true", exponent: "0")))")
+    check("credits: used true → 0", credits(limit: "100", used: "true", exponent: "0") == "크레딧 $100.00 남음")
+    check("credits: fractional amount → 0 (integers only, as before)",
+          credits(limit: "1.5", exponent: "0") == "크레딧 $0.00 남음")
+    check("credits: negative used kept", credits(limit: "100", used: "-50", exponent: "0") == "크레딧 $150.00 남음")
+    check("credits: exponent 6 (top of range) kept", credits(limit: "5000000", exponent: "6") == "크레딧 $5.00 남음")
+    for bad in ["-1", "7", "-400", "400"] {
+        let text = credits(limit: "500", exponent: bad)
+        check("credits: exponent \(bad) out of range → no credits line, not $inf / $0.00",
+              text == nil, "\(String(describing: text))")
+    }
+    // Int.max reads as 2^63 through Double, out of Int's range → nil → 0;
+    // -(Int.max) rounds to -2^63 = Int.min, which Int holds. Subtracting must
+    // not trap either way.
+    let extreme = credits(limit: "9223372036854775807", used: "-9223372036854775807", exponent: "0")
+    check("credits: extreme Ints don't trap — 0 - Int.min as a Double",
+          extreme == "크레딧 $9223372036854775808.00 남음", "\(String(describing: extreme))")
+    check("integer: exact within ±2^53",
+          JSONNumber.integer(NSNumber(value: 1 << 53)) == 1 << 53
+          && JSONNumber.integer(NSNumber(value: -(1 << 53))) == -(1 << 53))
+    check("integer: past 2^53 → nearest Double, not the digits sent",
+          JSONNumber.integer(NSNumber(value: (1 << 53) + 1)) == 1 << 53)
+    check("integer: Int.max rounds to 2^63 → nil", JSONNumber.integer(NSNumber(value: Int.max)) == nil)
+    check("integer: Int.min is -2^63 exactly → kept", JSONNumber.integer(NSNumber(value: Int.min)) == Int.min)
 }
 
 // MARK: result

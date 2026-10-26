@@ -5,7 +5,7 @@ import Foundation
 /// all about these flags drifting apart while `UsageModel` set them by hand
 /// in several places, where `scripts/test.sh` could not reach (#103).
 struct UsageSession: Equatable {
-    private(set) var snapshot: UsageSnapshot = .sample
+    private(set) var snapshot: UsageSnapshot = .sample(now: Date())
     private(set) var loadState: LoadState = .signedOut
     /// Whose token the app is polling with, nil when it has none that works.
     /// Kept apart from `loadState`, which a 429, an error or a fetch in
@@ -24,15 +24,18 @@ struct UsageSession: Equatable {
     /// could overwrite the notice and let the next CLI 401 downgrade it to a
     /// plain `signedOut` (#44).
     private var expiredUnresolved = false
+    /// `snapshot` is the placeholder a sign-out put up, not fetched numbers.
+    /// Tracked by event rather than read off the snapshot: nothing in a
+    /// snapshot's values marks it as the sample for certain.
+    private var showsSample = true
 
     static let backoffCap = 4
 
     // MARK: Refresh events
 
     /// No token anywhere.
-    mutating func noToken() {
-        markSignedOut()
-        snapshot = .sample
+    mutating func noToken(now: Date) {
+        markSignedOut(now: now)
     }
 
     /// A refresh is about to poll with this token.
@@ -45,6 +48,7 @@ struct UsageSession: Equatable {
     /// its own: it proves whichever token we hold now works.
     mutating func loaded(_ snap: UsageSnapshot, source: DataSource) {
         snapshot = snap
+        showsSample = false
         loadState = .loaded(source)
         accountSource = source
         rejectedAccessToken = nil
@@ -53,28 +57,35 @@ struct UsageSession: Equatable {
     }
 
     /// The server turned this token away for good.
-    mutating func rejected(accessToken: String) {
+    mutating func rejected(accessToken: String, now: Date) {
         rejectedAccessToken = accessToken
-        markSignedOut()
+        markSignedOut(now: now)
     }
 
     /// The own token was discarded after `invalid_grant`.
-    mutating func expired() {
-        snapshot = .sample
+    mutating func expired(now: Date) {
+        snapshot = .sample(now: now)
+        showsSample = true
         accountSource = nil
         expiredUnresolved = true
         loadState = .sessionExpired
     }
 
+    /// Keeps the account and the numbers, like `failed`. A 429 right after
+    /// signing in lands while the sample is still up, and the backoff can
+    /// outlast its countdown.
     mutating func rateLimited(retryAfter: TimeInterval?, now: Date, pollBase: Int) {
         backoff = min(backoff + 1, Self.backoffCap)
         loadState = .rateLimited(retryAt: UsageRetryPolicy.retryAt(
             now: now, base: pollBase, backoff: backoff, retryAfter: retryAfter))
+        rebuildSampleIfShowing(now: now)
     }
 
-    /// Keeps the account and the numbers; the next poll tries again.
-    mutating func failed(_ message: String) {
+    /// Keeps the account and the numbers; the next poll tries again. A
+    /// Keychain that stays locked while signed out fails every poll.
+    mutating func failed(_ message: String, now: Date) {
         loadState = .error(message)
+        rebuildSampleIfShowing(now: now)
     }
 
     // MARK: User events
@@ -85,26 +96,43 @@ struct UsageSession: Equatable {
         expiredUnresolved = false
     }
 
-    mutating func signedOut() {
+    mutating func signedOut(now: Date) {
         expiredUnresolved = false
         accountSource = nil
         loadState = .signedOut
-        snapshot = .sample
+        snapshot = .sample(now: now)
+        showsSample = true
     }
 
     /// Snapshot hook: a given snapshot and state, nothing else carried over.
+    /// A signed-out state is taken to be showing the sample, as it would be.
     mutating func present(_ snap: UsageSnapshot, state: LoadState) {
         snapshot = snap
+        showsSample = state == .signedOut || state == .sessionExpired
         loadState = state
         if case .loaded(let source) = state { accountSource = source } else { accountSource = nil }
     }
 
     /// `sessionExpired` outranks `signedOut`: the banner that explains why the
     /// numbers went back to sample must survive the polls that follow (no
-    /// token at all, or a CLI token that 401s) until the user acts.
-    private mutating func markSignedOut() {
+    /// token at all, or a CLI token that 401s) until the user acts. Both
+    /// banners say the numbers are sample, so the numbers go back here too —
+    /// a 401 that left the last real ones up contradicted its banner (#134).
+    /// Rebuilt on every call, polls that stay signed out included, so the
+    /// sample countdown is counted from now rather than from launch (#133).
+    private mutating func markSignedOut(now: Date) {
         accountSource = nil
         loadState = expiredUnresolved ? .sessionExpired : .signedOut
+        snapshot = .sample(now: now)
+        showsSample = true
+    }
+
+    /// For the events that keep whatever numbers are up: real ones stay as
+    /// they were, but a sample is rebuilt from `now` like every signed-out
+    /// poll — one left from before would tick down to "곧 초기화" and stay
+    /// there for as long as the polls keep failing (#133).
+    private mutating func rebuildSampleIfShowing(now: Date) {
+        if showsSample { snapshot = .sample(now: now) }
     }
 }
 

@@ -26,8 +26,11 @@ enum OwnTokenLookup: Equatable {
     /// most likely there and a later read should work.
     case unavailable(OSStatus)
     /// Any other refusal — access denied, an item written under another
-    /// signing identity. It may not pass on its own, so callers treat it as
-    /// missing: a fresh sign-in replaces the item.
+    /// signing identity. It may not pass on its own, so the token choice
+    /// treats it as missing (the CLI token is next, and a fresh sign-in
+    /// replaces the item) — except while a renewal is held: then the poll
+    /// keeps that token and tries to store it again (#132), unless the user
+    /// cancelled the prompt: then it is only kept in memory.
     case refused(OSStatus)
 
     /// An item that is there but no longer decodes counts as missing: no
@@ -120,12 +123,6 @@ enum CredentialStore {
         return OwnTokenLookup(status: status, data: out as? Data)
     }
 
-    /// The token, or nil when there is none or it cannot be read right now.
-    static func loadOwnToken() -> OAuthToken? {
-        guard case .found(let token) = lookupOwnToken() else { return nil }
-        return token
-    }
-
     /// Whether the Keychain now holds no own token; a failure is logged.
     static func clearOwnToken() -> Bool {
         let query: [String: Any] = [
@@ -170,18 +167,17 @@ enum CredentialStore {
     }
 
     /// Claude Code stores `{ "claudeAiOauth": { accessToken, refreshToken, expiresAt } }`.
-    /// `expiresAt` is epoch milliseconds. Decoded defensively.
-    private static func parseClaudeCodeJSON(_ data: Data) -> OAuthToken? {
+    /// `expiresAt` is epoch milliseconds. Decoded defensively — a JSON bool
+    /// is not a time (#135).
+    static func parseClaudeCodeJSON(_ data: Data) -> OAuthToken? {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         let oauth = (root["claudeAiOauth"] as? [String: Any]) ?? root
         guard let access = oauth["accessToken"] as? String, !access.isEmpty else { return nil }
         let refresh = oauth["refreshToken"] as? String
         var expires: Date?
-        if let ms = oauth["expiresAt"] as? Double {
+        if let ms = JSONNumber.finite(oauth["expiresAt"]) {
             expires = Date(timeIntervalSince1970: ms / 1000)
-        } else if let ms = oauth["expiresAt"] as? Int {
-            expires = Date(timeIntervalSince1970: Double(ms) / 1000)
         }
         return OAuthToken(accessToken: access, refreshToken: refresh, expiresAt: expires)
     }
