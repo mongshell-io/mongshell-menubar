@@ -52,6 +52,13 @@ enum Config {
 
     static let minPollInterval: Int = 180
 
+    /// After a wait the mac slept through, a failed poll is asked again this
+    /// soon, at most `wakeRetryAttempts` times (`WakeRetry`, #156) — long
+    /// enough for Wi-Fi to come back, short enough that the error badge
+    /// does not outstay it by minutes.
+    static let wakeRetrySeconds = 10
+    static let wakeRetryAttempts = 3
+
     /// Floor on the openclaw status-URL poll interval — the server agent
     /// itself probes at ≥30s, so polling much faster only re-reads the same
     /// file.

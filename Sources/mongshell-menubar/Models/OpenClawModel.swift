@@ -94,10 +94,16 @@ final class OpenClawModel: ObservableObject {
     }
 
     private func pollLoop(_ url: URL) async {
+        var wake = WakeRetry()
         while !Task.isCancelled {
             await refreshOnce(url)
-            let secs = max(Config.openClawMinPollSeconds, Preferences.shared.openClawPollSeconds)
+            let failed = reading.lastFailure != nil
+            let secs = wake.wait(normal: max(Config.openClawMinPollSeconds, Preferences.shared.openClawPollSeconds),
+                                 failed: failed)
+            wake.polled(failed: failed)
+            let mark = WakeRetry.Mark()
             try? await Task.sleep(for: .seconds(secs))
+            wake.waitEnded(slept: mark.sleptSince)
         }
     }
 

@@ -144,13 +144,20 @@ final class UsageModel: ObservableObject {
     private var pollBase: Int { max(Config.minPollInterval, boundaries.pollIntervalSeconds()) }
 
     private func pollLoop() async {
+        var wake = WakeRetry()
         while !Task.isCancelled {
             await refreshOnce()
-            var wait = TimeInterval(UsageRetryPolicy.pollWait(base: pollBase, backoff: session.backoff))
+            var failed = false
+            if case .error = loadState { failed = true }
+            var wait = TimeInterval(wake.wait(
+                normal: UsageRetryPolicy.pollWait(base: pollBase, backoff: session.backoff), failed: failed))
+            wake.polled(failed: failed)
             if case .rateLimited(let retryAt) = loadState {
                 wait = max(wait, retryAt.timeIntervalSinceNow)
             }
+            let mark = WakeRetry.Mark()
             try? await Task.sleep(for: .seconds(wait))
+            wake.waitEnded(slept: mark.sleptSince)
         }
     }
 

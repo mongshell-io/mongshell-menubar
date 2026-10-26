@@ -1507,6 +1507,44 @@ do {
                                                        step: .noticeOnly) == ["r2"])
 }
 
+// MARK: #156 — a failed poll right after the mac woke is retried soon
+
+do {
+    check("the clocks drifting apart by less than the threshold is no sleep",
+          !WakeRetry.slept(continuous: .seconds(181), suspending: .seconds(180)))
+    check("a wait the mac slept through is told by the clock that counts sleep",
+          WakeRetry.slept(continuous: .seconds(3600), suspending: .seconds(120)))
+
+    let normal = Config.minPollInterval
+    var idle = WakeRetry()
+    check("no sleep before it: a failure waits the full interval", idle.wait(normal: normal, failed: true) == normal)
+    idle.waitEnded(slept: false)
+    check("…and a wait with no sleep arms nothing", idle.wait(normal: normal, failed: true) == normal)
+
+    var woke = WakeRetry()
+    woke.waitEnded(slept: true)
+    check("after a wake a success still waits the full interval", woke.wait(normal: normal, failed: false) == normal)
+    var waits: [Int] = []
+    for _ in 0..<(Config.wakeRetryAttempts + 1) {
+        waits.append(woke.wait(normal: normal, failed: true))
+        woke.polled(failed: true)
+        woke.waitEnded(slept: false)
+    }
+    check("after a wake failures are retried soon, at most wakeRetryAttempts times",
+          waits == Array(repeating: Config.wakeRetrySeconds, count: Config.wakeRetryAttempts) + [normal],
+          "waits=\(waits)")
+
+    var short = WakeRetry()
+    short.waitEnded(slept: true)
+    check("a retry never waits longer than the normal interval", short.wait(normal: 5, failed: true) == 5)
+
+    var recovered = WakeRetry()
+    recovered.waitEnded(slept: true)
+    recovered.polled(failed: true)
+    recovered.polled(failed: false)
+    check("a success ends the retries", recovered.wait(normal: normal, failed: true) == normal)
+}
+
 // MARK: result
 
 if failures.isEmpty {
