@@ -954,6 +954,76 @@ do {
               == .token(renewed, .oauthLogin))
 }
 
+// MARK: #143 — a declined Keychain prompt is not put back by the polls
+
+do {
+    let old = OAuthToken(accessToken: "a1", refreshToken: "r1", expiresAt: nil)
+    let renewed = OAuthToken(accessToken: "a2", refreshToken: "r2", expiresAt: nil)
+    let cliToken = OAuthToken(accessToken: "c", refreshToken: nil, expiresAt: nil)
+    let held = PendingOwnToken(token: renewed, keychain: .holds(refreshToken: "r1"))
+    let cancelled = OwnTokenLookup.refused(errSecUserCanceled)
+
+    // Which statuses are the user's answer.
+    check("errSecUserCanceled is the user's answer to the prompt",
+          OwnTokenLookup.isUserRefusal(errSecUserCanceled))
+    check("errSecAuthFailed is not counted as the user's answer (also a no-prompt ACL refusal, #132)",
+          !OwnTokenLookup.isUserRefusal(errSecAuthFailed))
+
+    // The save result keeps a cancelled prompt apart from a plain failure.
+    check("save: success → saved", OwnTokenSave(status: errSecSuccess, deletedFirst: false) == .saved)
+    check("save: prompt cancelled → cancelled, not failed",
+          OwnTokenSave(status: errSecUserCanceled, deletedFirst: false) == .cancelled)
+    check("save: other refusal → failed", OwnTokenSave(status: errSecAuthFailed, deletedFirst: false) == .failed)
+    check("save: cancelled after our delete → failedAfterDelete (an empty Keychain outranks the answer)",
+          OwnTokenSave(status: errSecUserCanceled, deletedFirst: true) == .failedAfterDelete)
+
+    // Remembering the decline.
+    check("read cancelled → decline remembered", UsageRefreshPolicy.declined(false, after: cancelled))
+    check("read refused otherwise → no decline (the #132 store retry stays)",
+          !UsageRefreshPolicy.declined(false, after: .refused(errSecAuthFailed)))
+    check("read found / missing / locked → no decline",
+          !UsageRefreshPolicy.declined(false, after: .found(old))
+          && !UsageRefreshPolicy.declined(false, after: .missing)
+          && !UsageRefreshPolicy.declined(false, after: .unavailable(errSecInteractionNotAllowed)))
+    check("save cancelled → decline remembered", UsageRefreshPolicy.declined(false, afterSaving: .cancelled))
+    check("save failed / saved → no decline",
+          !UsageRefreshPolicy.declined(false, afterSaving: .failed)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .saved)
+          && !UsageRefreshPolicy.declined(false, afterSaving: .failedAfterDelete))
+    check("a poll does not lift a standing decline, whatever it reads or saves",
+          UsageRefreshPolicy.declined(true, after: .found(old))
+          && UsageRefreshPolicy.declined(true, after: .missing)
+          && UsageRefreshPolicy.declined(true, afterSaving: .saved))
+
+    // While declined, a poll reads nothing from the Keychain…
+    var reads = 0
+    let read: () -> OwnTokenLookup = { reads += 1; return .found(old) }
+    let whileDeclined = UsageRefreshPolicy.ownLookup(declined: true, read: read)
+    check("declined → the own item is not read (no prompt)", reads == 0, "\(reads) reads")
+    check("declined → the read answers as the refusal it was", whileDeclined == cancelled)
+    // …and stores nothing.
+    check("declined with a held renewal → kept in memory, not stored",
+          UsageRefreshPolicy.resolvePending(held, own: whileDeclined) == .useInMemory(renewed))
+    check("declined with a held renewal → polls with it, not the CLI token",
+          UsageRefreshPolicy.chooseToken(resolution: .useInMemory(renewed), own: whileDeclined, cli: { cliToken })
+              == .token(renewed, .oauthLogin))
+    check("declined with nothing held → the CLI token, as a refusal did before",
+          UsageRefreshPolicy.chooseToken(resolution: UsageRefreshPolicy.resolvePending(nil, own: whileDeclined),
+                                         own: whileDeclined, cli: { cliToken })
+              == .token(cliToken, .claudeCodeCLI))
+    check("declined while adopting a renewal → held, not stored",
+          UsageRefreshPolicy.adopt(match: UsageRefreshPolicy.keychainMatch(own: whileDeclined, expects: held.keychain),
+                                   sameLogin: true) == .hold)
+    check("save cancelled → the renewal stays held against the item as it was",
+          UsageRefreshPolicy.pending(afterSaving: held, result: .cancelled) == held)
+
+    // The user acting (sign-in, a manual refresh) lifts the flag: the read happens again.
+    let afterUserActs = UsageRefreshPolicy.ownLookup(declined: false, read: read)
+    check("decline lifted → the own item is read again", reads == 1 && afterUserActs == .found(old), "\(reads) reads")
+    check("decline lifted, Keychain found → a held renewal is stored again",
+          UsageRefreshPolicy.resolvePending(held, own: afterUserActs) == .save(renewed))
+}
+
 // MARK: #133 — reset phrases are made at draw time; flat fallbacks are logged
 
 do {

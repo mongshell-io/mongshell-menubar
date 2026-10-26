@@ -156,7 +156,7 @@ enum UsageRefreshPolicy {
                         expected: KeychainExpectation) -> PendingOwnToken? {
         switch save {
         case .saved: return nil
-        case .failed, nil: return PendingOwnToken(token: renewed, keychain: expected)
+        case .failed, .cancelled, nil: return PendingOwnToken(token: renewed, keychain: expected)
         case .failedAfterDelete: return PendingOwnToken(token: renewed, keychain: .maybeEmpty)
         }
     }
@@ -179,16 +179,45 @@ enum UsageRefreshPolicy {
         // `sameLogin`). What is left is another build of the app signing in
         // while its item refuses us — accepted under the single-user,
         // single-account premise. A locked Keychain is still only waited out.
-        // So is a prompt the user cancelled: that refusal was their answer,
-        // and storing again every poll would put the dialog back each time.
+        // So is a prompt the user declined: that refusal was their answer,
+        // and storing again every poll would put the dialog back each time
+        // (`ownLookup` keeps giving this answer until the user acts, #143).
         if case .refused(let status) = own {
-            return status == errSecUserCanceled ? .useInMemory(pending.token) : .save(pending.token)
+            return OwnTokenLookup.isUserRefusal(status) ? .useInMemory(pending.token) : .save(pending.token)
         }
         switch keychainMatch(own: own, expects: pending.keychain) {
         case .current: return .save(pending.token)
         case .changed: return .drop
         case .unknown: return .useInMemory(pending.token)
         }
+    }
+
+    // MARK: A declined Keychain prompt (#143)
+
+    /// What the own-token item answers when the user already declined its
+    /// prompt this session: no read — a read is what would put the dialog
+    /// back. Everything downstream treats it as the refusal it was: a held
+    /// renewal stays in memory (`resolvePending`, `adopt` via `.unknown`),
+    /// nothing held falls through to the CLI token (`chooseToken`).
+    static let rememberedRefusal = OwnTokenLookup.refused(errSecUserCanceled)
+
+    /// The own-token read for a refresh: the remembered refusal while the
+    /// user's decline stands, the Keychain otherwise.
+    static func ownLookup(declined: Bool, read: () -> OwnTokenLookup) -> OwnTokenLookup {
+        declined ? rememberedRefusal : read()
+    }
+
+    /// Whether the decline stands after this read. It is only lifted by the
+    /// user acting (sign-in, a manual refresh) or a relaunch — never by a
+    /// poll, which is what kept the dialog coming back.
+    static func declined(_ declined: Bool, after own: OwnTokenLookup) -> Bool {
+        if case .refused(let status) = own, OwnTokenLookup.isUserRefusal(status) { return true }
+        return declined
+    }
+
+    /// Whether the decline stands after this save.
+    static func declined(_ declined: Bool, afterSaving result: OwnTokenSave) -> Bool {
+        result == .cancelled || declined
     }
 
     static func shouldRenewUpFront(source: DataSource, tokenExpired: Bool) -> Bool {

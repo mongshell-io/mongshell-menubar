@@ -34,6 +34,12 @@ final class UsageModel: ObservableObject {
     /// Bumped by every sign-in and sign-out. A refresh that started under an
     /// older value must not adopt or show what it got (#108).
     private var loginGeneration = 0
+    /// The user declined the own-token Keychain prompt this session. Polls
+    /// then neither read nor store the own item — each try put the dialog
+    /// back (#143). Lifted only where the user acts: `signIn()` and
+    /// `refreshNow()`; a relaunch starts without it, like GitHub's
+    /// `ghKeychainDenied`.
+    private var ownKeychainDeclined = false
 
     private let api = UsageAPIClient()
     private let auth = AuthService()
@@ -64,9 +70,11 @@ final class UsageModel: ObservableObject {
     }
 
     /// The popover's "새로고침" and "재시도". Does nothing inside a rate
-    /// limit — the poll loop asks again once it is over (#86).
+    /// limit — the poll loop asks again once it is over (#86). Asking for it
+    /// is the user acting, so a declined Keychain prompt may show again.
     func refreshNow() {
         guard manualRefreshBlockedUntil == nil else { return }
+        ownKeychainDeclined = false
         Task { await refreshOnce() }
     }
 
@@ -96,10 +104,31 @@ final class UsageModel: ObservableObject {
 
     // MARK: Token resolution
 
+    /// Every own-token read goes through here, so a declined prompt is not
+    /// put back by any of them (#143).
     private func lookupOwnToken() -> OwnTokenLookup {
-        let own = CredentialStore.lookupOwnToken()
-        if case .refused(let status) = own { AuthDebugLog.write("own token refused status=\(status)") }
+        let declinedBefore = ownKeychainDeclined
+        let own = UsageRefreshPolicy.ownLookup(declined: declinedBefore) {
+            let read = CredentialStore.lookupOwnToken()
+            if case .refused(let status) = read { AuthDebugLog.write("own token refused status=\(status)") }
+            return read
+        }
+        rememberDecline(UsageRefreshPolicy.declined(declinedBefore, after: own))
         return own
+    }
+
+    /// Every own-token save goes through here, for the same reason.
+    private func saveOwnToken(_ token: OAuthToken) -> OwnTokenSave {
+        let result = CredentialStore.saveOwnToken(token)
+        rememberDecline(UsageRefreshPolicy.declined(ownKeychainDeclined, afterSaving: result))
+        return result
+    }
+
+    private func rememberDecline(_ declined: Bool) {
+        if declined, !ownKeychainDeclined {
+            AuthDebugLog.write("own token prompt declined; not asked again until the user acts")
+        }
+        ownKeychainDeclined = declined
     }
 
     /// Stores or drops the held renewal as `resolution` says.
@@ -113,7 +142,7 @@ final class UsageModel: ObservableObject {
         case .save(let token):
             if let held = pendingOwnToken {
                 pendingOwnToken = UsageRefreshPolicy.pending(
-                    afterSaving: held, result: CredentialStore.saveOwnToken(token))
+                    afterSaving: held, result: saveOwnToken(token))
             }
         }
     }
@@ -278,7 +307,7 @@ final class UsageModel: ObservableObject {
             return false
         case .store:
             pendingOwnToken = UsageRefreshPolicy.pending(
-                after: CredentialStore.saveOwnToken(renewed), renewed: renewed, expected: expected)
+                after: saveOwnToken(renewed), renewed: renewed, expected: expected)
         case .hold:
             pendingOwnToken = UsageRefreshPolicy.pending(after: nil, renewed: renewed, expected: expected)
         }
@@ -293,7 +322,7 @@ final class UsageModel: ObservableObject {
     /// has replaced in the meantime; acting on the stale one would overwrite
     /// or delete the fresh login.
     private func keychainMatch(_ expected: KeychainExpectation) -> KeychainMatch {
-        let match = UsageRefreshPolicy.keychainMatch(own: CredentialStore.lookupOwnToken(), expects: expected)
+        let match = UsageRefreshPolicy.keychainMatch(own: lookupOwnToken(), expects: expected)
         if match == .changed { AuthDebugLog.write("own token changed elsewhere; kept") }
         return match
     }
@@ -305,9 +334,11 @@ final class UsageModel: ObservableObject {
             let token = try await auth.signIn()
             loginGeneration += 1
             pendingOwnToken = nil
+            // Signing in is the user acting: the save below may ask again.
+            ownKeychainDeclined = false
             // A token that did not reach the Keychain is gone at the next
             // poll, which would then quietly fall back to the CLI token.
-            guard CredentialStore.saveOwnToken(token) == .saved else {
+            guard saveOwnToken(token) == .saved else {
                 session.failed("로그인 정보를 Keychain 에 저장하지 못했습니다", now: Date())
                 return
             }

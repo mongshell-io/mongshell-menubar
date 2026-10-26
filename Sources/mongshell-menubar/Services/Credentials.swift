@@ -30,7 +30,8 @@ enum OwnTokenLookup: Equatable {
     /// treats it as missing (the CLI token is next, and a fresh sign-in
     /// replaces the item) — except while a renewal is held: then the poll
     /// keeps that token and tries to store it again (#132), unless the user
-    /// cancelled the prompt: then it is only kept in memory.
+    /// declined the prompt (`isUserRefusal`): then the app stops asking
+    /// until the user acts (#143).
     case refused(OSStatus)
 
     /// An item that is there but no longer decodes counts as missing: no
@@ -57,6 +58,18 @@ enum OwnTokenLookup: Equatable {
     static func isTransient(_ status: OSStatus) -> Bool {
         status == errSecInteractionNotAllowed || status == errSecNotAvailable
     }
+
+    /// The refusals that are the user's answer to a Keychain prompt (#143).
+    /// Only `errSecUserCanceled`: it is what the prompt's Cancel/Deny hands
+    /// back. `errSecAuthFailed` is left out on purpose — it is also what an
+    /// item written under another signing identity refuses with, without
+    /// any prompt, and a wrong Keychain password; nothing measured here ties
+    /// it to the user's answer, and counting it would stop the save that
+    /// recreates such an item (#132). `AuthDebugLog` records every refused
+    /// status, so a real-device reading can widen this later.
+    static func isUserRefusal(_ status: OSStatus) -> Bool {
+        status == errSecUserCanceled
+    }
 }
 
 /// How a save of our own token ended.
@@ -64,9 +77,26 @@ enum OwnTokenSave: Equatable {
     case saved
     /// The item is as it was before the save.
     case failed
+    /// The user declined the Keychain prompt; the item is as it was. Kept
+    /// apart from `failed` so the app stops asking until the user acts (#143).
+    case cancelled
     /// The old item was deleted and the new one could not be added — the
     /// Keychain may now hold nothing (#108).
     case failedAfterDelete
+
+    /// A possibly empty Keychain outranks the user's answer: it is what the
+    /// next poll has to know about.
+    init(status: OSStatus, deletedFirst: Bool) {
+        if status == errSecSuccess {
+            self = .saved
+        } else if deletedFirst {
+            self = .failedAfterDelete
+        } else if OwnTokenLookup.isUserRefusal(status) {
+            self = .cancelled
+        } else {
+            self = .failed
+        }
+    }
 }
 
 /// Reads/writes tokens. Priority for reads:
@@ -94,7 +124,7 @@ enum CredentialStore {
         var deleted = false
         if status == errSecItemNotFound {
             status = SecItemAdd(attrs as CFDictionary, nil)
-        } else if status != errSecSuccess, !OwnTokenLookup.isTransient(status), status != errSecUserCanceled {
+        } else if status != errSecSuccess, !OwnTokenLookup.isTransient(status), !OwnTokenLookup.isUserRefusal(status) {
             // An item this build may not update — recreating it is the way
             // back to an item we own. Not while the Keychain is locked, nor
             // when the user just cancelled the prompt: the delete could land
@@ -103,11 +133,10 @@ enum CredentialStore {
             deleted = SecItemDelete(query as CFDictionary) == errSecSuccess
             status = SecItemAdd(attrs as CFDictionary, nil)
         }
-        guard status == errSecSuccess else {
+        if status != errSecSuccess {
             AuthDebugLog.write("own token save failed status=\(status)\(deleted ? " after delete" : "")")
-            return deleted ? .failedAfterDelete : .failed
         }
-        return .saved
+        return OwnTokenSave(status: status, deletedFirst: deleted)
     }
 
     static func lookupOwnToken() -> OwnTokenLookup {
