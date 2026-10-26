@@ -1,7 +1,8 @@
 # mongshell-menubar — macOS 메뉴바 Claude 사용량 표시 앱
 
-맥 메뉴바에 Claude 사용량을 Claude 마크 + `5h NN% · 7d NN%`로 상시 표시하고, 클릭하면
-5시간 한도·7일 한도·요금 상태를 보여주는 팝오버가 열리는 메뉴바 앱입니다. 
+맥 메뉴바에 Claude 사용량을 Claude 마크 + 5시간·7일 링 게이지(숫자 없음)로 상시 표시하고,
+클릭하면 5시간·7일 한도의 정확한 %와 초기화 시각, 모델별 주간 사용량, 계정 상태를 보여주는
+팝오버가 열리는 메뉴바 앱입니다.
 
 <img width="136" height="50" alt="image" src="https://github.com/user-attachments/assets/d01dd02e-0eff-4366-93ae-cb75ac4850f1" />
 <img width="626" height="984" alt="image" src="https://github.com/user-attachments/assets/e988ab74-489b-4530-9bf4-4559608c125f" />
@@ -13,6 +14,8 @@
 표시합니다 — 왼쪽이 5h, 오른쪽이 7d. 링은 사용한 만큼 채워지고, 색상 코딩 켜짐 시 사용량
 3단계(초록 <50 · 주황 <80 · 빨강 ≥80)로 색칠됩니다. **5h는 링 옆에 초기화 시각(예: `19:00`)을
 함께** 보여주고(5시간 창은 리셋 시각을 놓치기 쉬워서), 7d는 링만 둡니다. 정확한 %와 7d 리셋 시각은 클릭 시 뜨는 팝오버에서 봅니다.
+응답에서 한도를 읽지 못하면 0%(초록) 대신 **점선 회색 링**과 "—" 로 그리고, 팝오버에 "사용량 형식을
+읽지 못했습니다" 배너가 뜹니다 — 비공식 엔드포인트의 형식이 바뀌었다는 신호입니다.
 
 ## openclaw 게이트웨이 상태 (선택 기능 — 상태 URL 설정 시에만 활성화)
 [openclaw](https://openclaw.ai) 게이트웨이가 도는 **서버 맥**에 감시 에이전트를 설치하면
@@ -76,8 +79,9 @@ Claude Code 는 설정 파일을 감시하므로 **대부분 실행 중인 세�
 실행됩니다. 누른 순간 화면에 보인 커밋이 그대로일 때만 머지됩니다. 앱은 브랜치를 지우지
 않으며, 저장소의 자동 삭제 설정을 따릅니다. 승인·코멘트·다른 머지 방식은 없습니다.
 
-토큰은 **gh CLI 로 로그인되어 있으면 그 Keychain 항목을 재사용**하고(첫 켤 때 "키체인
-접근 허용" 프롬프트), 없으면 설정에 classic PAT(`repo` 권한)를 붙여넣습니다. 둘 다 각자
+토큰은 설정에 붙여넣은 classic PAT(`repo` 권한)가 있으면 그것을 먼저 쓰고, 없으면 **gh CLI
+로 로그인되어 있을 때 그 Keychain 항목을 재사용**합니다(첫 켤 때 "키체인 접근 허용"
+프롬프트). 둘 다 각자
 Keychain 에만 있고 `api.github.com` 외 어디에도 보내지 않습니다. 갱신은 GitHub 공식
 GraphQL API 요청 1회(3분 주기, 설정 1~10분; 팝오버를 열면 즉시, 정상 상태에서 내 PR 에 막 시작한
 (60분 이내) 실행중 검사가 있으면 팝오버를 열지 않아도 30초)이며 시간당 5,000 포인트 한도에서 요청당 1 포인트 안팎입니다. **기본값은 꺼짐이고,
@@ -174,15 +178,18 @@ swift-testing 을 요구하는데 둘 다 Command Line Tools 에 들어 있지 �
 Sources/mongshell-menubar/
   MongshellMenubarApp.swift            @main (Settings 씬은 비어 있음, ⌘, 는 실제 설정창으로 연결 — UI는 상태바+팝오버)
   App/AppDelegate.swift     NSStatusItem + NSPopover + 설정창 관리
+  App/RegionClickRouting.swift 클릭을 Claude·GitHub 영역 중 어디로 보낼지 판정(순수 함수)
   App/SnapshotRenderer.swift 오프스크린 PNG QA 렌더러(MONGSHELL_SNAPSHOT)
   Views/ClaudeMarkView.swift Claude 스타버스트 마크 Canvas 렌더러
-  Views/MenuBarIconView.swift 상태바 마크 + 5h/7d 링 게이지(+5h 초기화 시각),
-                            openclaw 신호등(+ 그 아래 서버 호스트 신호등),
-                            다크/라이트 적응
+  Views/MenuBarIconView.swift 상태바 마크 + 5h/7d 링 게이지(+5h 초기화 시각,
+                            읽지 못한 한도는 점선 회색 링), openclaw 신호등
+                            (+ 그 아래 서버 호스트 신호등), 다크/라이트 적응
   Views/HoverSummaryView.swift hover 즉시 요약(5h/7d · 초기화 3열 Grid)
   Views/PopoverView.swift   라이트 팝오버 308px(5시간/주간/모델별 + openclaw 섹션
                             + 서버 섹션)
-  Views/SettingsView.swift  일반(자동 실행)·색상·폴링·알림·Claude Code·서버·계정
+  Views/PopoverHeader.swift 두 팝오버가 함께 쓰는 머리말(제목·연결 배지·⋯ 메뉴)
+  Views/PopoverBanner.swift 두 팝오버가 함께 쓰는 머리말 아래 한 줄 배너
+  Views/SettingsView.swift  일반(자동 실행)·메뉴바·업데이트(폴링·알림)·Claude Code·서버·GitHub·계정
   Views/ClaudeSettingsSection.swift  settings.json 편집 섹션(한글 설명 캡션)
   Views/OpenClawSettingsSection.swift openclaw 상태 URL 입력·상태·확인 간격 섹션
   Views/GitHubMenuBarView.swift      두 번째 영역(헤어라인 · PR 글리프 · 점 · 숫자)
@@ -190,20 +197,29 @@ Sources/mongshell-menubar/
   Views/GitHubPopoverView.swift      GitHub 팝오버(배너 + 내 PR/최근 머지 섹션, 검사 칩)
   Views/GitHubSettingsSection.swift  GitHub 표시 토글·토큰·PAT·갱신 주기·레포 숨기기
   Design/Palette.swift      색 토큰 SSOT(사용량 3단계·팝오버 표면/텍스트)
-  Models/…                  Preferences, UsageState, UsageModel(폴링/알림),
+  Models/…                  Preferences, UsageState(UsageSnapshot·LoadState·429 대기 규칙),
+                            UsageModel(폴링 루프·토큰 갱신·보류 토큰 저장·로그인/로그아웃 조율),
+                            UsageSession(사용량 표시 상태와 세션 플래그의 전이·임계 알림 판정),
+                            UsageRefreshPolicy(토큰 선택·보류 토큰·401 → 갱신 → 재요청 판정),
+                            UsagePresentation(사용량 배지·배너·버튼·계정 행 판정),
                             OpenClawHealth, OpenClawStatus(두절 판정·복구 알림 판정),
                             ServerHost(서버 호스트 신호 값 타입·표시 문구),
                             ServerHostAlertWatch(전원·디스크·CI 러너 알림 판정),
                             OpenClawModel(상태 URL 폴링/복구·서버 호스트 알림),
-                            GitHubPullRequest(PR 배지·메뉴바 숫자·점·칩 접기 판정),
+                            GitHubPullRequest(PR 배지·메뉴바 숫자·점·칩 접기·머지 버튼 판정),
                             GitHubState(연결 상태·스냅샷·폴링 주기 규칙),
-                            GitHubModel(토큰 결정·GraphQL 폴링·팝오버 열림 주기),
+                            GitHubPresentation(GitHub 연결 배지·배너·버튼·토큰 행 판정),
+                            GitHubModel(토큰 결정·GraphQL 폴링·팝오버 열림 주기·머지),
                             ClaudeSettingsModel(settings.json ↔ 구조체),
                             LoginItemModel(로그인 항목 상태 캐시/안내)
   Services/…                Config, Credentials(Keychain), UsageAPIClient, AuthService(PKCE),
+                            AuthError, AuthDebugLog(토큰 경로·응답 형식 변화 진단 로그),
                             LoopbackServer(OAuth 루프백 리다이렉트 수신),
                             OAuthTokenClient(토큰 교환·갱신 요청),
-                            TimeText, BoundedHTTP(리다이렉트 거부·바이트 캡 전송 공용),
+                            Notifier(알림 센터 단일 경계 — 보낼지는 모델이 정함),
+                            BoundedHTTP(리다이렉트 거부·바이트 캡 전송 공용),
+                            TimeText(시간 표기), DisplayText(외부 문자열 한 줄·길이 상한),
+                            JSONNumber(JSON 숫자 읽기 — bool 은 숫자 아님), ResponseDate(ISO 8601 읽기),
                             OpenClawStatusClient(상태 URL HTTPS 읽기/관대한 디코딩),
                             GitHubAPIClient(GraphQL 1요청·응답 해석), GitHubCredentials(자체 PAT → gh Keychain),
                             ClaudeSettingsStore(settings.json 입출력/파일 감시),
@@ -231,9 +247,11 @@ Sources/mongshell-openclaw-agent/     서버 맥용 에이전트 (server/README.
 - **엔드포인트**: `GET https://api.anthropic.com/api/oauth/usage`.
   - 헤더: `Authorization: Bearer …`, `anthropic-beta: oauth-2025-04-20`,
     **`User-Agent: claude-code/<version>` (필수 — 없으면 429 도배)**.
-  - 응답: `five_hour.utilization`, `seven_day.utilization`, `seven_day_<model>.utilization`
-    (각각 0–100 %) + `resets_at`(ISO8601).
-- **폴링**: 기본 300초, 최소 180초. 429 시 지수 백오프.
+  - 응답: `limits` 배열의 `session`(5시간)·`weekly_all`(7일)·`weekly_scoped`(모델별) 행의
+    0–100 % + 초기화 시각. 행이 없으면 `five_hour`·`seven_day` 객체로 대신 읽고, 둘 다 없으면
+    그 한도는 비워 둡니다(0% 로 보이지 않음). 자세한 규칙은
+    [docs/architecture.md](docs/architecture.md) § Data Flow 1.
+- **폴링**: 기본이자 최소 180초(설정에서 3·5·10·15분). 429 시 지수 백오프.
 - **토큰은 각자 Keychain에만 저장**, 외부 서버로 절대 전송하지 않습니다.
 - **GitHub PR 영역(켠 경우)**: 토큰은 자체 PAT(Keychain) → gh CLI 의 Keychain 항목
   `gh:github.com` 순. 엔드포인트는 GitHub **공식** GraphQL API
