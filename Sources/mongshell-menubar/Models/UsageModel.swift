@@ -144,7 +144,9 @@ final class UsageModel: ObservableObject {
                     // Only a second 401 means the account is gone; a blip on
                     // the retry used to fall through to signed-out (#93).
                     do {
-                        markLoaded(try await api.fetch(token: renewed), source: source)
+                        let snap = try await api.fetch(token: renewed)
+                        markLoaded(snap, source: source)
+                        maybeNotify(percent: snap.fiveHourPercent)
                         return
                     } catch APIError.unauthorized {
                         token = renewed
