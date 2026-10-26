@@ -89,25 +89,30 @@ final class UsageModel: ObservableObject {
 
     // MARK: Token resolution
 
-    private func currentToken() -> UsageTokenChoice {
+    private func lookupOwnToken() -> OwnTokenLookup {
         let own = CredentialStore.lookupOwnToken()
         if case .refused(let status) = own { AuthDebugLog.write("own token refused status=\(status)") }
-        switch UsageRefreshPolicy.resolvePending(pendingOwnToken, own: own) {
-        case .none:
+        return own
+    }
+
+    /// Stores or drops the held renewal as `resolution` says.
+    private func resolvePendingToken(_ resolution: PendingResolution) {
+        switch resolution {
+        case .none, .useInMemory:
             break
         case .drop:
             AuthDebugLog.write("own token changed elsewhere; held renewal dropped")
             pendingOwnToken = nil
-        case .useInMemory(let token):
-            return .token(token, .oauthLogin)
         case .save(let token):
             if let held = pendingOwnToken {
                 pendingOwnToken = UsageRefreshPolicy.pending(
-                    after: CredentialStore.saveOwnToken(token), renewed: token, expected: held.keychain)
+                    afterSaving: held, result: CredentialStore.saveOwnToken(token))
             }
-            return .token(token, .oauthLogin)
         }
-        return UsageRefreshPolicy.chooseToken(own: own, cli: CredentialStore.loadClaudeCodeToken)
+    }
+
+    private func currentToken(_ resolution: PendingResolution, own: OwnTokenLookup) -> UsageTokenChoice {
+        UsageRefreshPolicy.chooseToken(resolution: resolution, own: own, cli: CredentialStore.loadClaudeCodeToken)
     }
 
     // MARK: Refresh
@@ -127,8 +132,11 @@ final class UsageModel: ObservableObject {
 
     private func performRefresh() async {
         let generation = loginGeneration
+        let own = lookupOwnToken()
+        let resolution = UsageRefreshPolicy.resolvePending(pendingOwnToken, own: own)
+        resolvePendingToken(resolution)
         let initialToken: OAuthToken, source: DataSource
-        switch currentToken() {
+        switch currentToken(resolution, own: own) {
         case .token(let found, let foundSource):
             (initialToken, source) = (found, foundSource)
         case .none:
@@ -143,18 +151,14 @@ final class UsageModel: ObservableObject {
         session.begin(accessToken: token.accessToken, source: source)
 
         if UsageRefreshPolicy.shouldRenewUpFront(source: source, tokenExpired: token.isExpired) {
-            let renewal = await renewOwnToken(token)
-            switch (UsageRefreshPolicy.step(afterUpFront: renewal.kind), renewal) {
-            case (.useRenewed, .renewed(let renewed)):
+            switch UsageRefreshPolicy.step(afterUpFront: await renewOwnToken(token)) {
+            case .useRenewed(let renewed):
                 guard adoptRenewed(renewed, replacing: token, generation: generation) else { return }
                 token = renewed
-            case (.useRenewed, _):
-                assertionFailure("useRenewed without a renewed token")
-                return
-            case (.expireSession, _):
+            case .expireSession:
                 if generation == loginGeneration { expireSession(token) }
                 return
-            case (.pollAnyway, _):
+            case .pollAnyway:
                 break
             }
         }
@@ -224,23 +228,6 @@ final class UsageModel: ObservableObject {
         pollTask?.cancel()
         pollTask = nil
         session.present(snap, state: state)
-    }
-
-    private enum OwnTokenRenewal {
-        case renewed(OAuthToken)
-        /// The server rejected the refresh token for good — keeping it only
-        /// buys a 400 every poll and blocks the CLI-token fallback.
-        case sessionExpired
-        /// Network or server trouble; the token may still be fine, so keep it.
-        case transientFailure
-
-        var kind: UpFrontRenewal {
-            switch self {
-            case .renewed: return .renewed
-            case .sessionExpired: return .sessionExpired
-            case .transientFailure: return .renewalFailed
-            }
-        }
     }
 
     private func renewOwnToken(_ token: OAuthToken) async -> OwnTokenRenewal {

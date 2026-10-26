@@ -570,12 +570,13 @@ do {
           UsageRefreshPolicy.shouldRenewUpFront(source: .oauthLogin, tokenExpired: true)
           && !UsageRefreshPolicy.shouldRenewUpFront(source: .oauthLogin, tokenExpired: false)
           && !UsageRefreshPolicy.shouldRenewUpFront(source: .claudeCodeCLI, tokenExpired: true))
+    let renewedUpFront = OAuthToken(accessToken: "a2", refreshToken: "r2", expiresAt: nil)
     check("up-front refresh worked → poll with the new token",
-          UsageRefreshPolicy.step(afterUpFront: .renewed) == .useRenewed)
+          UsageRefreshPolicy.step(afterUpFront: .renewed(renewedUpFront)) == .useRenewed(renewedUpFront))
     check("up-front refresh rejected for good → lapsed login",
           UsageRefreshPolicy.step(afterUpFront: .sessionExpired) == .expireSession)
     check("up-front refresh blip → poll anyway",
-          UsageRefreshPolicy.step(afterUpFront: .renewalFailed) == .pollAnyway)
+          UsageRefreshPolicy.step(afterUpFront: .transientFailure) == .pollAnyway)
 }
 
 // MARK: usage threshold notifications (#95, #103)
@@ -663,6 +664,33 @@ do {
     check("save failed after our delete → held, Keychain may be empty",
           UsageRefreshPolicy.pending(after: .failedAfterDelete, renewed: newer, expected: holdsR1)
               == PendingOwnToken(token: newer, keychain: .maybeEmpty))
+
+    // Storing a held renewal at the start of a refresh (#131): what stays
+    // held keeps pointing at what the Keychain really holds.
+    check("held renewal stored → nothing held",
+          UsageRefreshPolicy.pending(afterSaving: pending, result: .saved) == nil)
+    check("held renewal still not taken → Keychain still holds the spent token, not the held one",
+          UsageRefreshPolicy.pending(afterSaving: pending, result: .failed) == pending)
+    check("held renewal lost the item on our delete → Keychain may be empty",
+          UsageRefreshPolicy.pending(afterSaving: pending, result: .failedAfterDelete)
+              == PendingOwnToken(token: renewed, keychain: .maybeEmpty))
+    let heldAfterDelete = PendingOwnToken(token: renewed, keychain: .maybeEmpty)
+    check("held after our delete, save fails again → still maybe empty (carried over)",
+          UsageRefreshPolicy.pending(afterSaving: heldAfterDelete, result: .failed) == heldAfterDelete)
+
+    // The held renewal is polled with whatever the Keychain read said.
+    let cliToken = OAuthToken(accessToken: "c", refreshToken: nil, expiresAt: nil)
+    check("storing the held renewal → poll with it, not the spent token",
+          UsageRefreshPolicy.chooseToken(resolution: .save(renewed), own: .found(old), cli: { cliToken })
+              == .token(renewed, .oauthLogin))
+    check("Keychain locked with a held renewal → poll with it, not wait",
+          UsageRefreshPolicy.chooseToken(resolution: .useInMemory(renewed), own: locked, cli: { cliToken })
+              == .token(renewed, .oauthLogin))
+    check("held renewal dropped → the Keychain read decides",
+          UsageRefreshPolicy.chooseToken(resolution: .drop, own: .missing, cli: { cliToken })
+              == .token(cliToken, .claudeCodeCLI)
+          && UsageRefreshPolicy.chooseToken(resolution: .none, own: .found(other), cli: { cliToken })
+              == .token(other, .oauthLogin))
 }
 
 // MARK: what the usage surfaces show and offer (#90, #104)
