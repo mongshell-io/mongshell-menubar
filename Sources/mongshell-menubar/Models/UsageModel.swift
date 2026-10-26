@@ -129,50 +129,48 @@ final class UsageModel: ObservableObject {
             }
         }
 
+        let first = await fetchUsage(token)
+        if first == .unauthorized { AuthDebugLog.write("usage 401 source=\(source)") }
+        var retry: OwnTokenRetry?
+        if UsageRefreshPolicy.shouldRenew(after: first, source: source) {
+            switch await renewOwnToken(token) {
+            case .renewed(let renewed):
+                guard ownTokenStillCurrent(token) else { return }
+                CredentialStore.saveOwnToken(renewed)
+                token = renewed
+                retry = .refetched(await fetchUsage(renewed))
+            case .sessionExpired:
+                retry = .sessionExpired
+            case .transientFailure:
+                retry = .renewalFailed
+            }
+        }
+        apply(UsageRefreshPolicy.step(after: first, retry: retry), token: token, source: source)
+    }
+
+    private func fetchUsage(_ token: OAuthToken) async -> UsageFetchResult {
         do {
-            let snap = try await api.fetch(token: token)
+            return .ok(try await api.fetch(token: token))
+        } catch {
+            return UsageFetchResult(.failure(error))
+        }
+    }
+
+    /// `token` is the last one tried: the renewed token after a refresh, so
+    /// a second 401 rejects that one, and the pre-refresh one otherwise.
+    private func apply(_ step: UsageRefreshStep, token: OAuthToken, source: DataSource) {
+        switch step {
+        case .show(let snap):
             markLoaded(snap, source: source)
             maybeNotify(percent: snap.fiveHourPercent)
-        } catch APIError.unauthorized {
-            AuthDebugLog.write("usage 401 source=\(source)")
-            // Own token: try one refresh. CLI token: re-read (Claude Code may have rotated it).
-            if source == .oauthLogin {
-                switch await renewOwnToken(token) {
-                case .renewed(let renewed):
-                    guard ownTokenStillCurrent(token) else { return }
-                    CredentialStore.saveOwnToken(renewed)
-                    // Only a second 401 means the account is gone; a blip on
-                    // the retry used to fall through to signed-out (#93).
-                    do {
-                        let snap = try await api.fetch(token: renewed)
-                        markLoaded(snap, source: source)
-                        maybeNotify(percent: snap.fiveHourPercent)
-                        return
-                    } catch APIError.unauthorized {
-                        token = renewed
-                    } catch APIError.rateLimited(let retry) {
-                        markRateLimited(retryAfter: retry)
-                        return
-                    } catch {
-                        loadState = .error("사용량을 불러오지 못했습니다")
-                        return
-                    }
-                case .sessionExpired:
-                    expireSession(token)
-                    return
-                case .transientFailure:
-                    // The own token is still in the Keychain and may renew on
-                    // the next poll — showing signed-out here put a login
-                    // button in front of a network blip (#92).
-                    loadState = .error("사용량을 불러오지 못했습니다")
-                    return
-                }
-            }
+        case .signOut:
             rejectedAccessToken = token.accessToken
             markSignedOut()
-        } catch APIError.rateLimited(let retry) {
-            markRateLimited(retryAfter: retry)
-        } catch {
+        case .expireSession:
+            expireSession(token)
+        case .rateLimited(let retryAfter):
+            markRateLimited(retryAfter: retryAfter)
+        case .failed:
             loadState = .error("사용량을 불러오지 못했습니다")
         }
     }
