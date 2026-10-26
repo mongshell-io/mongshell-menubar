@@ -141,8 +141,18 @@ final class UsageModel: ObservableObject {
                 case .renewed(let renewed):
                     guard ownTokenStillCurrent(token) else { return }
                     CredentialStore.saveOwnToken(renewed)
-                    if let snap = try? await api.fetch(token: renewed) {
-                        markLoaded(snap, source: source)
+                    // Only a second 401 means the account is gone; a blip on
+                    // the retry used to fall through to signed-out (#93).
+                    do {
+                        markLoaded(try await api.fetch(token: renewed), source: source)
+                        return
+                    } catch APIError.unauthorized {
+                        token = renewed
+                    } catch APIError.rateLimited(let retry) {
+                        markRateLimited(retryAfter: retry)
+                        return
+                    } catch {
+                        loadState = .error("사용량을 불러오지 못했습니다")
                         return
                     }
                 case .sessionExpired:
@@ -159,12 +169,16 @@ final class UsageModel: ObservableObject {
             rejectedAccessToken = token.accessToken
             markSignedOut()
         } catch APIError.rateLimited(let retry) {
-            backoff = min(backoff + 1, 4)
-            loadState = .rateLimited(retryAt: UsageRetryPolicy.retryAt(
-                now: Date(), base: pollBase, backoff: backoff, retryAfter: retry))
+            markRateLimited(retryAfter: retry)
         } catch {
             loadState = .error("사용량을 불러오지 못했습니다")
         }
+    }
+
+    private func markRateLimited(retryAfter: TimeInterval?) {
+        backoff = min(backoff + 1, 4)
+        loadState = .rateLimited(retryAt: UsageRetryPolicy.retryAt(
+            now: Date(), base: pollBase, backoff: backoff, retryAfter: retryAfter))
     }
 
     /// A successful fetch is the one thing that resolves a lapsed login on
