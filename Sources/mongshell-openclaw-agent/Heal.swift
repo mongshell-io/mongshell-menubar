@@ -71,7 +71,8 @@ struct HealTracker {
 enum Launchd {
     static let launchctlPath = "/bin/launchctl"
     static let kickstartTimeout: TimeInterval = 10
-    /// The label openclaw's installer documents; used when nothing is found.
+    /// The label openclaw's installer documents: preferred when its plist is
+    /// present, and used when nothing is found.
     static let defaultGatewayLabel = "ai.openclaw.gateway"
 
     static var userLaunchAgentsDir: URL {
@@ -81,8 +82,9 @@ enum Launchd {
 
     /// The gateway's launchd label. An explicit label wins unless it names this
     /// agent itself (a misconfigured plist) — then it is ignored like an
-    /// absent one. Otherwise: basename of the first (sorted) `*.plist` in `dir`
-    /// whose name contains `claw`, **excluding `selfLabel`** — this agent's own
+    /// absent one. Otherwise: `defaultGatewayLabel` when its plist is in
+    /// `dir`, else basename of the first (sorted) `*.plist` in `dir` whose
+    /// name contains `claw`, **excluding `selfLabel`** — this agent's own
     /// plist name also contains "claw"; whenever it sorts first (e.g. the
     /// gateway's plist is missing or renamed) the agent would otherwise
     /// kickstart itself.
@@ -93,9 +95,15 @@ enum Launchd {
 
     /// The search alone, nil when nothing matches. `server/install.sh` asks
     /// for it through `--print-gateway-label` instead of keeping a copy of
-    /// the rule in bash (#106).
+    /// the rule in bash (#106). The documented label is checked first: openclaw
+    /// may install other `*claw*` services beside the gateway, and one that
+    /// sorts ahead (`ai.openclaw.b…` < `ai.openclaw.g…`) would be kickstarted
+    /// and reported as a heal while the gateway stays hung (#156).
     static func discoveredGatewayLabel(selfLabel: String, in dir: URL) -> String? {
         let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        if defaultGatewayLabel != selfLabel, files.contains("\(defaultGatewayLabel).plist") {
+            return defaultGatewayLabel
+        }
         return files.sorted().lazy
             .filter { $0.hasSuffix(".plist") && $0.lowercased().contains("claw") }
             .map { String($0.dropLast(".plist".count)) }

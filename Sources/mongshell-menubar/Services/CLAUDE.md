@@ -78,7 +78,7 @@ non_goals:
 - 큐는 하나, 직렬이다 — 같은 항목의 읽기·쓰기가 겹치지 않고, 같은 actor 에서 차례로 부른 호출은 부른 순서대로 돈다. 그 순서는 `KeychainQueue.run` 과 그리로 가는 모든 `async` 진입점이 **`nonisolated(nonsending)`** 이어야 성립한다 — 호출자의 actor 위에서 첫 suspend 전에 큐에 오르기 때문이다. 그냥 nonisolated `async` 면 전역 executor 로 먼저 건너가(SE-0338) 메인에서 차례로 부른 호출이 아무 순서로나 큐에 오른다 (로그인 저장이 먼저 부른 폴링 삭제보다 앞설 수 있다). 타깃 전체에 `NonisolatedNonsendingByDefault` 를 켜지 않는다 — 네트워크 클라이언트 같은 다른 nonisolated `async` 까지 메인으로 끌어온다. 저장처럼 여러 호출로 된 일(update → delete → add, delete → add)은 한 작업으로 올려 사이에 다른 호출이 끼지 않게 한다.
 - await 뒤 상태가 바뀌었을 수 있다는 호출자 쪽 규약은 [Models/CLAUDE.md § `@MainActor` 격리](../Models/CLAUDE.md#mainactor-격리) 가 정한다.
 - 큐에서 쓰는 `AuthDebugLog` 는 메인과 동시에 쓰일 수 있어 한 줄씩 잠그고 덧붙인다.
-- 앱 종료는 `KeychainQueue.whenDrained` 로 큐가 빌 때까지 기다리되 상한(`Config.keychainDrainOnQuitSeconds`)을 둔다 — 대화상자가 떠 있으면 큐가 비지 않는다. 완료 콜백은 `Task { @MainActor }`·`DispatchQueue.main` 이 아니라 `CFRunLoopPerformBlock`(common modes) 으로 메인 런루프에 보낸다 — 메인 큐 블록 안에서 `terminate` 를 부르면 AppKit 의 중첩 런루프가 메인 큐를 비우지 못해 종료가 멈춘다.
+- 앱 종료는 `KeychainQueue.whenDrained` 로 **그 호출 전에 큐에 오른 작업**이 끝날 때까지 기다리되 상한(`Config.keychainDrainOnQuitSeconds`)을 둔다 — 대화상자가 떠 있으면 그 작업이 끝나지 않는다. 큐에 아직 없는 것은 보호하지 않고, 종료 때 그것을 저장하러 큐에 올리지도 않는다 (목록: [docs/architecture.md § 1](../../../docs/architecture.md#1-사용량-폴링-주-경로), 수용 근거: [Decision #156-1](../../../docs/architecture-decisions.md#decision-156-1-앱-종료는-이미-큐에-오른-keychain-작업만-기다린다)). 완료 콜백은 `Task { @MainActor }`·`DispatchQueue.main` 이 아니라 `CFRunLoopPerformBlock`(common modes) 으로 메인 런루프에 보낸다 — 메인 큐 블록 안에서 `terminate` 를 부르면 AppKit 의 중첩 런루프가 메인 큐를 비우지 못해 종료가 멈춘다.
 
 ## 프로세스 실행
 

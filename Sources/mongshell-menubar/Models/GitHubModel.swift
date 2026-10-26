@@ -341,9 +341,19 @@ final class GitHubModel: ObservableObject {
     }
 
     private func pollLoop() async {
+        var wake = WakeRetry()
+        var mark = WakeRetry.Mark()
         while !Task.isCancelled {
             await refreshOnce()
-            let ranOut = await nap(seconds: autoWait())
+            wake.armIfSlept(mark.sleptSince)
+            // A 403/429 backs off and keeps its wait: the retry after a
+            // wake is for the network not being back, not for the budget.
+            var failed = false
+            if case .error = loadState, backoff == 0 { failed = true }
+            let wait = autoWait().map { wake.wait(normal: $0, failed: failed) }
+            wake.polled(failed: failed)
+            mark = WakeRetry.Mark()
+            let ranOut = await nap(seconds: wait)
             // A state set while asleep can withdraw the wait it started
             // with — a failed PAT save lands between polls. Then only a
             // wake from `refreshNow()` ends the nap.

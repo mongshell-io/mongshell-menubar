@@ -1507,6 +1507,54 @@ do {
                                                        step: .noticeOnly) == ["r2"])
 }
 
+// MARK: #156 — a failed poll right after the mac woke is retried soon
+
+do {
+    check("the clocks drifting apart by less than the threshold is no sleep",
+          !WakeRetry.slept(continuous: .seconds(181), suspending: .seconds(180)))
+    check("a wait the mac slept through is told by the clock that counts sleep",
+          WakeRetry.slept(continuous: .seconds(3600), suspending: .seconds(120)))
+
+    let normal = Config.minPollInterval
+    var idle = WakeRetry()
+    check("no sleep before it: a failure waits the full interval", idle.wait(normal: normal, failed: true) == normal)
+    idle.armIfSlept(false)
+    check("…and a poll with no sleep since the mark arms nothing", idle.wait(normal: normal, failed: true) == normal)
+
+    var woke = WakeRetry()
+    woke.armIfSlept(true)
+    check("after a wake a success still waits the full interval", woke.wait(normal: normal, failed: false) == normal)
+    // The loop's order: the poll comes back, sleep since the mark arms, then
+    // the wait is decided — so the failure the sleep caused is retried first.
+    var failing = WakeRetry()
+    var waits: [Int] = []
+    for attempt in 0..<(Config.wakeRetryAttempts + 1) {
+        failing.armIfSlept(attempt == 0)
+        waits.append(failing.wait(normal: normal, failed: true))
+        failing.polled(failed: true)
+    }
+    check("after a wake failures are retried soon, at most wakeRetryAttempts times",
+          waits == Array(repeating: Config.wakeRetrySeconds, count: Config.wakeRetryAttempts) + [normal],
+          "waits=\(waits)")
+
+    var short = WakeRetry()
+    short.armIfSlept(true)
+    check("a retry never waits longer than the normal interval", short.wait(normal: 5, failed: true) == 5)
+
+    check("an error with no 429 backoff counts as failed",
+          UsageRetryPolicy.wakeRetryFailed(after: .error("x"), backoff: 0))
+    check("an error while a 429 backoff runs keeps the backoff wait",
+          !UsageRetryPolicy.wakeRetryFailed(after: .error("x"), backoff: 1))
+    check("a rate limit is not a failure for the wake retry",
+          !UsageRetryPolicy.wakeRetryFailed(after: .rateLimited(retryAt: Date()), backoff: 0))
+
+    var recovered = WakeRetry()
+    recovered.armIfSlept(true)
+    recovered.polled(failed: true)
+    recovered.polled(failed: false)
+    check("a success ends the retries", recovered.wait(normal: normal, failed: true) == normal)
+}
+
 // MARK: result
 
 if failures.isEmpty {

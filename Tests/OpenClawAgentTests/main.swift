@@ -88,37 +88,65 @@ do {
     // dodging the verdict here would hide a real outage from the heal.
     let v18 = verdict("Gateway not reachable.\n", exit: 1)
     check("not reachable + exit≠0 → down", v18 == .down, "\(String(describing: v18))")
-    let v19 = verdict("Error: connect ECONNREFUSED 127.0.0.1:18789\n", exit: 1)
-    check("ECONNREFUSED + exit≠0 → down", v19 == .down, "\(String(describing: v19))")
     let v20 = verdict("gateway connection refused\n", exit: 1)
     check("connection refused + exit≠0 → down", v20 == .down, "\(String(describing: v20))")
 
-    // A gateway that stalls or drops the connection prints none of the
-    // refused/reachable words — unheard, it never healed and the clients sat
-    // on ⚪ forever (#152 follow-up). The line has to name the gateway.
-    let lost: [(String, String)] = [
-        ("ETIMEDOUT", "gateway connection: ETIMEDOUT\n"),
-        ("ECONNRESET", "Error: gateway read ECONNRESET\n"),
-        ("EHOSTUNREACH", "Error: gateway connect EHOSTUNREACH 10.0.0.2:18789\n"),
-        ("ENETUNREACH", "Error: gateway connect ENETUNREACH 10.0.0.2:18789\n"),
-        ("socket hang up", "Gateway error: socket hang up\n"),
-        ("gateway closed", "Error: gateway closed (1006): abnormal closure\n"),
-        ("gateway timeout", "Error: gateway timeout\n"),
-        ("timeout after", "Error: gateway request timeout after 10000ms\n"),
-    ]
-    for (token, out) in lost {
-        let v = verdict(out, exit: 1)
-        check("게이트웨이 언급 \(token) + exit≠0 → down", v == .down, "\(String(describing: v))")
-    }
-    let lostClean = verdict("Error: gateway closed (1006)\n", exit: 0)
-    check("gateway closed + exit 0 → down", lostClean == .down, "\(String(describing: lostClean))")
-    let refusedLoopback = verdict("Error: connect ECONNREFUSED 127.0.0.1:18789\n", exit: 1)
-    check("connect ECONNREFUSED 127.0.0.1:<port> → down", refusedLoopback == .down,
-          "\(String(describing: refusedLoopback))")
+    // DOWN wording counts only on a line naming the gateway: every down line
+    // in the real outage (#157) names it, and node prints ECONNREFUSED for any
+    // refused request — read across the whole output, a refused update check
+    // beside "Gateway reachable." kickstarted a healthy gateway.
+    let refusedUnrelated = verdict("Gateway reachable.\nupdate check failed: connect ECONNREFUSED 1.2.3.4:443\n"
+                                   + "- Telegram default: running\n", exit: 0)
+    check("reachable + 무관한 ECONNREFUSED + 채널 → 채널 규칙", refusedUnrelated == .ok(detail: "Telegram default"),
+          "\(String(describing: refusedUnrelated))")
+    let refusedUnrelatedBare = verdict("Gateway reachable.\nupdate check failed: connect ECONNREFUSED 1.2.3.4:443\n", exit: 0)
+    check("reachable + 무관한 ECONNREFUSED → ok(채널 없음)", refusedUnrelatedBare == .ok(detail: "채널 없음"),
+          "\(String(describing: refusedUnrelatedBare))")
+    let refusedNoGateway = observation("Error: connect ECONNREFUSED 127.0.0.1:18789\n", exit: 1)
+    check("게이트웨이 언급 없는 ECONNREFUSED + exit≠0 → 관측 실패",
+          refusedNoGateway == .unobserved(reason: "openclaw CLI 가 게이트웨이 응답 없이 비정상 종료 (exit 1)"),
+          "\(refusedNoGateway)")
+    // On a channel line it is that channel's own state, not the gateway's.
+    let channelRefused = verdict("Gateway reachable.\n- Slack main: error: gateway unreachable\n")
+    check("채널 줄 안 gateway unreachable → degraded", channelRefused == .degraded(detail: "Slack main"),
+          "\(String(describing: channelRefused))")
 
-    // node prints the same socket errors for any request (update check,
-    // plugin fetch). Without the gateway named on the line they say nothing
-    // about it — read as down, every probe kickstarted a healthy gateway.
+    // "Gateway reachable." is the gateway answering: a DOWN token on another
+    // gateway line is about something it reaches, not the gateway itself.
+    let vaultDown = verdict("[secrets] gateway secrets.resolve: vault unreachable\nGateway reachable.\n"
+                            + "- Telegram default: running\n", exit: 0)
+    check("reachable + 게이트웨이 줄의 vault unreachable + running → ok", vaultDown == .ok(detail: "Telegram default"),
+          "\(String(describing: vaultDown))")
+    let vaultDownBare = verdict("[secrets] gateway secrets.resolve: vault unreachable\nGateway reachable.\n", exit: 0)
+    check("reachable + 게이트웨이 줄의 vault unreachable + 채널 없음 → ok(채널 없음)",
+          vaultDownBare == .ok(detail: "채널 없음"), "\(String(describing: vaultDownBare))")
+
+    // Colour codes around the line must not hide the positive signal.
+    let esc = "\u{1B}"
+    let coloured = verdict("\(esc)[32mGateway reachable.\(esc)[0m\n", exit: 0)
+    check("색 코드가 붙은 Gateway reachable → ok(채널 없음)", coloured == .ok(detail: "채널 없음"),
+          "\(String(describing: coloured))")
+    let colouredVault = verdict("[secrets] gateway secrets.resolve: vault unreachable\n"
+                                + "\(esc)[1;32mGateway reachable.\(esc)[0m\n- Telegram default: running\n", exit: 0)
+    check("색 코드 reachable + vault unreachable + running → ok", colouredVault == .ok(detail: "Telegram default"),
+          "\(String(describing: colouredVault))")
+    // Colour on the channel line itself: the runtime state must still be
+    // read, or the config-only rule (#159) turns a healthy gateway down.
+    let colouredState = verdict("\(esc)[1m- Telegram default\(esc)[0m: enabled, \(esc)[32mrunning\(esc)[0m, works\n",
+                                exit: 0)
+    check("채널 줄의 색 코드 running (reachable 줄 없음) → ok", colouredState == .ok(detail: "Telegram default"),
+          "\(String(describing: colouredState))")
+    let colouredStateFail = verdict("\(esc)[32m- Telegram default: running\(esc)[0m\n", exit: 1)
+    check("색 코드 채널 줄 + exit 1 → 관측된 채널 답으로 ok", colouredStateFail == .ok(detail: "Telegram default"),
+          "\(String(describing: colouredStateFail))")
+
+    // The positive signal is a line opening "Gateway reachable": the tip on
+    // every run says "(requires a reachable gateway)" and must not count.
+    let tipOnly = verdict("Tip: https://docs.openclaw.ai/cli/status adds gateway health probes to status output "
+                          + "(requires a reachable gateway).\n", exit: 0)
+    check("Tip 줄의 reachable 은 긍정 신호 아님 → down", tipOnly == .down, "\(String(describing: tipOnly))")
+
+    // Socket errors that don't name the gateway say nothing about it.
     let unrelatedClean = verdict("Gateway reachable.\nupdate check failed: ETIMEDOUT\n", exit: 0)
     check("exit 0 + reachable + 무관한 ETIMEDOUT → ok", unrelatedClean == .ok(detail: "채널 없음"),
           "\(String(describing: unrelatedClean))")
@@ -132,17 +160,6 @@ do {
     check("게이트웨이 언급 없는 ETIMEDOUT + exit≠0 → 관측 실패",
           unrelatedFailure == .unobserved(reason: "openclaw CLI 가 게이트웨이 응답 없이 비정상 종료 (exit 1)"),
           "\(unrelatedFailure)")
-    // A positive "reachable" outranks a gateway-named socket error, but never
-    // an explicit refusal.
-    let reachableBeatsLost = verdict("Gateway reachable.\ngateway connection: ECONNRESET\n", exit: 0)
-    check("reachable + 게이트웨이 연결 끊김 → ok", reachableBeatsLost == .ok(detail: "채널 없음"),
-          "\(String(describing: reachableBeatsLost))")
-    let refusedBeatsReachable = verdict("Gateway reachable.\nconnect ECONNREFUSED 127.0.0.1:18789\n", exit: 0)
-    check("reachable + ECONNREFUSED → down", refusedBeatsReachable == .down,
-          "\(String(describing: refusedBeatsReachable))")
-    // A gateway-level drop is down even when channels were listed beside it.
-    let lostWithChannels = verdict("- Telegram default: running\ngateway disconnected: socket hang up\n", exit: 1)
-    check("채널 줄 밖 socket hang up → down", lostWithChannels == .down, "\(String(describing: lostWithChannels))")
     // On a channel line it is that channel's upstream error: the gateway
     // answered, so 🟡 — not a restart.
     let channelTimeout = verdict("- Telegram default: error: ETIMEDOUT api.telegram.org\n", exit: 1)
@@ -157,6 +174,96 @@ do {
     let runningNonzero = verdict("- Telegram default: running\n", exit: 2)
     check("- X: running + exit≠0 + reachable 없음 → ok", runningNonzero == .ok(detail: "Telegram default"),
           "\(String(describing: runningNonzero))")
+
+    // Config-only channel lines (no runtime state — #157 capture 2) are what
+    // a stopped gateway leaves: down even when the "not reachable" wording
+    // changes (#159). With "Gateway reachable." the gateway answered, so the
+    // channel rules stand; a transient state alone still counts as an answer.
+    let configOnly = "- Telegram default: enabled, configured, mode:polling, token:***\n"
+        + "- Slack default: enabled, configured, bot:config, app:config\n"
+    let configOnlyBare = verdict("Gateway offline; showing config-only status.\n" + configOnly, exit: 0)
+    check("다운 문구 없이 config-only 채널 줄만 → down", configOnlyBare == .down,
+          "\(String(describing: configOnlyBare))")
+    let configOnlyNonzero = verdict(configOnly, exit: 1)
+    check("config-only 채널 줄만 + exit≠0 → down", configOnlyNonzero == .down,
+          "\(String(describing: configOnlyNonzero))")
+    let configOnlyReachable = verdict("Gateway reachable.\n" + configOnly, exit: 0)
+    check("config-only 채널 줄 + Gateway reachable → ok(정상)", configOnlyReachable == .ok(detail: "정상"),
+          "\(String(describing: configOnlyReachable))")
+    let disconnectedBare = verdict("- Telegram default: enabled, disconnected\n", exit: 0)
+    check("reachable 없음 + disconnected 만 → ok(정상)", disconnectedBare == .ok(detail: "정상"),
+          "\(String(describing: disconnectedBare))")
+}
+
+// MARK: - 실측 출력 (#157)
+
+// `openclaw channels status --probe` as captured on the server mac. Tokens
+// and the bot handle are masked and the home path anonymised; the text is
+// otherwise verbatim.
+// The rules must keep reading these the same way — change them only on a
+// new capture.
+print("▸ 실측 probe 출력")
+do {
+    let tip = "Tip: https://docs.openclaw.ai/cli/status adds gateway health probes to status output "
+        + "(requires a reachable gateway).\n"
+
+    let normal = """
+        Checking channel status (probe)…
+        Gateway reachable.
+        - Slack default: enabled, configured, running, connected, bot:config, app:config, works
+        - Telegram default: enabled, configured, running, connected, transport:just now, mode:polling, bot:＠example_bot, token:***, works
+
+        """ + tip
+    let n = observation(normal, exit: 0)
+    check("실측 1 정상 → ok(Slack default, Telegram default)",
+          n == .observed(.ok(detail: "Slack default, Telegram default")), "\(n)")
+
+    // Stopped gateway: still exit 0, and the config-only channel lines are
+    // listed — the "Gateway not reachable" lines say it is down, and so does
+    // the lack of any runtime state on those lines (#159).
+    let stopped = """
+        Checking channel status (probe)…
+        Gateway not reachable after waiting 15 s.
+        waiting for managed service
+        Run openclaw gateway status --deep to diagnose.
+        [secrets] channels status: gateway secrets.resolve unavailable (Gateway not reachable at ws://127.0.0.1:18789 (ECONNREFUSED).
+        Start it with `openclaw gateway run` or check `openclaw gateway status`.
+        Gateway target: ws://127.0.0.1:18789
+        Source: local loopback
+        Config: /Users/me/.openclaw/openclaw.json
+        Bind: loopback); resolved command secrets locally.
+        Gateway not reachable; showing config-only status.
+        Config: /Users/me/.openclaw/openclaw.json
+        Mode: local
+
+        - Telegram default: enabled, configured, mode:polling, token:***
+        - Slack default: enabled, configured, bot:config, app:config
+
+        """ + tip
+    let st = observation(stopped, exit: 0)
+    check("실측 2 게이트웨이 중지 (exit 0, config-only 채널 줄) → down", st == .observed(.down), "\(st)")
+
+    let noNode = observation("env: node: No such file or directory\n", exit: 127)
+    check("실측 3 node 없음 (exit 127) → 관측 실패",
+          noNode == .unobserved(reason: "openclaw CLI 를 실행하지 못함 (exit 127)"), "\(noNode)")
+
+    // Right after a start: the still-starting and event-loop lines name the
+    // gateway but carry no verdict — the channels decide.
+    let starting = """
+        Checking channel status (probe)…
+        Gateway is still starting (phase: waiting for Gateway listener).
+        Gateway reachable.
+        Gateway event loop degraded for 10s (p99 789ms) reasons=cpu eventLoopDelayMaxMs=789 eventLoopUtilization=0.813 cpuCoreRatio=1.679
+        - Slack default: enabled, configured, running, bot:config, app:config, works
+        - Telegram default: enabled, configured, running, mode:polling, bot:＠example_bot, token:***, works
+
+        """ + tip
+    let sg = observation(starting, exit: 0)
+    check("실측 4 기동 직후 (still starting·degraded 줄) → ok(Slack default, Telegram default)",
+          sg == .observed(.ok(detail: "Slack default, Telegram default")), "\(sg)")
+
+    // Capture 5 hung until interrupted: that is the timeout path, covered
+    // by "타임아웃 → timedOut" above.
 }
 
 // MARK: - CLI 자체 실패 (관측 실패)
@@ -530,6 +637,18 @@ do {
     // itself on every heal; it must fall through to discovery instead.
     let selfExplicit = Launchd.gatewayLabel(explicit: selfLabel, selfLabel: selfLabel, in: dir)
     check("--gateway-label == self → 무시하고 탐색", selfExplicit == "com.zzz.claw-gateway", selfExplicit)
+
+    // openclaw may install other *claw* services; one sorting ahead of the
+    // documented gateway label must not win while that label's plist exists (#156).
+    touch("ai.openclaw.browser.plist")
+    touch("\(Launchd.defaultGatewayLabel).plist")
+    let preferred = Launchd.gatewayLabel(explicit: nil, selfLabel: selfLabel, in: dir)
+    check("기본 레이블 plist 가 있으면 정렬상 앞선 *claw* 보다 우선", preferred == Launchd.defaultGatewayLabel, preferred)
+    check("탐색만 해도 기본 레이블 우선 (install.sh 가 이 값을 쓴다)",
+          Launchd.discoveredGatewayLabel(selfLabel: selfLabel, in: dir) == Launchd.defaultGatewayLabel)
+    let defaultIsSelf = Launchd.discoveredGatewayLabel(selfLabel: Launchd.defaultGatewayLabel, in: dir)
+    check("기본 레이블이 자기 레이블이면 우선하지 않고 정렬 탐색", defaultIsSelf == "ai.openclaw.browser",
+          defaultIsSelf ?? "nil")
 
     let missing = Launchd.gatewayLabel(
         explicit: nil, selfLabel: selfLabel, in: root.appendingPathComponent("nope"))

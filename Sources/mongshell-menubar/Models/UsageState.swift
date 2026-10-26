@@ -150,6 +150,15 @@ enum UsageRetryPolicy {
         return now.addingTimeInterval(max(TimeInterval(pollWait(base: base, backoff: backoff)), serverWait))
     }
 
+    /// Whether the poll that left `state` counts as failed for the retry
+    /// after a wake (`WakeRetry`, #156). An error while a 429 backoff is
+    /// still running keeps that backoff's wait: the short retry is for the
+    /// network not being back, and the endpoint is the one the 429 came from.
+    static func wakeRetryFailed(after state: LoadState, backoff: Int) -> Bool {
+        guard case .error = state else { return false }
+        return backoff == 0
+    }
+
     /// nil when a manual refresh may go out now; otherwise when it may.
     static func manualRefreshBlocked(until state: LoadState, now: Date) -> Date? {
         guard case .rateLimited(let retryAt) = state, now < retryAt else { return nil }

@@ -172,7 +172,8 @@ echo "▶ running github tests"
 # as above, but the 401 → refresh → retry rules it applies are compiled from
 # `UsageRefreshPolicy` and the state it ends in from `UsageSession`.
 # `BoundedHTTP` rides along because the client's
-# transport names it.
+# transport names it. `WakeRetry` — the retry after a wake that the usage,
+# GitHub and openclaw poll loops share (#156) — is pinned here too.
 echo "▶ compiling usage tests"
 swiftc -o "$OUT/usage-tests" \
   "$APP/Design/Palette.swift" \
@@ -180,6 +181,7 @@ swiftc -o "$OUT/usage-tests" \
   "$APP/Models/UsageRefreshPolicy.swift" \
   "$APP/Models/UsageSession.swift" \
   "$APP/Models/UsageState.swift" \
+  "$APP/Models/WakeRetry.swift" \
   "$APP/Services/AuthDebugLog.swift" \
   "$APP/Services/BoundedHTTP.swift" \
   "$APP/Services/Config.swift" \
@@ -208,6 +210,7 @@ swiftc -o "$OUT/usage-model-tests" \
   "$APP/Models/UsageRefreshPolicy.swift" \
   "$APP/Models/UsageSession.swift" \
   "$APP/Models/UsageState.swift" \
+  "$APP/Models/WakeRetry.swift" \
   "$APP/Services/AuthDebugLog.swift" \
   "$APP/Services/AuthError.swift" \
   "$APP/Services/BoundedHTTP.swift" \

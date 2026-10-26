@@ -97,7 +97,7 @@ App Store/Standalone 판 앱이 아니라 **brew formula** 를 쓴다 — `insta
   ```
   성공: `앱 판 없음`.
 
-- [ ] **설치·데몬 시작·operator·로그인** — operator 를 로그인과 함께 준다. operator 를 주면 `tailscale status`·`tailscale serve status` 를 sudo 없이 쓸 수 있다. 파일을 서빙하는 funnel 설정은 실기에서 operator 로도 거부돼(원인 미확인) `install.sh` 가 그 명령을 sudo 로 실행한다 ([E](#e-serverinstallsh-실행)). 경로 해제가 sudo 없이 되는지는 아직 확인하지 못했다 ([6](#6-첫-설치-때-확인할-것-실기-미검증-가정) 가정 6).
+- [ ] **설치·데몬 시작·operator·로그인** — operator 를 로그인과 함께 준다. operator 를 주면 `tailscale status`·`tailscale serve status` 를 sudo 없이 쓸 수 있다. 파일을 서빙하는 funnel 설정은 실기에서 operator 로도 거부돼(원인 미확인) `install.sh` 가 그 명령을 sudo 로 실행한다 ([E](#e-serverinstallsh-실행)). 경로 해제(`--rotate-token`·`uninstall.sh`)는 sudo 없이 먼저 시도하고 거부되면 sudo 로 다시 시도한다 — sudo 없이 되는지는 아직 확인하지 못했다 ([6](#6-첫-설치-때-확인할-것-실기-미검증-가정) 가정 6).
   ```bash
   brew install tailscale
   sudo brew services start tailscale   # tailscaled 를 root 데몬으로 상시 실행
@@ -186,7 +186,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 **성공하면 이렇게 보인다** (각 `▶` 는 스크립트 단계, 값은 예시):
 ```
 ▶ 사전조건 확인
-  tailscale: /opt/homebrew/bin/tailscale (server-mac.tail1234.ts.net)
+  tailscale: /opt/homebrew/Cellar/tailscale/1.102.4/bin/tailscale (server-mac.tail1234.ts.net)   ← 뒤에서 sudo 로 실행할 실제 파일
   openclaw : /opt/homebrew/bin/openclaw
 ▶ URL 토큰 준비
   새 토큰 발급                 ← 재실행이면 "기존 토큰 재사용"
@@ -204,6 +204,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 ▶ tailscale funnel 설정
   파일을 서빙하는 funnel 설정은 관리자 권한이 필요해 sudo 로 실행합니다 (비밀번호를 물을 수 있습니다).
   Password:                    ← 맥 로그인 비밀번호 (최근에 인증했으면 안 나온다)
+  root 로 실행: /opt/homebrew/Cellar/tailscale/1.102.4/bin/tailscale (현재 사용자가 쓸 수 있는 경로 — brew 판이면 정상)
   (tailscale 출력)
 ▶ 공개 URL 확인
   → 응답 확인
@@ -221,7 +222,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 
 안 되면: `오류:` 로 시작하는 마지막 메시지를 [5-1](#5-1-installsh--uninstallsh-메시지별) 에서 찾는다. `경고:` 는 설치를 멈추지 않는다.
 
-- [ ] **게이트웨이 레이블 확인** — `▶ 게이트웨이 launchd 레이블 탐색` 아래 `→` 줄이 실제 게이트웨이 레이블인지 본다. 스크립트는 방금 빌드한 에이전트(`--print-gateway-label`)에 물어, `~/Library/LaunchAgents` 의 plist 를 이름순으로 정렬해 **이름에 `claw` 가 들어간 첫 번째**(에이전트 자신 제외)를 고른다 — 에이전트가 실행 중 쓰는 탐색 규칙과 같은 코드다. `claw` 가 들어간 plist 가 여러 개면 엉뚱한 것이 잡힐 수 있다. 게이트웨이를 재설치해 레이블이 바뀌면 `install.sh` 를 다시 돌린다.
+- [ ] **게이트웨이 레이블 확인** — `▶ 게이트웨이 launchd 레이블 탐색` 아래 `→` 줄이 실제 게이트웨이 레이블인지 본다. 스크립트는 방금 빌드한 에이전트(`--print-gateway-label`)에 물어, `~/Library/LaunchAgents` 에 기본 레이블 `ai.openclaw.gateway.plist` 가 있으면 그것을, 없으면 plist 를 이름순으로 정렬해 **이름에 `claw` 가 들어간 첫 번째**(에이전트 자신 제외)를 고른다 — 에이전트가 실행 중 쓰는 탐색 규칙과 같은 코드다. 기본 레이블이 없는데 `claw` 가 들어간 plist 가 여러 개면 엉뚱한 것이 잡힐 수 있다. 게이트웨이를 재설치해 레이블이 바뀌면 `install.sh` 를 다시 돌린다.
   에이전트는 plist **파일 이름**을 레이블로 kickstart 하므로, 파일 이름과 plist 안의 `Label` 이 같고 launchd 에 실제로 로드돼 있어야 자동복구가 된다:
   ```bash
   LABEL=ai.openclaw.gateway     # 위 → 줄에 나온 값
@@ -486,7 +487,7 @@ funnel 경로 → LaunchAgent → 데이터 폴더(토큰·설치 옵션 포함)
 | `'tailscale serve status --json' 을 읽지 못해 포트 8443 가 비어 있는지 확인할 수 없습니다.` | serve 설정 조회 실패 | `tailscale serve status --json; echo $?` 로 원인 확인 |
 | `포트 8443 에 이 설치가 만들지 않은 serve 핸들러가 있습니다…` (목록 뒤따름) | 8443 에 다른 경로·TCP 포워딩이 있음. 토큰 파일을 잃은 옛 설치의 경로도 여기 걸린다 | `tailscale serve status` 로 확인. 8443 을 다른 용도로 쓰지 않는다면 `tailscale funnel --https=8443 off` 로 포트째 내리고 재실행. `tailscale serve reset` 은 443 등 **모든** 포트 설정을 지우므로 피한다 |
 | `tailscale serve 설정을 읽지 못해 옛 공개 경로 해제 여부를 확인할 수 없습니다…` | (`--rotate-token`·uninstall) 설정 조회 실패 | 위와 같음 |
-| `옛 공개 경로 해제 실패…` | `funnel … --set-path=/<옛토큰> off` 실패 | 메시지의 명령으로 직접 끈 뒤 재실행 |
+| `옛 공개 경로 해제 실패 (sudo 로도 실패)…` | `funnel … --set-path=/<옛토큰> off` 가 sudo 없이도, sudo 로도 실패 (sudo 인증 실패 포함) | 메시지의 명령(`sudo tailscale funnel …`)으로 직접 끈 뒤 재실행 |
 | `해제 후 tailscale serve 설정을 다시 읽지 못했습니다…` | 해제 후 재조회 실패 | `tailscale funnel status` 로 옛 경로가 사라졌는지 직접 확인 |
 | `해제 명령은 성공했지만 옛 공개 경로가 남아 있습니다…` | `off` 가 경로를 안 지움 ([6](#6-첫-설치-때-확인할-것-실기-미검증-가정) 가정 6) | 메시지의 명령으로 끈 뒤 재실행, 반복되면 보고 |
 
@@ -505,7 +506,7 @@ funnel 경로 → LaunchAgent → 데이터 폴더(토큰·설치 옵션 포함)
 | `토큰 형식이 올바르지 않습니다 (32자리 hex 가 아님)…` | 새 토큰 발급(`openssl rand -hex 16`)이 기대한 값을 내지 못함 | 메시지의 토큰 파일을 지우고 재실행. 반복되면 `openssl rand -hex 16` 을 직접 실행해 출력 확인 |
 | `sudo 인증 실패…` | sudo 가 비밀번호를 받지 못함 (터미널 없이 실행·비밀번호 오류), 관리자 계정이 아님 | 터미널에서 직접 재실행. 이 시점에 에이전트는 이미 설치돼 돌고 있으므로 재실행은 안전하다 |
 | `tailscale funnel 설정 실패…` | HTTPS 인증서·funnel nodeAttr 미설정 등 — 바로 위 tailscale 출력이 원인을 말한다 | [C](#c-tailscale-관리-콘솔) 재확인 후 재실행. 에이전트는 이미 설치돼 돌고 있다 |
-| `401 Unauthorized: must be root, or be an operator and able to run 'sudo tailscale' to serve a path or Unix socket` (tailscale 의 출력) | 파일을 서빙하는 serve 설정을 sudo 없이 보냄 — funnel 설정을 sudo 없이 실행하는 옛 `install.sh`, 또는 명령을 손으로 실행 | `install.sh` 가 funnel 설정을 sudo 로 실행하는 판인지 확인하고(`grep -n 'sudo "\$TAILSCALE"' server/install.sh`), 손으로 실행했다면 같은 명령 앞에 `sudo` 를 붙인다 |
+| `401 Unauthorized: must be root, or be an operator and able to run 'sudo tailscale' to serve a path or Unix socket` (tailscale 의 출력) | 파일을 서빙하는 serve 설정을 sudo 없이 보냄 — funnel 설정을 sudo 없이 실행하는 옛 `install.sh`, 또는 명령을 손으로 실행 | `install.sh` 가 funnel 설정을 sudo 로 실행하는 판인지 확인하고(`grep -nE 'sudo(_tailscale)? "\$TAILSCALE"' server/install.sh`), 손으로 실행했다면 같은 명령 앞에 `sudo` 를 붙인다 |
 | `경고: 이 맥에서 URL 응답을 확인하지 못했습니다 (전파 지연일 수 있음)…` | 인증서 첫 발급 지연·자기 자신 접속 불가 | 몇 분 뒤 외부망 기기로 [F](#f-동작-확인) |
 | `토큰 없는 https://…:8443/ 가 NNN 를 돌려줍니다…` | 루트가 404 가 아님 = 토큰 외 무언가 공개됨. 스크립트가 8443 funnel 을 내렸다 | `tailscale funnel status` 로 8443 의 다른 핸들러를 끄고 재설치. "내리는 데도 실패했습니다" 가 함께 나오면 `tailscale funnel --https=8443 off` 를 직접 |
 | `경고: …에 닿지 못해 루트 비공개를 확인하지 못했습니다…` / `…예상한 404 가 아닌 NNN…` | 이 맥에서 확인 불가 | 외부망 기기로 루트가 404 인지 확인 |
@@ -535,7 +536,7 @@ funnel 경로 → LaunchAgent → 데이터 폴더(토큰·설치 옵션 포함)
 | ⚪ `상태 파일에 확인 시각이 없습니다` | JSON 에 해석 가능한 `checkedAt` 없음 | `cat ~/Library/Application\ Support/mongshell-openclaw-agent/status.json` |
 | ⚪ `서버 에이전트가 갱신을 멈췄습니다` | 응답은 오는데 `checkedAt` 이 오래됨 — 에이전트가 멈춤 | `launchctl print …` 로 실행 여부, 로그의 `상태 파일 쓰기 실패`·`probe 결과를 받지 못함` 여부. 서버 맥 로그아웃·잠자기도 원인 |
 | ⚪ `확인 중…` | URL 적용 후 아직 첫 응답 전 | 확인 간격만큼 기다린다 |
-| 🔴 `게이트웨이 다운` (detail 없음) | 서버가 down 보고 — 연결 거부·not reachable, 게이트웨이를 언급한 연결 끊김(`gateway … ETIMEDOUT` 등, `Gateway reachable.` 이 같이 있으면 제외), 게이트웨이 신호가 있는 비정상 종료인데 채널 줄 없음, 또는 정상 종료(exit 0)인데 출력 해석 불가 | 서버 맥에서 `openclaw channels status --probe` |
+| 🔴 `게이트웨이 다운` (detail 없음) | 서버가 down 보고 — `Gateway` 를 언급한 줄에 `not reachable`·`unreachable`·`connection refused`·`ECONNREFUSED`(게이트웨이를 멈추면 openclaw 는 exit 0 으로 `Gateway not reachable after waiting 15 s.` 를 찍고 설정만으로 채널 줄을 늘어놓는다 — 그 채널 줄과 무관하게 down), 게이트웨이 신호가 있는 비정상 종료인데 채널 줄 없음, 정상 종료(exit 0)인데 `Gateway reachable` 줄도 채널 줄도 없음, 또는 `Gateway reachable` 줄이 없고 채널 줄 어디에도 런타임 상태(`running`·`not-running`·`stopped`·`connected`·`disconnected`·`error:`·`health:`)가 없음(설정만으로 늘어놓은 채널 줄 — 다운 문구가 바뀌어도 중지를 잡는 보조 신호, #159). `Gateway reachable` 로 시작하는 줄이 있으면 다른 게이트웨이 줄의 다운 문구보다 그것이 우선한다 — down 이 아니라 채널 규칙으로 판정 | 서버 맥에서 `openclaw channels status --probe` |
 | 🔴 `게이트웨이 다운 — 응답 지연 · 25초 초과` | probe(`openclaw` CLI 기동 + 응답)가 25초 안에 끝나지 않음. 게이트웨이가 멈췄거나 서버 맥 부하가 높아 CLI 가 늦게 뜬 것 | 서버 맥 `uptime` 의 load average. 자동복구는 시간 초과만 4회 연속일 때 재시작한다 (중간에 다른 down·채널 이상이 끼면 2회) |
 | 🔴 `게이트웨이 다운 — openclaw 바이너리 없음` | 에이전트가 `/opt/homebrew/bin`·`/usr/local/bin` 어디에서도 openclaw 를 찾지 못함 | `ls -l /opt/homebrew/bin/openclaw /usr/local/bin/openclaw`. 재설치·경로 이동 후엔 다음 probe 에서 풀린다 |
 | 🟡 `채널 이상 — …` | 채널 일부 멈춤(`stopped`·`not running`)/오류 | 자동복구가 켜져 있으면 2회 연속 실패 뒤 재시작을 시도한다 (쿨다운 600초) |
@@ -578,7 +579,7 @@ cat ~/Library/Application\ Support/mongshell-openclaw-agent/status.json
 ```
 - `호스트:` 줄은 **신호별** 레벨(전원·디스크·러너)이 하나라도 바뀌면 남는다. 종합이 그대로여도(예: 디스크 warning 인 채로 전원이 ok → warning) 새 줄이 생긴다. 레벨이 그대로인 수치 변화(잔량 82% → 81%)는 남기지 않는다 — 그때의 값은 `status.json` 을 본다.
 - 인자 오류는 시각 없이 `오류: …` 와 사용법을 출력하고 즉시 종료한다(exit 64). LaunchAgent 가 KeepAlive 로 계속 재기동한다.
-- `probe 결과를 받지 못함` 은 openclaw 실행에 실패했거나, 출력이 완전히 비었거나, openclaw CLI 자체가 실패했을 때다. CLI 자체 실패는 종료 코드 126·127(`env: node: No such file or directory` 처럼 node 를 띄우지 못함 — `brew upgrade node` 도중 등)이거나, 비정상 종료(exit≠0·신호)인데 출력에 게이트웨이 신호도 채널 줄(`- <이름>: …`, 이름에 `/` 없음)도 하나도 없는 경우(`Error: Cannot find module …` 과 node 스택 등)다. 게이트웨이 신호는 거절·도달 불가(`not reachable`·`unreachable`·`connection refused`·`ECONNREFUSED`), 긍정 도달(`reachable` 낱말 — `not reachable`·`unreachable` 제외), 그리고 **같은 줄에 `gateway` 가 있는** 연결 끊김·멈춤(`ETIMEDOUT`·`ECONNRESET`·`EHOSTUNREACH`·`ENETUNREACH`·`socket hang up`·`gateway closed`·`gateway timeout`·`timeout after`)이다 — 게이트웨이가 정말 다운이라 이런 문구를 찍고 비정상 종료한 것은 그대로 down 이다. 연결 끊김 문구는 게이트웨이를 언급하지 않으면 신호가 아니다: node 는 업데이트 확인·플러그인 fetch 등 모든 요청 실패에 같은 문구를 찍는다. 게이트웨이를 언급해도 채널 줄 안이면 그 채널의 오류라 🟡 이고, 출력에 `reachable` 이 있으면 연결 끊김만으로는 down 이 아니다(명시적 거절·도달 불가는 그대로 down). 이 토큰 목록은 실제 openclaw 실패 출력이 아니라 node 표준 오류와 추정 문구로 만들었다 — 실제 샘플을 확보하면 갱신한다. 채널 줄이 있으면 게이트웨이가 답한 것이라 종료 코드와 무관하게 채널 규칙으로 판정한다. 사유는 `openclaw 실행 실패 — <원인>`(예: `Too many open files`, `No such file or directory`), `probe 가 출력 없이 신호 N번으로 종료`, `probe 출력 없음 (exit N)`, `probe 출력 없음 (종료 상태 모름)`, `openclaw CLI 를 실행하지 못함 (exit N)`, `openclaw CLI 가 게이트웨이 응답 없이 비정상 종료 (exit N)`, `openclaw CLI 가 게이트웨이 응답 없이 신호 N번으로 종료`, `openclaw CLI 가 게이트웨이 응답 없이 종료 (종료 상태 모름)` 중 하나다 (CLI 의 원래 오류 문구는 로그에 싣지 않는다 — 서버 맥에서 `openclaw channels status --probe` 를 직접 돌려 본다). 게이트웨이가 아니라 에이전트 쪽 문제로 보고 판정하지 않는다 — `status.json` 을 쓰지 않고, 자동복구 횟수에도 넣지 않으며, 주기만큼 기다린 뒤 종료(exit 75)해 KeepAlive 로 새로 뜬다. 자동복구 직후의 재확인이 이렇게 끝나면 복구 기록(쿨다운)을 잃지 않도록 복구 전 판정으로 파일을 한 번 쓰고 종료한다. 계속되면 파일이 갱신되지 않아 맥북에는 ⚪ `서버 에이전트가 갱신을 멈췄습니다` 로 보인다. `launchctl print …` 의 `last exit code = 75` 가 그 흔적이다. 관측 실패가 N회 이어지면 down 으로 치는 안전망은 두지 않는다 — node 가 빠진 동안 멀쩡한 게이트웨이를 재시작하게 되고(#42 와 같은 오판), 게이트웨이 장애는 위 신호 문구로 잡는다.
+- `probe 결과를 받지 못함` 은 openclaw 실행에 실패했거나, 출력이 완전히 비었거나, openclaw CLI 자체가 실패했을 때다. CLI 자체 실패는 종료 코드 126·127(`env: node: No such file or directory` 처럼 node 를 띄우지 못함 — `brew upgrade node` 도중 등)이거나, 비정상 종료(exit≠0·신호)인데 출력에 게이트웨이 신호도 채널 줄(`- <이름>: …`, 이름에 `/` 없음)도 하나도 없는 경우(`Error: Cannot find module …` 과 node 스택 등)다. 게이트웨이 신호는 **`Gateway` 를 언급한 줄**(채널 줄 밖)의 거절·도달 불가(`not reachable`·`unreachable`·`connection refused`·`ECONNREFUSED`)와 `Gateway reachable` 로 시작하는 줄이다. 줄 머리 매칭(`Gateway reachable`·채널 줄의 `- `)은 줄에서 ANSI 이스케이프(색 코드)를 지운 뒤에 한다 — 터미널 색이 붙은 줄도 같은 줄로 읽는다. 이 규칙은 서버 맥에서 받은 실제 출력으로 맞췄다(#157): 정상이면 `Gateway reachable.` 다음에 `- Slack default: …, running, …` 같은 채널 줄이 오고, 게이트웨이를 멈추면 **exit 0** 으로 `Gateway not reachable after waiting 15 s.`·`… (Gateway not reachable at ws://127.0.0.1:18789 (ECONNREFUSED).`·`Gateway not reachable; showing config-only status.` 를 찍는다 — 다운 문구가 든 줄은 모두 `Gateway` 를 언급했고, 함께 늘어놓은 채널 줄(`- Telegram default: enabled, configured, mode:polling, token:***`)에는 `running` 같은 런타임 상태가 없었다(정상 실측의 채널 줄에는 모두 있다). 게이트웨이를 막 띄운 직후에는 `Gateway is still starting (…)`·`Gateway event loop degraded for 10s (…)` 줄이 더 붙지만 판정을 바꾸지 않는다(채널 줄로 🟢). probe 자체가 응답 없이 오래 걸리기도 한다 — 그것은 시간 초과 경로다. `Gateway` 를 언급하지 않은 줄의 같은 문구(업데이트 확인의 `connect ECONNREFUSED 1.2.3.4:443` 등)는 신호가 아니다. 긍정 신호를 줄 머리로 좁힌 것은 매 실행 끝의 Tip 줄이 `(requires a reachable gateway).` 로 끝나기 때문이다. `ETIMEDOUT`·`ECONNRESET`·`socket hang up` 같은 연결 끊김 문구는 실측에 나온 적이 없어 신호로 치지 않는다. 채널 줄이 있으면 게이트웨이가 답한 것이라 종료 코드와 무관하게 채널 규칙으로 판정한다. 사유는 `openclaw 실행 실패 — <원인>`(예: `Too many open files`, `No such file or directory`), `probe 가 출력 없이 신호 N번으로 종료`, `probe 출력 없음 (exit N)`, `probe 출력 없음 (종료 상태 모름)`, `openclaw CLI 를 실행하지 못함 (exit N)`, `openclaw CLI 가 게이트웨이 응답 없이 비정상 종료 (exit N)`, `openclaw CLI 가 게이트웨이 응답 없이 신호 N번으로 종료`, `openclaw CLI 가 게이트웨이 응답 없이 종료 (종료 상태 모름)` 중 하나다 (CLI 의 원래 오류 문구는 로그에 싣지 않는다 — 서버 맥에서 `openclaw channels status --probe` 를 직접 돌려 본다). 게이트웨이가 아니라 에이전트 쪽 문제로 보고 판정하지 않는다 — `status.json` 을 쓰지 않고, 자동복구 횟수에도 넣지 않으며, 주기만큼 기다린 뒤 종료(exit 75)해 KeepAlive 로 새로 뜬다. 자동복구 직후의 재확인이 이렇게 끝나면 복구 기록(쿨다운)을 잃지 않도록 복구 전 판정으로 파일을 한 번 쓰고 종료한다. 계속되면 파일이 갱신되지 않아 맥북에는 ⚪ `서버 에이전트가 갱신을 멈췄습니다` 로 보인다. `launchctl print …` 의 `last exit code = 75` 가 그 흔적이다. 관측 실패가 N회 이어지면 down 으로 치는 안전망은 두지 않는다 — node 가 빠진 동안 멀쩡한 게이트웨이를 재시작하게 되고(#42 와 같은 오판), 게이트웨이 장애는 위 신호 문구로 잡는다.
 
 ## 6. 첫 설치 때 확인할 것 (실기 미검증 가정)
 
@@ -592,7 +593,7 @@ cat ~/Library/Application\ Support/mongshell-openclaw-agent/status.json
 | 3 | funnel 대상에 파일 경로를 주면 그 파일 하나를 `--set-path` 경로에 서빙한다 (`install.sh` §7) | 확인 (외부망 기기에서도) | 외부망에서 상태 URL 이 JSON 을 돌려주는지 ([F](#f-동작-확인)) | 404·빈 응답·디렉터리 목록 |
 | 4 | `--bg` 는 설정을 tailscaled 에 영구 저장한다 (`install.sh` §7) | 미확인 | `sudo brew services restart tailscale` 후 `tailscale funnel status` 와 외부망 URL 재확인 | 데몬 재시작·재부팅 뒤 ⚪ `주소 또는 토큰이 맞지 않습니다` 또는 연결 불가 |
 | 5 | `--yes` 는 버전에 따라 없을 수 있어 help 에 있을 때만 붙인다 (`install.sh` §7) | 미확인 | `tailscale funnel --help 2>&1 \| grep -E -- '--?yes'` | 없으면 `▶ tailscale funnel 설정` 에서 확인 프롬프트·브라우저 안내가 뜨고 멈춘 것처럼 보일 수 있다 — 화면 안내를 따른다 |
-| 6 | `funnel --https=8443 --set-path=/<토큰> off` 가 그 경로 하나만 해제하고, operator 를 준 사용자가 sudo 없이 실행할 수 있다 (`install.sh`·`uninstall.sh`) | 미확인 | `--rotate-token` 한 번 실행 → `tailscale funnel status` 에 새 경로만 있고, 외부망에서 옛 URL 이 404 | `옛 공개 경로 해제 실패` (권한 거부면 메시지의 명령 앞에 `sudo` 를 붙여 끈 뒤 재실행), `해제 명령은 성공했지만 옛 공개 경로가 남아 있습니다` (스크립트가 잡음), 또는 다른 경로까지 사라짐 |
+| 6 | `funnel --https=8443 --set-path=/<토큰> off` 가 그 경로 하나만 해제하고, operator 를 준 사용자가 sudo 없이 실행할 수 있다 (`install.sh`·`uninstall.sh`. 거부되면 스크립트가 sudo 로 재시도한다) | 미확인 | `--rotate-token` 한 번 실행 → `tailscale funnel status` 에 새 경로만 있고, 외부망에서 옛 URL 이 404. 출력에 `sudo 없이 해제하지 못해 sudo 로 다시 시도합니다` 가 보이면 sudo 없이는 거부되는 것 | `옛 공개 경로 해제 실패 (sudo 로도 실패)` (메시지의 `sudo` 명령으로 끈 뒤 재실행), `해제 명령은 성공했지만 옛 공개 경로가 남아 있습니다` (스크립트가 잡음), 또는 다른 경로까지 사라짐 |
 | 7 | 토큰 경로만 걸려 있으면 루트 `/` 는 404 다 (`install.sh` §8) | 확인 (서버 맥 자신에서만) | 외부망에서 `https://<DNS 이름>:8443/` | 설치 끝에서 `토큰 없는 … 가 NNN 를 돌려줍니다` 로 중단 |
 | 8 | (추정) 설치 스크립트의 URL 자가 확인은 서버 맥 자신에서 하므로 MagicDNS 가 tailnet 주소로 풀려 **Funnel(인터넷 경로)을 거치지 않았을 수 있다** | 자가 확인이 어느 경로를 탔는지는 미확인. 외부망 기기에서는 상태 URL 이 열렸다 | 반드시 외부망 기기로 [F](#f-동작-확인) | `→ 응답 확인` 이 나와도 외부에서는 안 열림 |
 | 9 | root 인 tailscaled 가 `~/Library/Application Support` 아래 파일을 권한 프롬프트 없이 읽는다 (`install.sh` DATA_DIR 주석) | 확인 (외부망 기기에서도) | 외부망 URL 이 JSON 을 돌려주는지 | `status.json` 은 갱신되는데 URL 이 오류(5xx·404)를 돌려줌 |
@@ -636,6 +637,8 @@ rm ~/openclaw-install.log
 ## 7. 알려진 한계
 
 - **status.json 심링크 바꿔치기.** funnel 은 root 인 tailscaled 가 경로의 파일을 서빙한다. 이 사용자 권한을 이미 가진 공격자가 `status.json`(또는 데이터 폴더)을 다른 파일로 가는 심링크로 바꾸면, 에이전트의 다음 쓰기(원자적 교체라 링크를 덮어쓴다)까지 그 대상 파일이 공개 URL 로 나갈 수 있다. 사용자 권한 탈취가 전제라 별도 방어는 두지 않는다.
+- **root 로 실행하는 tailscale CLI 는 사용자 쓰기 가능한 경로에 있다.** 스크립트는 tailscale CLI 를 PATH 에서 찾아 funnel 설정(과 sudo 없이 거부된 해제)을 sudo 로 실행한다. brew 판의 CLI 는 이 사용자가 쓸 수 있는 Homebrew 경로(`/opt/homebrew/Cellar/…`)에 있어, 이 사용자 권한을 가진 악성코드가 바꿔치기하거나 PATH 앞쪽에 가짜 `tailscale` 을 두면 그것이 root 로 실행된다. root 소유 CLI 를 요구하면 brew 판 설치 자체가 막히고, root 데몬 `tailscaled` 도 같은 Homebrew 경로에서 뜨므로(`sudo brew services start tailscale`) CLI 만 막아서는 경계가 생기지 않는다 — 그래서 막지 않고, 심링크를 푼 **실제 실행 파일 경로**를 보이고 그 파일을 실행한다. 비밀번호를 묻기 전에 보이는 것은 `install.sh` 첫 단계의 `tailscale:` 줄이다. `root 로 실행: …` 줄은 root 로 실행하기 직전에 찍히는데, funnel 설정에서는 sudo 인증(`Password:`)을 먼저 받으므로 비밀번호 입력 뒤에 보인다 — 그래서 경로는 첫 단계의 `tailscale:` 줄에서 확인한다. 경로가 Homebrew 의 tailscale(`…/Cellar/tailscale/<버전>/bin/tailscale`)이 아니면(예: 홈 폴더 아래) 비밀번호를 넣지 말고 Ctrl-C 로 멈춘다. sudo 자체는 `/usr/bin/sudo` 절대 경로로 부른다.
+- **토큰이 명령줄 인자로 지나간다.** funnel 설정은 경로를 `--set-path=/<토큰>` 인자로만 받는다 (tailscale `cmd/tailscale/cli/serve_v2.go` 확인). 그래서 토큰이 sudo 명령줄에 들어가 sudo 의 감사 기록(시스템 로그)에 남고, 명령이 도는 짧은 동안 `ps` 로 보인다 — macOS 는 다른 사용자의 프로세스 인자도 `ps` 로 보여 준다. 설치 끝의 URL 확인(`curl`)과 해제(`--set-path=/<옛토큰> off`)도 같다. 인자 말고 받는 길은 둘인데 쓰지 않았다: `tailscale serve set-raw` 는 stdin 의 JSON 으로 **serve 설정 전체**를 교체하는 문서화되지 않은 디버그 명령이라, 443 등 다른 포트 설정까지 읽어 고쳐 써야 하고 예고 없이 바뀔 수 있다. `serve set-config` 는 Tailscale Services 용이고 경로 지정이 없다. 노출 범위가 이 맥 안(로그인할 수 있는 로컬 사용자 — 인터넷이나 tailnet 의 다른 기기로는 나가지 않는다)으로 한정되고, 서버 맥은 1인 사용을 전제로 하며, 토큰은 어차피 이 사용자의 토큰 파일과 `tailscale serve status` 에 있다 — 그래서 위험을 수용한다. 로그·화면에 토큰이 남았다고 의심되면 [토큰 교체](#토큰-교체)(`--rotate-token`)로 옛 URL 을 무효로 만든다 — 기록에 남은 옛 토큰은 그 뒤로 쓸모가 없다. 단 새 토큰도 같은 방식으로 기록되므로, 교체는 이미 남은 기록을 무효로 만들 뿐 새 기록을 막지는 않는다.
 - **파일 모드 설정 전 짧은 틈.** 상태 파일은 임시 파일 교체 뒤 0644 로 모드를 고정하는데, 그 사이 잠깐은 umask 를 따른다. umask 가 느슨하면 그 틈에 다른 로컬 사용자가 쓸 수 있다. 서버 맥은 1인 사용을 전제로 한다.
 - **서버 호스트 신호의 실기 확인 기록이 없다.** 전원·디스크·CI 러너 판정 규칙과 JSON 형식은 자동 테스트가 지키지만, 실제 서버 맥에서 어댑터를 뽑거나 디스크를 채워 확인한 기록은 이 문서에 아직 없다. 전원 정보 해석의 테스트는 IOKit 의 키 이름으로 손수 만든 입력을 쓴다 — 실제 기기가 돌려주는 값과 다를 가능성은 남아 있다.
 - **잠자기를 끄지 않은 경우의 배터리 구동.** [D](#d-상시-가동) 의 `disablesleep` 을 적용하지 않은 서버가 배터리로 돌다 잠들면 에이전트가 멈춰, 🔴 `배터리 부족` 이나 그 알림 없이 ⚪ 연락 두절로 넘어갈 수 있다.

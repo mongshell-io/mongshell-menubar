@@ -92,52 +92,62 @@ enum Probe {
     /// got to run, whatever was printed.
     static let launcherFailureExitCodes: Set<Int32> = [126, 127]
 
-    /// Explicit gateway-unreachable signals — the output means DOWN.
+    /// Gateway-unreachable wording — DOWN, but only on a gateway line (see
+    /// `isGatewayLine`) and only with no "Gateway reachable." line. With the gateway stopped, openclaw exits 0 and every
+    /// line carrying one of these names it ("Gateway not reachable after
+    /// waiting 15 s.", "… (Gateway not reachable at ws://127.0.0.1:18789
+    /// (ECONNREFUSED)." — #157). Counted across the whole output, a refused
+    /// update check beside "Gateway reachable." kickstarted a healthy gateway.
     static let gatewayDownTokens = ["not reachable", "unreachable", "connection refused", "econnrefused"]
-    /// A connection was made or attempted and then failed: node's socket
-    /// errors (`ETIMEDOUT`, `ECONNRESET`, `EHOSTUNREACH`/`ENETUNREACH`,
-    /// `socket hang up`) and guessed CLI wording for a gateway that hung up
-    /// or never answered. Not a gateway signal on its own — node prints these
-    /// for any request (update check, plugin fetch), and reading them as one
-    /// kickstarted a healthy gateway every probe (#152). See
-    /// `isGatewayConnectionLost` for when they count. The list is built from
-    /// node's standard errors and guesses, not from a real openclaw failure —
-    /// revisit once one is captured.
-    static let gatewayConnectionLostTokens = [
-        "etimedout", "econnreset", "ehostunreach", "enetunreach", "socket hang up",
-        "gateway closed", "gateway timeout", "timeout after",
-    ]
-    /// What ties a connection-lost line to the gateway. Only the word itself:
-    /// neither the gateway's address nor its port is in the agent's code or
-    /// config, and a loopback address alone could be a local model server.
+    /// What ties a line to the gateway. Only the word itself: neither the
+    /// gateway's address nor its port is in the agent's code or config, and a
+    /// loopback address alone could be a local model server.
     static let gatewayMentionToken = "gateway"
+    /// How a healthy probe starts its gateway line ("Gateway reachable." —
+    /// #157). A prefix, not a bare `reachable` word: the tip openclaw prints
+    /// on every run ends "(requires a reachable gateway)."
+    static let gatewayReachablePrefix = "gateway reachable"
 
-    /// A non-bullet line that says the connection to the gateway was lost.
-    /// On a `- channel:` line the same words are that channel's upstream
-    /// error, which the gateway reported (🟡, not a restart).
-    private static func isGatewayConnectionLost<S: StringProtocol>(_ raw: S) -> Bool {
-        let line = raw.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !line.hasPrefix("-"), line.contains(gatewayMentionToken) else { return false }
-        return gatewayConnectionLostTokens.contains(where: line.contains)
+    /// A non-bullet line naming the gateway. On a `- channel:` line the same
+    /// words are that channel's own state, which the gateway reported.
+    private static func isGatewayLine(_ lowerLine: String) -> Bool {
+        !lowerLine.hasPrefix("-") && lowerLine.contains(gatewayMentionToken)
     }
 
-    /// The gateway said it is reachable: a whole `reachable` token not
-    /// negated as `not reachable` (`unreachable` is its own token).
-    private static func reportsReachable(_ lower: String) -> Bool {
-        let tokens = statusTokens(lower)
-        return tokens.indices.contains { i in
-            tokens[i] == "reachable" && (i == 0 || tokens[i - 1] != "not")
-        }
+    /// A CSI escape sequence (`ESC [ … final byte`) — the colour codes a
+    /// CLI adds when it thinks it is on a terminal. Left in, one in front of
+    /// "Gateway reachable." hides the positive signal's prefix.
+    static let ansiEscapePattern = "\u{1B}\\[[0-?]*[ -/]*[@-~]"
+
+    /// The probe output with colour codes removed. Every rule reads this, not
+    /// the raw output: a colour code in front of a channel's `- ` or inside
+    /// its `running` would hide the runtime state, and the config-only rule
+    /// would then call a healthy gateway down (#159).
+    private static func plain(_ text: String) -> String {
+        text.replacingOccurrences(of: ansiEscapePattern, with: "", options: .regularExpression)
+    }
+
+    /// Trimmed, lowercased lines that name the gateway, colour codes removed.
+    private static func gatewayLines(_ text: String) -> [String] {
+        plain(text).split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            .filter(isGatewayLine)
+    }
+
+    private static func reportsDown(_ gatewayLines: [String]) -> Bool {
+        gatewayLines.contains { line in gatewayDownTokens.contains(where: line.contains) }
+    }
+
+    private static func reportsReachable(_ gatewayLines: [String]) -> Bool {
+        gatewayLines.contains { $0.hasPrefix(gatewayReachablePrefix) }
     }
 
     /// The output shows openclaw got as far as talking about the gateway.
     /// Every DOWN token counts, so a real outage is always heard, never
     /// dodged as unobserved.
     private static func hasGatewaySignal(_ text: String) -> Bool {
-        let lower = text.lowercased()
-        return gatewayDownTokens.contains(where: lower.contains)
-            || reportsReachable(lower)
-            || text.split(whereSeparator: \.isNewline).contains(where: isGatewayConnectionLost)
+        let lines = gatewayLines(text)
+        return reportsDown(lines) || reportsReachable(lines)
     }
 
     /// Why a probe that printed something still went unheard, or nil when
@@ -151,7 +161,7 @@ enum Probe {
         if hasGatewaySignal(result.stdout) { return nil }
         // A channel line can only come from the gateway's answer, so the
         // channel rules judge it whatever the exit code says.
-        if result.stdout.split(whereSeparator: \.isNewline).contains(where: isChannelAnswerLine) { return nil }
+        if plain(result.stdout).split(whereSeparator: \.isNewline).contains(where: isChannelAnswerLine) { return nil }
         switch result.termination {
         case .exited(let status): return "openclaw CLI 가 게이트웨이 응답 없이 비정상 종료 (exit \(status))"
         case .signaled(let signal): return "openclaw CLI 가 게이트웨이 응답 없이 신호 \(signal)번으로 종료"
@@ -170,21 +180,19 @@ enum Probe {
 
     /// The verdict rules proper, for a probe that finished and said something.
     private static func verdict(fromOutput result: ProcessRunner.RunResult) -> ProbeVerdict {
-        let text = result.stdout
-        let lower = text.lowercased()
+        let text = plain(result.stdout)
+        let gateway = gatewayLines(text)
 
-        // Explicit gateway-unreachable signals → DOWN. (Checked before the
-        // positive "reachable" test below, since "not reachable"/"unreachable"
-        // both contain the substring "reachable".)
-        if gatewayDownTokens.contains(where: lower.contains) { return .down }
+        // The gateway said it can't be reached → DOWN — unless a line says
+        // "Gateway reachable.": that is the gateway answering, the direct
+        // evidence, and a DOWN token beside it is about something the
+        // gateway reaches (e.g. "[secrets] gateway secrets.resolve: vault
+        // unreachable"). A stopped gateway prints no such line (#157).
+        if reportsDown(gateway) && !reportsReachable(gateway) { return .down }
 
         let lines = text
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
-
-        // The gateway stalled or dropped the connection — unless the same
-        // output says it is reachable, which outranks a stray socket error.
-        if !reportsReachable(lower) && lines.contains(where: isGatewayConnectionLost) { return .down }
 
         let channelLines = lines.filter(isChannelLine)
 
@@ -194,7 +202,7 @@ enum Probe {
         // reachable signal at all) is treated as the gateway being down —
         // a nonzero exit only gets here with a gateway signal in the output.
         if channelLines.isEmpty {
-            if result.termination == .exited(status: 0) && reportsReachable(lower) {
+            if result.termination == .exited(status: 0) && reportsReachable(gateway) {
                 return .ok(detail: "채널 없음")
             }
             return .down
@@ -213,9 +221,34 @@ enum Probe {
             return .ok(detail: publicDetail(running.map(channelName), fallback: "정상"))
         }
 
+        // Channels listed but none carries a runtime state: that is openclaw
+        // listing them from config alone, which it does when the gateway gave
+        // it nothing (#157 capture 2). Without "Gateway reachable." it is the
+        // backup to the DOWN wording above — a reworded "not reachable" line
+        // must not turn a stopped gateway green (#159).
+        if !reportsReachable(gateway) && !channelLines.contains(where: lineHasRuntimeState) {
+            return .down
+        }
+
         // Channels listed but only transient states (e.g. `disconnected`): the
         // gateway answered and nothing is degraded, so this is not DOWN.
         return .ok(detail: "정상")
+    }
+
+    /// Words only the gateway's runtime answer puts on a channel line. The
+    /// config-only listing of a stopped gateway carries `enabled`,
+    /// `configured`, `mode:` and credentials, never one of these (#157).
+    static let channelRuntimeStateTokens: Set<String> = [
+        "running", "not-running", "stopped", "connected", "disconnected",
+    ]
+
+    /// A channel line reports a state the gateway observed, not just config.
+    /// `error:` and `health:` count too — `lineIsDegraded`/`isChannelLine`
+    /// read them as state.
+    private static func lineHasRuntimeState(_ line: String) -> Bool {
+        let lower = line.lowercased()
+        if lower.contains("error:") || lower.contains("health:") { return true }
+        return statusTokens(lower).contains { channelRuntimeStateTokens.contains(String($0)) }
     }
 
     /// A line describing a channel: the `- Telegram default: …` shape, or any

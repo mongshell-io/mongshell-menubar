@@ -122,7 +122,8 @@ done
 command -v swift >/dev/null || die "swift 가 없습니다. 'xcode-select --install' 로 Command Line Tools 를 설치하세요."
 command -v openssl >/dev/null || die "openssl 이 없습니다."
 
-echo "  tailscale: $TAILSCALE ($DNS_NAME)"
+# 이 파일이 뒤에서 sudo 로 실행된다 — 비밀번호를 묻기 전에 실제 경로를 보인다.
+echo "  tailscale: $(real_path "$TAILSCALE") ($DNS_NAME)"
 echo "  openclaw : $OPENCLAW"
 
 # ── 2. 토큰 ────────────────────────────────────────────────────────────────
@@ -341,6 +342,8 @@ step "tailscale funnel 설정"
 # 새로 발급한 토큰은 여기까지 형식 검사를 거치지 않았다. 비어 있으면 --set-path=/ 가
 # 되어 상태 파일이 루트에 걸리므로, root 로 넘기기 전에 확인한다.
 [[ "$TOKEN" =~ $TOKEN_PATTERN ]] || die "토큰 형식이 올바르지 않습니다 (32자리 hex 가 아님). '$TOKEN_FILE' 을 지우고 다시 실행하세요."
+# funnel 은 경로를 인자로만 받아 토큰이 sudo 명령줄(감사 로그·ps)에 남는다. 수용 근거와
+# 대안을 쓰지 않은 이유는 README § 7 알려진 한계.
 FUNNEL_ARGS=(funnel --bg --https="$FUNNEL_PORT" --set-path="/$TOKEN")
 # help 를 먼저 변수로 받는다. 'cmd | grep -q' 는 grep 이 일치 즉시 끝나 cmd 가
 # SIGPIPE 로 죽을 수 있고, pipefail 아래에선 그게 "없음" 으로 읽힌다. help 가
@@ -356,10 +359,10 @@ FUNNEL_ARGS+=("$STATUS_FILE")
 # 환경에서는 통하지 않았다 (원인 미확인). 그래서 이 명령은 root 로 실행한다.
 echo "  파일을 서빙하는 funnel 설정은 관리자 권한이 필요해 sudo 로 실행합니다 (비밀번호를 물을 수 있습니다)."
 # 인증 실패와 tailscale 실패를 다른 메시지로 알리려고 인증을 먼저 따로 받는다.
-# sudo 는 절대 경로로 부른다 — PATH 앞쪽(/opt/homebrew/bin 등)은 사용자 쓰기 가능이다.
-/usr/bin/sudo -v || die "sudo 인증 실패. 비밀번호를 입력할 수 있는 터미널에서 직접 실행했는지, 이 계정이 관리자인지 확인하세요.
+# sudo 는 lib.sh 의 절대 경로($SUDO)로 부른다 — PATH 앞쪽(/opt/homebrew/bin 등)은 사용자 쓰기 가능이다.
+"$SUDO" -v || die "sudo 인증 실패. 비밀번호를 입력할 수 있는 터미널에서 직접 실행했는지, 이 계정이 관리자인지 확인하세요.
 에이전트는 이미 설치돼 돌고 있으니 다시 실행하면 됩니다."
-if ! /usr/bin/sudo "$TAILSCALE" "${FUNNEL_ARGS[@]}"; then
+if ! sudo_tailscale "$TAILSCALE" "${FUNNEL_ARGS[@]}"; then
   die "tailscale funnel 설정 실패 (위 tailscale 출력 참조). 관리 콘솔의 HTTPS 인증서·funnel nodeAttr 를 확인하세요 (README).
 에이전트는 이미 설치돼 돌고 있으니 고친 뒤 다시 실행하면 됩니다."
 fi
@@ -389,7 +392,7 @@ case "$ROOT_CODE" in
     # 공개는 root 로 열었는데 off 가 sudo 없이 되는지는 실기 미확인이라, 실패하면
     # root 로 한 번 더 시도한다 — 여는 쪽만 되고 닫는 쪽이 막히는 일이 없게.
     if "$TAILSCALE" funnel --https="$FUNNEL_PORT" off \
-      || /usr/bin/sudo "$TAILSCALE" funnel --https="$FUNNEL_PORT" off; then
+      || sudo_tailscale "$TAILSCALE" funnel --https="$FUNNEL_PORT" off; then
       PORT_OFF="포트 $FUNNEL_PORT 의 funnel 공개는 내렸습니다 (우리 경로 포함)."
     else
       PORT_OFF="포트 $FUNNEL_PORT 의 funnel 공개를 내리는 데도 실패했습니다 — 지금도 공개돼 있을 수 있으니 'tailscale funnel --https=$FUNNEL_PORT off' 로 직접 끄세요 (권한 거부면 앞에 sudo)."

@@ -79,9 +79,13 @@ struct UsageSession: Equatable {
         markSignedOut(now: now)
     }
 
-    /// A refresh is about to poll with this token.
+    /// A refresh is about to poll with this token. Under the lapsed-login
+    /// notice no account is named until a fetch works (`loaded`): the token
+    /// read may be the dead one the Keychain could not confirm (#147), and
+    /// naming it showed "내 로그인" with a sign-out button under the notice
+    /// for as long as its renewal was out (#156).
     mutating func begin(accessToken: String, source: DataSource) {
-        accountSource = accessToken == rejectedAccessToken ? nil : source
+        if !expiredUnresolved { accountSource = accessToken == rejectedAccessToken ? nil : source }
         if case .signedOut = loadState { loadState = .loading }
     }
 
