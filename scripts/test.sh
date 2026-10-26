@@ -30,6 +30,8 @@ env -u MONGSHELL_CLAUDE_SETTINGS "$OUT/tests"
 AGENT="$ROOT/Sources/mongshell-openclaw-agent"
 echo "▶ compiling openclaw agent tests"
 swiftc -o "$OUT/agent-tests" \
+  "$AGENT/AgentCycle.swift" \
+  "$AGENT/Options.swift" \
   "$AGENT/Probe.swift" \
   "$AGENT/ProcessRunner.swift" \
   "$AGENT/Heal.swift" \

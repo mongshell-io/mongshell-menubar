@@ -5,7 +5,9 @@ import Foundation
 // Each case pins a rule whose mutation would silently change what the menubar
 // clients see or make the agent restart the wrong thing: probe verdict order,
 // heal timing, the self-label exclusion, the host thresholds (CI runners
-// included), and the status-file wire format.
+// included), the status-file wire format, the order of one cycle (an unheard
+// probe is neither published nor counted; a heal is published even when its
+// re-probe goes unheard) and the option rules.
 //
 // Run with `./scripts/test.sh`, which compiles this against the real sources
 // (main.swift excluded — it's the agent's entry point).
@@ -853,6 +855,123 @@ do {
     check("깨진 파일 → lastHeal nil", StatusFile.readLastHeal(from: junk) == nil)
     check("파일 없음 → lastHeal nil",
           StatusFile.readLastHeal(from: root.appendingPathComponent("absent.json")) == nil)
+}
+
+// MARK: - 옵션 파싱 (#105)
+
+do {
+    func run(_ args: [String]) -> Options? {
+        if case .run(let o) = Options.parse(args) { return o }
+        return nil
+    }
+    let base = ["--status-file", "/tmp/s.json"]
+    check("기본값 — 60초, 자동복구 켬, 자기 레이블 기본",
+          run(base).map { $0.interval == 60 && $0.autoHeal && $0.selfLabel == Options.defaultSelfLabel
+                          && $0.gatewayLabel == nil && $0.buildVersion == nil } == true)
+    check("--status-file 없음 → 오류",
+          Options.parse([]) == .invalid("--status-file 은 필수입니다"))
+    check("값 없는 플래그 → 오류 (다음 플래그를 값으로 먹지 않는다)",
+          Options.parse(["--status-file", "--no-auto-heal"]) == .invalid("--status-file 에 값이 필요합니다")
+          && Options.parse(base + ["--interval"]) == .invalid("--interval 에 값이 필요합니다"))
+    check("--interval 정수 아님 → 오류",
+          Options.parse(base + ["--interval", "1m"]) == .invalid("--interval 은 정수여야 합니다: 1m"))
+    check("--interval 하한·상한으로 접힘",
+          run(base + ["--interval", "5"])?.interval == Options.minimumInterval
+          && run(base + ["--interval", "999999999"])?.interval == Options.maximumInterval)
+    check("모든 옵션이 실린다",
+          run(base + ["--gateway-label", "g", "--no-auto-heal", "--self-label", "me",
+                      "--build-version", "v1.2.0+3", "--interval", "120"])
+              .map { $0.gatewayLabel == "g" && !$0.autoHeal && $0.selfLabel == "me"
+                     && $0.buildVersion == "v1.2.0+3" && $0.interval == 120 } == true)
+    check("모르는 인자 → 오류", Options.parse(base + ["--bogus"]) == .invalid("알 수 없는 인자: --bogus"))
+    check("--help → 도움말", Options.parse(["--help"]) == .help && Options.parse(base + ["-h"]) == .help)
+    check("상태 파일 경로는 정규화", run(["--status-file", "/tmp/a/../s.json"])?.statusFile.path == "/tmp/s.json")
+}
+
+// MARK: - 한 사이클의 순서 (#105)
+
+/// The world one cycle sees, scripted: probes answer in order, everything
+/// the cycle does is recorded.
+@MainActor final class FakeWorld {
+    var probes: [ProbeObservation]
+    var clock = Date(timeIntervalSince1970: 1_790_000_000)
+    var kickstarts: [String] = []
+    var published: [(verdict: ProbeVerdict, at: Date, lastHeal: HealRecord?)] = []
+    var slept: [TimeInterval] = []
+    var labelLookups = 0
+    var kickstartOK = true
+
+    init(_ probes: [ProbeObservation]) { self.probes = probes }
+
+    var world: AgentCycle.World {
+        AgentCycle.World(
+            // The last answer repeats, so a cycle that probes more than the
+            // script expects fails a check instead of trapping.
+            probe: { self.probes.count > 1 ? self.probes.removeFirst() : self.probes[0] },
+            gatewayLabel: { self.labelLookups += 1; return "ai.openclaw.gateway" },
+            kickstart: { self.kickstarts.append($0); return self.kickstartOK },
+            publish: { self.published.append(($0, $1, $2)) },
+            log: { _ in },
+            sleep: { self.slept.append($0); self.clock.addTimeInterval($0) },
+            now: { self.clock })
+    }
+}
+
+// Top-level code here runs on the main thread but is not checked as main
+// actor isolated, and `AgentCycle` is.
+MainActor.assumeIsolated {
+    let down = ProbeObservation.observed(.down)
+    let ok = ProbeObservation.observed(.ok(detail: "Slack main"))
+
+    var c = AgentCycle(autoHeal: true, lastHeal: nil)
+    let w = FakeWorld([ok])
+    check("정상 → 게시, 복구 없음",
+          c.run(w.world) == .published && w.kickstarts.isEmpty && w.published.count == 1)
+
+    var c2 = AgentCycle(autoHeal: true, lastHeal: nil)
+    let w2 = FakeWorld([down, down, ok])
+    _ = c2.run(w2.world)
+    check("다운 한 번 → 게시만, 복구 없음", w2.kickstarts.isEmpty && w2.published.last?.verdict == .down)
+    let outcome = c2.run(w2.world)
+    check("다운 두 번째 → kickstart, 3초 대기 후 재probe 결과로 게시",
+          outcome == .published && w2.kickstarts == ["ai.openclaw.gateway"]
+          && w2.slept == [AgentCycle.postHealSettle] && w2.published.last?.verdict == .ok(detail: "Slack main"))
+    check("복구 기록이 게시에 실린다 (원인 = 복구 전 판정)",
+          w2.published.last?.lastHeal.map { $0.ok && $0.reason == "down" } == true && c2.lastHeal != nil)
+    check("레이블은 복구 때만 찾는다", w2.labelLookups == 1)
+
+    // The invariant main.swift relied on by hand: a heal whose re-probe went
+    // unheard is still published — the next process reads its cooldown from
+    // the file — and with the verdict and time from before the heal.
+    var c3 = AgentCycle(autoHeal: true, lastHeal: nil)
+    let w3 = FakeWorld([down, down, .unobserved(reason: "빈 출력")])
+    _ = c3.run(w3.world)
+    let before = w3.clock
+    let o3 = c3.run(w3.world)
+    check("복구 후 재probe 못 들음 → 재시작 신호", o3 == .unobserved(reason: "빈 출력"))
+    check("…그래도 복구 기록은 먼저 게시된다 (다음 프로세스의 쿨다운)",
+          w3.published.count == 2 && w3.published.last?.lastHeal != nil)
+    check("…복구 전 판정과 그 관측 시각으로",
+          w3.published.last?.verdict == .down && w3.published.last?.at == before)
+
+    var c4 = AgentCycle(autoHeal: true, lastHeal: nil)
+    let w4 = FakeWorld([.unobserved(reason: "spawn 실패"), down, down])
+    check("첫 probe 못 들음 → 게시 없이 재시작 신호",
+          c4.run(w4.world) == .unobserved(reason: "spawn 실패") && w4.published.isEmpty)
+    _ = c4.run(w4.world)
+    check("못 들은 probe 는 복구 횟수에 안 센다", w4.kickstarts.isEmpty)
+
+    var c5 = AgentCycle(autoHeal: false, lastHeal: nil)
+    let w5 = FakeWorld([down, down, down, down, down])
+    for _ in 0..<5 { _ = c5.run(w5.world) }
+    check("자동복구 꺼짐 → 다운이 이어져도 kickstart 없음", w5.kickstarts.isEmpty && w5.published.count == 5)
+
+    let recent = HealRecord(at: Date(timeIntervalSince1970: 1_790_000_000 - 60), ok: true, reason: "down")
+    var c6 = AgentCycle(autoHeal: true, lastHeal: recent)
+    let w6 = FakeWorld([down, down])
+    _ = c6.run(w6.world); _ = c6.run(w6.world)
+    check("상태 파일의 지난 복구가 쿨다운 안 → 다시 복구하지 않는다", w6.kickstarts.isEmpty)
+    check("…지난 복구 기록은 그대로 게시", w6.published.last?.lastHeal == recent)
 }
 
 // MARK: - 결과
