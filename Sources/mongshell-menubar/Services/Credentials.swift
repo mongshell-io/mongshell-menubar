@@ -81,10 +81,11 @@ enum CredentialStore {
         var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
             status = SecItemAdd(attrs as CFDictionary, nil)
-        } else if status != errSecSuccess, !OwnTokenLookup.isTransient(status) {
+        } else if status != errSecSuccess, !OwnTokenLookup.isTransient(status), status != errSecUserCanceled {
             // An item this build may not update — recreating it is the way
-            // back to an item we own. A locked Keychain is not retried this
-            // way: the delete could land and the add fail.
+            // back to an item we own. Not while the Keychain is locked, nor
+            // when the user just cancelled the prompt: the delete could land
+            // and the add fail.
             AuthDebugLog.write("own token update refused status=\(status); recreating")
             SecItemDelete(query as CFDictionary)
             status = SecItemAdd(attrs as CFDictionary, nil)
