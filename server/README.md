@@ -186,7 +186,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 **성공하면 이렇게 보인다** (각 `▶` 는 스크립트 단계, 값은 예시):
 ```
 ▶ 사전조건 확인
-  tailscale: /opt/homebrew/bin/tailscale (server-mac.tail1234.ts.net)
+  tailscale: /opt/homebrew/Cellar/tailscale/1.102.4/bin/tailscale (server-mac.tail1234.ts.net)   ← 뒤에서 sudo 로 실행할 실제 파일
   openclaw : /opt/homebrew/bin/openclaw
 ▶ URL 토큰 준비
   새 토큰 발급                 ← 재실행이면 "기존 토큰 재사용"
@@ -204,6 +204,7 @@ tailscale status --json | plutil -extract Self.Tags json -o - -     # → ["tag:
 ▶ tailscale funnel 설정
   파일을 서빙하는 funnel 설정은 관리자 권한이 필요해 sudo 로 실행합니다 (비밀번호를 물을 수 있습니다).
   Password:                    ← 맥 로그인 비밀번호 (최근에 인증했으면 안 나온다)
+  root 로 실행: /opt/homebrew/Cellar/tailscale/1.102.4/bin/tailscale (현재 사용자가 쓸 수 있는 경로 — brew 판이면 정상)
   (tailscale 출력)
 ▶ 공개 URL 확인
   → 응답 확인
@@ -505,7 +506,7 @@ funnel 경로 → LaunchAgent → 데이터 폴더(토큰·설치 옵션 포함)
 | `토큰 형식이 올바르지 않습니다 (32자리 hex 가 아님)…` | 새 토큰 발급(`openssl rand -hex 16`)이 기대한 값을 내지 못함 | 메시지의 토큰 파일을 지우고 재실행. 반복되면 `openssl rand -hex 16` 을 직접 실행해 출력 확인 |
 | `sudo 인증 실패…` | sudo 가 비밀번호를 받지 못함 (터미널 없이 실행·비밀번호 오류), 관리자 계정이 아님 | 터미널에서 직접 재실행. 이 시점에 에이전트는 이미 설치돼 돌고 있으므로 재실행은 안전하다 |
 | `tailscale funnel 설정 실패…` | HTTPS 인증서·funnel nodeAttr 미설정 등 — 바로 위 tailscale 출력이 원인을 말한다 | [C](#c-tailscale-관리-콘솔) 재확인 후 재실행. 에이전트는 이미 설치돼 돌고 있다 |
-| `401 Unauthorized: must be root, or be an operator and able to run 'sudo tailscale' to serve a path or Unix socket` (tailscale 의 출력) | 파일을 서빙하는 serve 설정을 sudo 없이 보냄 — funnel 설정을 sudo 없이 실행하는 옛 `install.sh`, 또는 명령을 손으로 실행 | `install.sh` 가 funnel 설정을 sudo 로 실행하는 판인지 확인하고(`grep -n 'sudo "\$TAILSCALE"' server/install.sh`), 손으로 실행했다면 같은 명령 앞에 `sudo` 를 붙인다 |
+| `401 Unauthorized: must be root, or be an operator and able to run 'sudo tailscale' to serve a path or Unix socket` (tailscale 의 출력) | 파일을 서빙하는 serve 설정을 sudo 없이 보냄 — funnel 설정을 sudo 없이 실행하는 옛 `install.sh`, 또는 명령을 손으로 실행 | `install.sh` 가 funnel 설정을 sudo 로 실행하는 판인지 확인하고(`grep -nE 'sudo(_tailscale)? "\$TAILSCALE"' server/install.sh`), 손으로 실행했다면 같은 명령 앞에 `sudo` 를 붙인다 |
 | `경고: 이 맥에서 URL 응답을 확인하지 못했습니다 (전파 지연일 수 있음)…` | 인증서 첫 발급 지연·자기 자신 접속 불가 | 몇 분 뒤 외부망 기기로 [F](#f-동작-확인) |
 | `토큰 없는 https://…:8443/ 가 NNN 를 돌려줍니다…` | 루트가 404 가 아님 = 토큰 외 무언가 공개됨. 스크립트가 8443 funnel 을 내렸다 | `tailscale funnel status` 로 8443 의 다른 핸들러를 끄고 재설치. "내리는 데도 실패했습니다" 가 함께 나오면 `tailscale funnel --https=8443 off` 를 직접 |
 | `경고: …에 닿지 못해 루트 비공개를 확인하지 못했습니다…` / `…예상한 404 가 아닌 NNN…` | 이 맥에서 확인 불가 | 외부망 기기로 루트가 404 인지 확인 |
@@ -636,6 +637,7 @@ rm ~/openclaw-install.log
 ## 7. 알려진 한계
 
 - **status.json 심링크 바꿔치기.** funnel 은 root 인 tailscaled 가 경로의 파일을 서빙한다. 이 사용자 권한을 이미 가진 공격자가 `status.json`(또는 데이터 폴더)을 다른 파일로 가는 심링크로 바꾸면, 에이전트의 다음 쓰기(원자적 교체라 링크를 덮어쓴다)까지 그 대상 파일이 공개 URL 로 나갈 수 있다. 사용자 권한 탈취가 전제라 별도 방어는 두지 않는다.
+- **root 로 실행하는 tailscale CLI 는 사용자 쓰기 가능한 경로에 있다.** 스크립트는 tailscale CLI 를 PATH 에서 찾아 funnel 설정(과 sudo 없이 거부된 해제)을 sudo 로 실행한다. brew 판의 CLI 는 이 사용자가 쓸 수 있는 Homebrew 경로(`/opt/homebrew/Cellar/…`)에 있어, 이 사용자 권한을 가진 악성코드가 바꿔치기하거나 PATH 앞쪽에 가짜 `tailscale` 을 두면 그것이 root 로 실행된다. root 소유 CLI 를 요구하면 brew 판 설치 자체가 막히고, root 데몬 `tailscaled` 도 같은 Homebrew 경로에서 뜨므로(`sudo brew services start tailscale`) CLI 만 막아서는 경계가 생기지 않는다 — 그래서 막지 않고, 심링크를 푼 **실제 실행 파일 경로**를 비밀번호를 묻기 전에 보이고(`install.sh` 첫 단계의 `tailscale:` 줄, sudo 직전의 `root 로 실행: …` 줄) 그 파일을 실행한다. 경로가 Homebrew 의 tailscale(`…/Cellar/tailscale/<버전>/bin/tailscale`)이 아니면(예: 홈 폴더 아래) 비밀번호를 넣지 말고 Ctrl-C 로 멈춘다. sudo 자체는 `/usr/bin/sudo` 절대 경로로 부른다.
 - **파일 모드 설정 전 짧은 틈.** 상태 파일은 임시 파일 교체 뒤 0644 로 모드를 고정하는데, 그 사이 잠깐은 umask 를 따른다. umask 가 느슨하면 그 틈에 다른 로컬 사용자가 쓸 수 있다. 서버 맥은 1인 사용을 전제로 한다.
 - **서버 호스트 신호의 실기 확인 기록이 없다.** 전원·디스크·CI 러너 판정 규칙과 JSON 형식은 자동 테스트가 지키지만, 실제 서버 맥에서 어댑터를 뽑거나 디스크를 채워 확인한 기록은 이 문서에 아직 없다. 전원 정보 해석의 테스트는 IOKit 의 키 이름으로 손수 만든 입력을 쓴다 — 실제 기기가 돌려주는 값과 다를 가능성은 남아 있다.
 - **잠자기를 끄지 않은 경우의 배터리 구동.** [D](#d-상시-가동) 의 `disablesleep` 을 적용하지 않은 서버가 배터리로 돌다 잠들면 에이전트가 멈춰, 🔴 `배터리 부족` 이나 그 알림 없이 ⚪ 연락 두절로 넘어갈 수 있다.

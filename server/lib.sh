@@ -19,6 +19,28 @@ SERVE_EXCERPT_BYTES=200
 # 환경변수로 받지 않고 여기서 고정한다 (테스트만 source 뒤에 바꾼다).
 SUDO=/usr/bin/sudo
 
+# $1=경로. 심링크를 푼 실제 경로를 출력한다 (풀지 못하면 받은 그대로).
+real_path() {
+  /bin/realpath "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
+# $1=tailscale CLI, 나머지=그 인자. CLI 를 root 로 실행한다 — 이 스크립트들이 sudo 로
+# 부르는 것은 이것뿐이다. CLI 는 PATH 에서 찾으므로 심링크를 풀어 실제로 실행할 파일을
+# 정하고, 그 경로를 보인 뒤 그 파일을 실행한다 (보인 것과 실행하는 것이 같게).
+# brew 판은 CLI 가 사용자 쓰기 가능한 Cellar 에 있고 root 데몬 tailscaled 도 같은 곳에서
+# 뜨므로, 쓰기 가능하다고 막지 않고 알리기만 한다 (README § 7 알려진 한계).
+sudo_tailscale() {
+  local real
+  real="$(real_path "$1")"
+  shift
+  if [[ -w "$real" || -w "$(dirname "$real")" ]]; then
+    echo "  root 로 실행: $real (현재 사용자가 쓸 수 있는 경로 — brew 판이면 정상)"
+  else
+    echo "  root 로 실행: $real"
+  fi
+  "$SUDO" "$real" "$@"
+}
+
 # $1=tailscale CLI, $2="<DNS 이름>:<포트>"
 # 그 포트에 걸린 serve/funnel 핸들러를 한 줄에 하나씩 출력한다 — 웹 경로는 "/…",
 # TCP 포워딩은 "tcp:…". 설정을 읽거나 해석하지 못하면 비0 으로 끝난다
@@ -74,7 +96,7 @@ unpublish_path() {
   grep -qxF -- "$path" <<<"$handlers" || return 0
   if ! "$cli" "${off_args[@]}"; then
     echo "  sudo 없이 해제하지 못해 sudo 로 다시 시도합니다 (비밀번호를 물을 수 있습니다)."
-    "$SUDO" "$cli" "${off_args[@]}" \
+    sudo_tailscale "$cli" "${off_args[@]}" \
       || die "옛 공개 경로 해제 실패 (sudo 로도 실패). 'tailscale funnel status' 로 확인하고 '$manual' 로 끈 뒤 다시 실행하세요."
   fi
   handlers="$(serve_handlers "$cli" "$host_port")" \

@@ -220,6 +220,34 @@ printf '%s' '{}' >"$FAKE_STATE"; : >"$FAKE_LOG"
 ( unpublish_path "$FAKE_TS2" "$HP" "/abc" ) >/dev/null 2>&1
 check "걸려 있지 않은 경로는 off 를 부르지 않는다" "0|" "$?|$(paste -sd, - <"$FAKE_LOG")"
 
+echo "▸ root 로 실행하는 CLI 경로 sudo_tailscale (#159)"
+# PATH 에서 찾은 CLI 는 심링크일 수 있다 (brew 판: bin/ → Cellar/). sudo 에는 푼
+# 경로가 넘어가고, 같은 경로가 화면에 보여야 한다. A stand-in sudo records its argv.
+REAL_DIR="$WORK/Cellar/tailscale/bin"
+mkdir -p "$REAL_DIR" "$WORK/bin"
+printf '#!/bin/bash\n' >"$REAL_DIR/tailscale"
+chmod +x "$REAL_DIR/tailscale"
+ln -s "$REAL_DIR/tailscale" "$WORK/bin/tailscale"
+REAL_TS="$(/bin/realpath "$REAL_DIR/tailscale")"
+ARGV_SUDO="$WORK/argv-sudo"
+cat >"$ARGV_SUDO" <<'SH'
+#!/bin/bash
+printf '%s\n' "$@" >"$SUDO_ARGV"
+SH
+chmod +x "$ARGV_SUDO"
+export SUDO_ARGV="$WORK/sudo.argv"
+OUT="$(SUDO="$ARGV_SUDO" sudo_tailscale "$WORK/bin/tailscale" funnel --https=8443 off)"
+check "sudo 에는 심링크를 푼 실제 파일과 인자가 그대로" "$REAL_TS,funnel,--https=8443,off" \
+  "$(paste -sd, - <"$SUDO_ARGV")"
+check "실행하는 실제 경로를 보인다" "1" "$(grep -cF "root 로 실행: $REAL_TS" <<<"$OUT")"
+check "사용자 쓰기 가능하면 그렇다고 알린다" "1" "$(grep -c '현재 사용자가 쓸 수 있는 경로' <<<"$OUT")"
+chmod 0555 "$REAL_DIR/tailscale" "$REAL_DIR"
+OUT="$(SUDO="$ARGV_SUDO" sudo_tailscale "$WORK/bin/tailscale" status)"
+check "파일·디렉토리 모두 쓸 수 없으면 쓰기 가능 표시 없음" "0" "$(grep -c '현재 사용자가 쓸 수 있는 경로' <<<"$OUT")"
+chmod 0755 "$REAL_DIR"
+check "sudo 의 종료 코드를 그대로 돌려준다" "7" \
+  "$(SUDO="$WORK/exit7" ; printf '#!/bin/bash\nexit 7\n' >"$SUDO"; chmod +x "$SUDO"; sudo_tailscale "$WORK/bin/tailscale" status >/dev/null; echo $?)"
+
 echo ""
 if [[ ${#FAILURES[@]} -eq 0 ]]; then
   echo "✓ $CASES cases passed"
