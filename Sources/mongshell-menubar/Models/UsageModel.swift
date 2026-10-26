@@ -392,7 +392,8 @@ final class UsageModel: ObservableObject {
         }
     }
 
-    /// Shows signed-out at once; the Keychain delete follows off the main
+    /// Shows signed-out at once, and lifts a remembered decline with it
+    /// (`UsageSession.signedOut`); the Keychain delete follows off the main
     /// thread (#141). A refresh that reads after it was queued behind the
     /// delete, so it does not bring the token back.
     func signOut() async {

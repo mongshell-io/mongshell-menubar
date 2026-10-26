@@ -639,6 +639,28 @@ do {
     e4.noToken(now: now)
     check("…and it stays resolved", e4.loadState == .signedOut)
 
+    // #143 — the remembered decline is lifted only where the user acts.
+    var d = UsageSession()
+    d.loaded(snap, source: .claudeCodeCLI)
+    d.setKeychainDeclined(true)
+    d.noToken(now: now)
+    d.rejected(accessToken: "cli", now: now)
+    d.failed("x", now: now)
+    d.rateLimited(retryAfter: nil, now: now, pollBase: 180)
+    d.expired(refreshToken: "r1", now: now)
+    d.loaded(snap, source: .claudeCodeCLI)
+    check("polls do not lift a remembered decline", d.keychainDeclined)
+    var d1 = d
+    d1.allowKeychainAgain()
+    check("signing in or a manual refresh lifts it", !d1.keychainDeclined)
+    var d2 = d
+    d2.signedOut(now: now)
+    check("signing out lifts it — the login banner, not 다시 허용, after the item is gone",
+          !d2.keychainDeclined
+          && UsagePresentation(loadState: d2.loadState, accountSource: d2.accountSource,
+                               limitsUnread: false, keychainDeclined: d2.keychainDeclined, now: now).banner
+              == .signedOut)
+
     var p = UsageSession()
     p.present(snap, state: .loaded(.oauthLogin))
     check("snapshot hook names the account only for a loaded state", p.accountSource == .oauthLogin)

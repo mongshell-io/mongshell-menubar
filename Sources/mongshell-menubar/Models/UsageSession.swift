@@ -40,8 +40,8 @@ struct UsageSession: Equatable {
     /// then neither read nor store the own item — each try put the dialog
     /// back (#143). Set from what each read or save answered
     /// (`UsageRefreshPolicy.declined`), lifted only where the user acts
-    /// (`allowKeychainAgain()`); a relaunch starts without it, like GitHub's
-    /// `ghKeychainDenied`. The popover's banner reads it (#146).
+    /// (`allowKeychainAgain()`, `signedOut`); a relaunch starts without it,
+    /// like GitHub's `ghKeychainDenied`. The popover's banner reads it (#146).
     private(set) var keychainDeclined = false
 
     static let backoffCap = 4
@@ -140,8 +140,12 @@ struct UsageSession: Equatable {
         expiredUnresolved = false
     }
 
+    /// Signing out is the user acting too, and it deletes the item the
+    /// declined prompt was for: a decline left standing would keep saying
+    /// "Keychain 접근을 취소했어요" with [다시 허용] over the login banner.
     mutating func signedOut(now: Date) {
         expiredUnresolved = false
+        keychainDeclined = false
         accountSource = nil
         loadState = .signedOut
         snapshot = .sample(now: now)
