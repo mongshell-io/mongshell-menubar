@@ -599,17 +599,22 @@ do {
     let other = OAuthToken(accessToken: "b", refreshToken: "rb", expiresAt: nil)
     let locked = OwnTokenLookup.unavailable(errSecInteractionNotAllowed)
 
+    let holdsR1 = KeychainExpectation.holds(refreshToken: "r1")
     check("Keychain holds the token we started from → current",
-          UsageRefreshPolicy.keychainMatch(own: .found(old), expects: "r1") == .current)
+          UsageRefreshPolicy.keychainMatch(own: .found(old), expects: holdsR1) == .current)
     check("Keychain holds another login → changed",
-          UsageRefreshPolicy.keychainMatch(own: .found(other), expects: "r1") == .changed)
+          UsageRefreshPolicy.keychainMatch(own: .found(other), expects: holdsR1) == .changed)
     check("Keychain emptied (signed out elsewhere) → changed",
-          UsageRefreshPolicy.keychainMatch(own: .missing, expects: "r1") == .changed)
+          UsageRefreshPolicy.keychainMatch(own: .missing, expects: holdsR1) == .changed)
     check("Keychain locked or refused → unknown, not changed",
-          UsageRefreshPolicy.keychainMatch(own: locked, expects: "r1") == .unknown
-          && UsageRefreshPolicy.keychainMatch(own: .refused(errSecAuthFailed), expects: "r1") == .unknown)
+          UsageRefreshPolicy.keychainMatch(own: locked, expects: holdsR1) == .unknown
+          && UsageRefreshPolicy.keychainMatch(own: .refused(errSecAuthFailed), expects: holdsR1) == .unknown)
+    check("our own failed save emptied it → still current, not a sign-out",
+          UsageRefreshPolicy.keychainMatch(own: .missing, expects: .maybeEmpty) == .current)
+    check("…but anything written there since → changed",
+          UsageRefreshPolicy.keychainMatch(own: .found(other), expects: .maybeEmpty) == .changed)
 
-    let pending = PendingOwnToken(token: renewed, replaces: "r1")
+    let pending = PendingOwnToken(token: renewed, keychain: holdsR1)
     check("nothing held → nothing to do",
           UsageRefreshPolicy.resolvePending(nil, own: .found(old)) == PendingResolution.none)
     check("Keychain back, still holding the spent token → store the held one",
@@ -622,6 +627,41 @@ do {
           UsageRefreshPolicy.resolvePending(pending, own: .missing) == .drop)
     check("Keychain already holds the held one (another instance stored it) → drop the copy",
           UsageRefreshPolicy.resolvePending(pending, own: .found(renewed)) == .drop)
+    check("held after our own delete, Keychain still empty → store it",
+          UsageRefreshPolicy.resolvePending(PendingOwnToken(token: renewed, keychain: .maybeEmpty), own: .missing)
+              == .save(renewed))
+
+    // Renewing again while polling with a held renewal keeps pointing at
+    // what the Keychain really holds.
+    check("polling with a plain token → expect that token",
+          UsageRefreshPolicy.expectation(pending: nil, polling: old) == holdsR1)
+    check("polling with the held renewal → expect what it replaces, not itself",
+          UsageRefreshPolicy.expectation(pending: pending, polling: renewed) == holdsR1)
+    check("a held renewal of some other token does not apply",
+          UsageRefreshPolicy.expectation(pending: pending, polling: other) == .holds(refreshToken: "rb"))
+
+    check("adopt: Keychain as found → store",
+          UsageRefreshPolicy.adopt(match: .current, sameLogin: true) == .store)
+    check("adopt: Keychain cannot say → hold",
+          UsageRefreshPolicy.adopt(match: .unknown, sameLogin: true) == .hold)
+    check("adopt: Keychain moved on → drop",
+          UsageRefreshPolicy.adopt(match: .changed, sameLogin: true) == .drop)
+    check("adopt: a sign-in or sign-out meanwhile → drop, even while locked",
+          UsageRefreshPolicy.adopt(match: .unknown, sameLogin: false) == .drop
+          && UsageRefreshPolicy.adopt(match: .current, sameLogin: false) == .drop)
+
+    let newer = OAuthToken(accessToken: "a3", refreshToken: "r3", expiresAt: nil)
+    check("stored → nothing held",
+          UsageRefreshPolicy.pending(after: .saved, renewed: newer, expected: holdsR1) == nil)
+    check("save failed, item untouched → held, Keychain still as before",
+          UsageRefreshPolicy.pending(after: .failed, renewed: newer, expected: holdsR1)
+              == PendingOwnToken(token: newer, keychain: holdsR1))
+    check("held without trying → Keychain still as before",
+          UsageRefreshPolicy.pending(after: nil, renewed: newer, expected: holdsR1)
+              == PendingOwnToken(token: newer, keychain: holdsR1))
+    check("save failed after our delete → held, Keychain may be empty",
+          UsageRefreshPolicy.pending(after: .failedAfterDelete, renewed: newer, expected: holdsR1)
+              == PendingOwnToken(token: newer, keychain: .maybeEmpty))
 }
 
 // MARK: result

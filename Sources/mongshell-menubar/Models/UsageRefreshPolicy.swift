@@ -32,9 +32,26 @@ enum UsageTokenChoice: Equatable {
 /// dropping the new one would end the login at the next expiry.
 struct PendingOwnToken: Equatable {
     let token: OAuthToken
-    /// The refresh token the Keychain item still holds — the one `token`
-    /// replaces.
-    let replaces: String?
+    /// What the Keychain holds meanwhile — the item `token` is to replace.
+    let keychain: KeychainExpectation
+}
+
+/// What the Keychain item should hold while polling with a given own token.
+enum KeychainExpectation: Equatable {
+    case holds(refreshToken: String?)
+    /// A save of ours deleted the item and could not add the new one: an
+    /// empty Keychain is then our doing, not a sign-out (#108).
+    case maybeEmpty
+}
+
+/// What to do with a renewed own token.
+enum AdoptStep: Equatable {
+    /// The Keychain is as the refresh found it: store the new one.
+    case store
+    /// The Keychain cannot say: keep the new one in memory.
+    case hold
+    /// A sign-in, a sign-out or another instance moved things on.
+    case drop
 }
 
 /// Whether the Keychain still holds the own token a refresh started from.
@@ -101,18 +118,48 @@ enum UsageRefreshStep: Equatable {
 /// tied to the Keychain and the network, so the rules are kept here where
 /// `scripts/test.sh` can pin them (#97).
 enum UsageRefreshPolicy {
-    /// `expects` is the refresh token the Keychain item should hold.
-    static func keychainMatch(own: OwnTokenLookup, expects refreshToken: String?) -> KeychainMatch {
-        switch own {
-        case .found(let token): return token.refreshToken == refreshToken ? .current : .changed
-        case .missing: return .changed
-        case .unavailable, .refused: return .unknown
+    static func keychainMatch(own: OwnTokenLookup, expects: KeychainExpectation) -> KeychainMatch {
+        switch (own, expects) {
+        case (.unavailable, _), (.refused, _): return .unknown
+        case (.found(let token), .holds(let refreshToken)): return token.refreshToken == refreshToken ? .current : .changed
+        case (.missing, .holds): return .changed
+        case (.found, .maybeEmpty): return .changed
+        case (.missing, .maybeEmpty): return .current
+        }
+    }
+
+    /// While polling with a held renewal, the Keychain still holds what that
+    /// renewal is to replace; otherwise it holds the polling token itself.
+    static func expectation(pending: PendingOwnToken?, polling token: OAuthToken) -> KeychainExpectation {
+        if let pending, pending.token == token { return pending.keychain }
+        return .holds(refreshToken: token.refreshToken)
+    }
+
+    /// `sameLogin` is false when a sign-in or sign-out happened while the
+    /// refresh was out — it wins whatever the Keychain says (#108).
+    static func adopt(match: KeychainMatch, sameLogin: Bool) -> AdoptStep {
+        guard sameLogin else { return .drop }
+        switch match {
+        case .current: return .store
+        case .unknown: return .hold
+        case .changed: return .drop
+        }
+    }
+
+    /// What stays held after a renewal was stored (`save`) or held without
+    /// trying (`save` nil). `expected` is what the Keychain held before.
+    static func pending(after save: OwnTokenSave?, renewed: OAuthToken,
+                        expected: KeychainExpectation) -> PendingOwnToken? {
+        switch save {
+        case .saved: return nil
+        case .failed, nil: return PendingOwnToken(token: renewed, keychain: expected)
+        case .failedAfterDelete: return PendingOwnToken(token: renewed, keychain: .maybeEmpty)
         }
     }
 
     static func resolvePending(_ pending: PendingOwnToken?, own: OwnTokenLookup) -> PendingResolution {
         guard let pending else { return .none }
-        switch keychainMatch(own: own, expects: pending.replaces) {
+        switch keychainMatch(own: own, expects: pending.keychain) {
         case .current: return .save(pending.token)
         case .changed: return .drop
         case .unknown: return .useInMemory(pending.token)
