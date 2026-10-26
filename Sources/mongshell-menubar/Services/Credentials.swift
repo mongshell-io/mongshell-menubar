@@ -26,8 +26,10 @@ enum OwnTokenLookup: Equatable {
     /// most likely there and a later read should work.
     case unavailable(OSStatus)
     /// Any other refusal — access denied, an item written under another
-    /// signing identity. It may not pass on its own, so callers treat it as
-    /// missing: a fresh sign-in replaces the item.
+    /// signing identity. It may not pass on its own, so the token choice
+    /// treats it as missing (the CLI token is next, and a fresh sign-in
+    /// replaces the item) — except while a renewal is held: then the poll
+    /// keeps that token and tries to store it again (#132).
     case refused(OSStatus)
 
     /// An item that is there but no longer decodes counts as missing: no

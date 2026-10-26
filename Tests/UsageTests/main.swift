@@ -830,6 +830,28 @@ do {
     }
 }
 
+// MARK: #132 — a held renewal is stored again while the Keychain refuses
+
+do {
+    let renewed = OAuthToken(accessToken: "a2", refreshToken: "r2", expiresAt: nil)
+    let refused = OwnTokenLookup.refused(errSecAuthFailed)
+    let held = PendingOwnToken(token: renewed, keychain: .holds(refreshToken: "r1"))
+    let heldAfterDelete = PendingOwnToken(token: renewed, keychain: .maybeEmpty)
+    check("Keychain refuses with a held renewal → try to store it again, every poll",
+          UsageRefreshPolicy.resolvePending(held, own: refused) == .save(renewed)
+          && UsageRefreshPolicy.resolvePending(heldAfterDelete, own: refused) == .save(renewed))
+    check("Keychain locked with a held renewal → still only kept in memory",
+          UsageRefreshPolicy.resolvePending(held, own: .unavailable(errSecInteractionNotAllowed))
+              == .useInMemory(renewed))
+    check("refused with nothing held → nothing to do",
+          UsageRefreshPolicy.resolvePending(nil, own: refused) == PendingResolution.none)
+    let cliToken = OAuthToken(accessToken: "c", refreshToken: nil, expiresAt: nil)
+    check("retrying the store while refused → poll with the held renewal, not the CLI token",
+          UsageRefreshPolicy.chooseToken(resolution: UsageRefreshPolicy.resolvePending(held, own: refused),
+                                         own: refused, cli: { cliToken })
+              == .token(renewed, .oauthLogin))
+}
+
 // MARK: result
 
 if failures.isEmpty {

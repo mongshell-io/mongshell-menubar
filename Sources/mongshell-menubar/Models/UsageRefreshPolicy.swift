@@ -170,6 +170,16 @@ enum UsageRefreshPolicy {
 
     static func resolvePending(_ pending: PendingOwnToken?, own: OwnTokenLookup) -> PendingResolution {
         guard let pending else { return .none }
+        // A refusal may not pass on its own, but a save can clear it — it
+        // recreates an item this build may not update — so it is retried
+        // every poll (#132). A refused read cannot show that the Keychain
+        // moved on, and nothing new says it did: the own item is written by
+        // this app alone, and a sign-in or sign-out here drops the held
+        // renewal before the next poll (`signIn`/`signOut`, `adopt`'s
+        // `sameLogin`). What is left is another build of the app signing in
+        // while its item refuses us — accepted under the single-user,
+        // single-account premise. A locked Keychain is still only waited out.
+        if case .refused = own { return .save(pending.token) }
         switch keychainMatch(own: own, expects: pending.keychain) {
         case .current: return .save(pending.token)
         case .changed: return .drop
