@@ -65,7 +65,7 @@ status item 의 폭도 AppDelegate 가 잡는다. 메뉴바 뷰(두 영역 모�
 
 - **색은 `Design/Palette.swift` 가 단일 권위다.** 뷰에 `Color(hex:)`·`.red`·`.orange` 를 직접 적지 않는다. 새 색이 필요하면 `Palette` 에 이름을 붙여 추가한다.
 - 사용량 3단계(초록 <50 · 주황 <80 · 빨강 ≥80) 판정도 `Palette` 의 로직을 쓴다. 뷰마다 임계값을 다시 적으면 색상 코딩이 갈린다.
-- 시간 표기는 `Services/TimeText.swift` 가 권위다. 메뉴바용 압축 포맷(`clockShort`, `weekdayClockShort`)과 팝오버용 서술 문구를 섞지 않는다.
+- 시간 표기는 `Services/TimeText.swift` 가 권위다. 메뉴바용 압축 포맷(`weekdayClockShort`)과 팝오버용 서술 문구를 섞지 않는다.
 - 사용량 게이지·수치처럼 사용량 3단계 색을 쓰는 요소는 색상 코딩이 꺼진 경우(`Preferences.colorCoding == false`)의 모노크롬 폴백을 항상 함께 처리한다.
 - **신호등 점(openclaw·서버 호스트)은 `colorCoding` 의 대상이 아니다.** 그 토글은 사용량 3단계 색상의 것이고, 신호등은 색이 곧 정보라 모노크롬 폴백이 없다. 점 색은 `OpenClawHealth.dotColor` / `ServerHostHealth.dotColor` 에서 받는다 — 뷰에서 레벨을 색으로 다시 매핑하지 않는다.
 
@@ -83,7 +83,7 @@ UI 를 추가·변경하면 `App/SnapshotRenderer.swift` 의 렌더 목록에 �
 
 `Form` 기반 화면은 `ImageRenderer` 로 **빈 이미지가 나온다.** 설정창 계열은 오프스크린 윈도우 캡처 경로에 등록해야 한다.
 
-시간이 흐르는 요소는 스냅샷에서 시계를 고정한다 — GitHub 팝오버의 검사 칩과 hover CI 줄의 경과 시간은 `TimelineView` 로 1초마다 흐르고, 스냅샷은 `frozenNow` 를 넘겨 렌더마다 같은 값을 그린다. 분 단위 문구(사용량 5시간 초기화 카운트다운, 두 팝오버의 "N분 후 자동 재시도")는 `TimeText.minuteTick` 주기의 `TimelineView` 로 흐른다 (#133). 사용량 쪽은 시계를 따로 두지 않고, 스냅샷이 초기화 시각을 렌더 시계에 맞춰 둔다.
+시간이 흐르는 요소는 스냅샷에서 시계를 고정한다 — GitHub 팝오버의 검사 칩과 hover CI 줄의 경과 시간은 `TimelineView` 로 1초마다 흐르고, 스냅샷은 `frozenNow` 를 넘겨 렌더마다 같은 값을 그린다. 분 단위 문구(사용량 7일 초기화 카운트다운, 두 팝오버의 "N분 후 자동 재시도")는 `TimeText.minuteTick` 주기의 `TimelineView` 로 흐른다 (#133). 사용량 쪽은 시계를 따로 두지 않고, 스냅샷이 초기화 시각을 렌더 시계에 맞춰 둔다.
 
 ## 선택 기능의 비가시성
 

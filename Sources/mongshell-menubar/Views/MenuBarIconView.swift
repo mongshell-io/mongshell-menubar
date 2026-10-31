@@ -1,25 +1,24 @@
 import SwiftUI
 
-/// The status-bar content: Claude mark + two compact ring gauges (`◔15% ◕96%`)
-/// for the 5-hour and 7-day windows. Hosted inside the NSStatusItem button via
-/// NSHostingView. Of the reset times only the 5-hour one rides in the bar
-/// (`fiveHourReset`); the rest live in the popover, to keep the bar short.
+/// The status-bar content: Claude mark + a compact ring gauge for the 7-day
+/// window + its reset (weekday and clock). Hosted inside the NSStatusItem
+/// button via NSHostingView. The rest lives in the popover, to keep the bar
+/// short.
 struct MenuBarIconView: View {
     @ObservedObject var model: UsageModel
     @ObservedObject var prefs: Preferences
     @ObservedObject var openClaw: OpenClawModel
 
-    private var fiveHourUsed: Int? { model.snapshot.fiveHourPercent }
     private var weeklyUsed: Int? { model.snapshot.weeklyAllPercent }
 
     private var dots: OpenClawDots { OpenClawDots(prefs: prefs, openClaw: openClaw) }
 
     var body: some View {
-        MenuBarContent(fiveHourUsed: fiveHourUsed, weeklyUsed: weeklyUsed,
+        MenuBarContent(weeklyUsed: weeklyUsed,
                        showRemaining: prefs.showRemaining,
                        colorCoding: prefs.colorCoding,
                        showPercent: prefs.showPercent,
-                       fiveHourReset: TimeText.clockShort(model.snapshot.fiveHourResetAt),
+                       weeklyReset: TimeText.weekdayClockShort(model.snapshot.weeklyResetAt),
                        openClawDotColor: dots.openClaw,
                        serverHostDotColor: dots.serverHost)
     }
@@ -29,15 +28,13 @@ struct MenuBarIconView: View {
 /// offscreen snapshot renderer share one layout.
 struct MenuBarContent: View {
     /// nil = the response did not let us read it: a dashed grey ring.
-    let fiveHourUsed: Int?
     let weeklyUsed: Int?
     let showRemaining: Bool
     let colorCoding: Bool
     let showPercent: Bool
-    /// 5-hour reset clock (e.g. "19:00") shown next to the 5h gauge — the 5h
-    /// window's reset is easy to lose track of, so it earns the extra text.
-    /// nil hides it.
-    var fiveHourReset: String? = nil
+    /// Weekly reset (e.g. "금 22:59") shown next to the gauge — with one
+    /// window left it is the only date the bar has to carry. nil hides it.
+    var weeklyReset: String? = nil
     /// Non-nil = append the unified openclaw indicator (paw + traffic-light dot)
     /// in this color. nil = hide it entirely.
     var openClawDotColor: Color? = nil
@@ -53,11 +50,7 @@ struct MenuBarContent: View {
                 .frame(width: 16, height: 16)
 
             if showPercent {
-                // Position conveys the window: left = 5h, right = 7d.
-                // 5h shows its reset clock (easy to forget); 7d is gauge-only
-                // (its weekly reset is easy to remember).
-                fiveHourGauge
-                ring(weeklyUsed)
+                weeklyGauge
             }
 
             if let openClawDotColor {
@@ -73,12 +66,12 @@ struct MenuBarContent: View {
         .fixedSize()
     }
 
-    /// 5h: ring gauge + its reset clock.
-    private var fiveHourGauge: some View {
+    /// 7d: ring gauge + its reset.
+    private var weeklyGauge: some View {
         HStack(spacing: 4) {
-            ring(fiveHourUsed)
-            if let fiveHourReset {
-                Text(fiveHourReset)
+            ring(weeklyUsed)
+            if let weeklyReset {
+                Text(weeklyReset)
                     .font(.system(size: 11, weight: .medium))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -86,7 +79,7 @@ struct MenuBarContent: View {
         }
     }
 
-    /// A tiny ring gauge for one window (no number). Fill follows the display
+    /// A tiny ring gauge (no number). Fill follows the display
     /// mode (consumed vs remaining); color always tracks risk (consumed).
     @ViewBuilder private func ring(_ used: Int?) -> some View {
         if let used {

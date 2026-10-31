@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The instant hover summary shown when the cursor enters the menu-bar icon.
-/// Two compact lines (5-hour / 7-day) mirroring the popover's numbers, display
-/// mode, and reset wording so it reads consistently with the rest of the app.
+/// One compact line (7-day) mirroring the popover's number and display mode,
+/// so it reads consistently with the rest of the app.
 /// Deliberately tiny — reset text only, no gauges — since it's a glance aid.
 struct HoverSummaryView: View {
     @ObservedObject var model: UsageModel
@@ -12,18 +12,9 @@ struct HoverSummaryView: View {
     private var modeLabel: String { prefs.showRemaining ? "남은 양" : "사용량" }
 
     var body: some View {
-        // Grid so the three columns (label · percent · reset) line up across
-        // both rows — label and percent widths differ per row, which left an
-        // HStack ragged.
-        // The 5-hour countdown is phrased at draw time, so it keeps moving
-        // while the summary stays up between polls (#133).
-        TimelineView(.periodic(from: .now, by: TimeText.minuteTick)) { context in
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 6, verticalSpacing: 5) {
-                row(window: "5시간", used: snap.fiveHourPercent,
-                    reset: TimeText.resetsIn(snap.fiveHourResetAt, now: context.date))
-                row(window: "7일", used: snap.weeklyAllPercent,
-                    reset: TimeText.resetsAt(snap.weeklyResetAt))
-            }
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 6, verticalSpacing: 5) {
+            row(window: "7일", used: snap.weeklyAllPercent,
+                reset: TimeText.resetsAt(snap.weeklyResetAt))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -49,8 +40,7 @@ struct HoverSummaryView: View {
                 .monospacedDigit()
                 .foregroundStyle(display == nil ? HierarchicalShapeStyle.tertiary : .primary)
                 .gridColumnAlignment(.trailing)
-            // Always emit the third cell (empty when no reset) so both rows
-            // keep the same column count and stay aligned.
+            // Always emit the third cell (empty when no reset).
             Text(reset.isEmpty ? "" : "· \(reset)")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)

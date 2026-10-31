@@ -33,12 +33,11 @@ struct SettingsView: View {
             Section("메뉴바") {
                 // Live preview of the bar content with the current settings.
                 LabeledContent("미리보기") {
-                    MenuBarContent(fiveHourUsed: model.snapshot.fiveHourPercent,
-                                   weeklyUsed: model.snapshot.weeklyAllPercent,
+                    MenuBarContent(weeklyUsed: model.snapshot.weeklyAllPercent,
                                    showRemaining: prefs.showRemaining,
                                    colorCoding: prefs.colorCoding,
                                    showPercent: prefs.showPercent,
-                                   fiveHourReset: TimeText.clockShort(model.snapshot.fiveHourResetAt),
+                                   weeklyReset: TimeText.weekdayClockShort(model.snapshot.weeklyResetAt),
                                    openClawDotColor: previewDots.openClaw,
                                    serverHostDotColor: previewDots.serverHost)
                 }

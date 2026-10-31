@@ -9,10 +9,10 @@ struct PopoverView: View {
     var onQuit: () -> Void
 
     private var snap: UsageSnapshot { model.snapshot }
-    /// nil when the 5-hour limit could not be read (#130).
-    private var fiveMeter: Meter? { meter(snap.fiveHourPercent) }
-    private func meter(_ used: Int?) -> Meter? {
-        used.map { Meter(usedPercent: $0, showRemaining: prefs.showRemaining, colorCoding: prefs.colorCoding) }
+    /// nil when the weekly limit could not be read (#130).
+    private var weeklyMeter: Meter? { snap.weeklyAllPercent.map(meter) }
+    private func meter(_ used: Int) -> Meter {
+        Meter(usedPercent: used, showRemaining: prefs.showRemaining, colorCoding: prefs.colorCoding)
     }
     /// Stands in for the number of a limit that could not be read.
     private static let unreadText = "—"
@@ -26,8 +26,10 @@ struct PopoverView: View {
             hairline
             stateBanner
             primaryGauge
-            hairline
-            weeklySection
+            if !snap.models.isEmpty || !snap.extraLimits.isEmpty {
+                hairline
+                detailLimitsSection
+            }
             if prefs.showsOpenClaw {
                 hairline
                 openClawSection
@@ -207,7 +209,7 @@ struct PopoverView: View {
         let presentation = model.presentation
         return PopoverHeader(title: "mongshell-menubar", badge: statusBadge,
                              onOpenSettings: onOpenSettings, onQuit: onQuit) {
-            usageRing(fiveMeter, lineWidth: 3, diameter: 18)
+            usageRing(weeklyMeter, lineWidth: 3, diameter: 18)
         } beforeSettings: {
             if let until = presentation.manualRefreshBlockedUntil {
                 Button("새로고침 — \(TimeText.minutesLeft(until: until, now: now))분 후 가능") {}
@@ -304,18 +306,18 @@ struct PopoverView: View {
         PopoverBanner(text: text, tint: tint, trailing: trailing)
     }
 
-    // MARK: Primary 5-hour gauge
+    // MARK: Primary weekly gauge
 
     private var primaryGauge: some View {
         VStack(spacing: 0) {
             ZStack {
-                usageRing(fiveMeter, lineWidth: 8, diameter: 132)
+                usageRing(weeklyMeter, lineWidth: 8, diameter: 132)
                 HStack(alignment: .lastTextBaseline, spacing: 1) {
-                    Text(fiveMeter.map { "\($0.displayPercent)" } ?? Self.unreadText)
+                    Text(weeklyMeter.map { "\($0.displayPercent)" } ?? Self.unreadText)
                         .font(.system(size: 42, weight: .semibold))
-                        .foregroundStyle(fiveMeter == nil ? Palette.textTertiary : Palette.textPrimary)
+                        .foregroundStyle(weeklyMeter == nil ? Palette.textTertiary : Palette.textPrimary)
                         .tracking(-1)
-                    if fiveMeter != nil {
+                    if weeklyMeter != nil {
                         Text("%")
                             .font(.system(size: 17, weight: .medium))
                             .foregroundStyle(Palette.textSecondary)
@@ -325,7 +327,7 @@ struct PopoverView: View {
             .frame(width: 132, height: 132)
             .padding(.bottom, 12)
 
-            Text("5시간 한도" + modeSuffix)
+            Text("7일 한도" + modeSuffix)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Palette.textSecondary)
                 .padding(.bottom, 3)
@@ -333,7 +335,7 @@ struct PopoverView: View {
             // between polls (#133). With no reset time the line stays empty
             // rather than claiming "곧 초기화".
             TimelineView(.periodic(from: .now, by: TimeText.minuteTick)) { context in
-                Text(TimeText.resetsIn(snap.fiveHourResetAt, now: context.date))
+                Text(TimeText.resetsIn(snap.weeklyResetAt, now: context.date))
                     .font(.system(size: 14))
                     .foregroundStyle(Palette.textPrimary)
             }
@@ -343,41 +345,34 @@ struct PopoverView: View {
         .padding(.bottom, 18)
     }
 
-    // MARK: Weekly limits
+    // MARK: Detail limits
 
-    private var weeklySection: some View {
+    /// The per-model weekly rows and anything else the response carries. The
+    /// all-models figure is the main gauge, so it has no row here.
+    private var detailLimitsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("7일 한도" + modeSuffix)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Palette.textSecondary)
-                Spacer()
-                Text(TimeText.resetsAt(snap.weeklyResetAt))
-                    .font(.system(size: 12))
-                    .foregroundStyle(Palette.textTertiary)
-            }
-            .padding(.bottom, 14)
+            Text("세부 한도" + modeSuffix)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Palette.textSecondary)
+                .padding(.bottom, 14)
 
-            usageBar(meter: meter(snap.weeklyAllPercent), label: "전체 모델", color: nil)
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(snap.models) { m in
+                    usageBar(meter: meter(m.percent), label: m.name, color: Palette.fablePurple)
+                }
 
-            ForEach(snap.models) { m in
-                Spacer().frame(height: 16)
-                usageBar(meter: Meter(usedPercent: m.percent, showRemaining: prefs.showRemaining, colorCoding: prefs.colorCoding),
-                         label: m.name, color: Palette.fablePurple)
-            }
-
-            // Limits the app has no rule for (a reset/bonus granted from the
-            // settings page). Risk-colored like "전체 모델"; the reset caption
-            // is left out, not left blank, when the entry has no reset time.
-            ForEach(snap.extraLimits) { limit in
-                Spacer().frame(height: 16)
-                usageBar(meter: Meter(usedPercent: limit.percent, showRemaining: prefs.showRemaining, colorCoding: prefs.colorCoding),
-                         label: limit.name, color: nil)
-                if let resetAt = limit.resetAt {
-                    Text(TimeText.resetsAt(resetAt))
-                        .font(.system(size: 12))
-                        .foregroundStyle(Palette.textTertiary)
-                        .padding(.top, 6)
+                // Limits the app has no rule for (a reset/bonus granted from
+                // the settings page). Risk-colored; the reset caption is left
+                // out, not left blank, when the entry has no reset time.
+                ForEach(snap.extraLimits) { limit in
+                    VStack(alignment: .leading, spacing: 6) {
+                        usageBar(meter: meter(limit.percent), label: limit.name, color: nil)
+                        if let resetAt = limit.resetAt {
+                            Text(TimeText.resetsAt(resetAt))
+                                .font(.system(size: 12))
+                                .foregroundStyle(Palette.textTertiary)
+                        }
+                    }
                 }
             }
         }
@@ -388,27 +383,24 @@ struct PopoverView: View {
 
     /// `color` nil = use the meter's risk color; non-nil = fixed brand color
     /// (e.g. Fable purple). Fill width + number follow the display mode.
-    /// `meter` nil = the limit was not read: a dash and the bare track.
-    private func usageBar(meter: Meter?, label: String, color: Color?) -> some View {
-        let pct = meter?.displayPercent ?? 0
+    private func usageBar(meter: Meter, label: String, color: Color?) -> some View {
+        let pct = meter.displayPercent
         return VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Text(label)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(Palette.textPrimary)
                 Spacer()
-                Text(meter == nil ? Self.unreadText : "\(pct)%")
+                Text("\(pct)%")
                     .font(.system(size: 14, weight: .medium))
                     .monospacedDigit()
-                    .foregroundStyle(meter == nil ? Palette.textTertiary : Palette.textPrimary)
+                    .foregroundStyle(Palette.textPrimary)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Palette.trackBar)
-                    if let meter {
-                        Capsule().fill(color ?? meter.color)
-                            .frame(width: max(0, geo.size.width * CGFloat(pct) / 100))
-                    }
+                    Capsule().fill(color ?? meter.color)
+                        .frame(width: max(0, geo.size.width * CGFloat(pct) / 100))
                 }
             }
             .frame(height: 5)
