@@ -80,30 +80,23 @@ enum SnapshotRenderer {
         // else to poll with: the same banner on the sample, [다시 허용].
         UsageModel.shared.presentForSnapshot(sample, state: .signedOut, cliKeychainDeclined: true)
         write(PopoverPreview(), to: base, "popover_usage_cli_keychain_declined_sample", scale: 2)
-        // The remembered decline with a 5-hour row gone missing: the format
+        // The remembered decline with the weekly row gone missing: the format
         // problem is added to the declined banner, not hidden by it (#146).
         for (state, name) in [(LoadState.loaded(.claudeCodeCLI), "cli_account"), (.loaded(.oauthLogin), "held_login")] {
             var unread = sample
-            unread.fiveHourPercent = nil
+            unread.weeklyAllPercent = nil
+            unread.weeklyResetAt = nil
             UsageModel.shared.presentForSnapshot(unread, state: state, keychainDeclined: true,
                                                  holdsUnsavedLogin: state == .loaded(.oauthLogin))
             write(PopoverPreview(), to: base, "popover_usage_keychain_declined_unread_\(name)", scale: 2)
         }
-        // A response whose 5-hour row went missing: grey ring and the format
-        // banner, the weekly limit still read (#130).
+        // A response whose weekly row went missing: grey ring, the format
+        // banner, and no "곧 초기화" under the ring or in the hover (#130, #133).
         var unread = sample
-        unread.fiveHourPercent = nil
+        unread.weeklyAllPercent = nil
+        unread.weeklyResetAt = nil
         UsageModel.shared.presentForSnapshot(unread, state: .loaded(.oauthLogin))
         write(PopoverPreview(), to: base, "popover_usage_unread_limits", scale: 2)
-        // Neither limit read and no reset times: dashes, and no "곧 초기화"
-        // under the ring or beside the hover rows (#133).
-        var noValues = sample
-        noValues.fiveHourPercent = nil
-        noValues.fiveHourResetAt = nil
-        noValues.weeklyAllPercent = nil
-        noValues.weeklyResetAt = nil
-        UsageModel.shared.presentForSnapshot(noValues, state: .loaded(.oauthLogin))
-        write(PopoverPreview(), to: base, "popover_usage_no_values", scale: 2)
         write(HoverPreview(), to: base, "hover_no_values", scale: 2)
         UsageModel.shared.presentForSnapshot(sample, state: .signedOut)
         OpenClawModel.shared.presentForSnapshot(
@@ -374,25 +367,25 @@ private enum SnapshotBackdrop {
     }
 }
 
-/// Menu-bar mock: Claude mark + `5h · 7d` text at three usage-level pairs, each
-/// with a different openclaw dot (ok / server unreachable / gateway down) so the
-/// grey-vs-red distinction is visible side by side; last, an unread 5-hour
-/// limit (dashed grey ring, #130) next to a read weekly one.
+/// Menu-bar mock: Claude mark + weekly gauge at three usage levels, each with
+/// a different openclaw dot (ok / server unreachable / gateway down) so the
+/// grey-vs-red distinction is visible side by side; last, an unread weekly
+/// limit (dashed grey ring, #130).
 private struct MenuBarStrip: View {
     let scheme: ColorScheme
-    private let items: [(id: Int, five: Int?, weekly: Int?, openClaw: OpenClawHealth)] = [
-        (0, 12, 34, .ok(detail: "")),
-        (1, 62, 45, .unreachable(detail: "")),
-        (2, 95, 91, .down(detail: "")),
-        (3, nil, 34, .ok(detail: "")),
+    private let items: [(id: Int, weekly: Int?, openClaw: OpenClawHealth)] = [
+        (0, 34, .ok(detail: "")),
+        (1, 62, .unreachable(detail: "")),
+        (2, 95, .down(detail: "")),
+        (3, nil, .ok(detail: "")),
     ]
     var body: some View {
         HStack(spacing: 26) {
             ForEach(items, id: \.id) { item in
-                MenuBarContent(fiveHourUsed: item.five, weeklyUsed: item.weekly,
+                MenuBarContent(weeklyUsed: item.weekly,
                                showRemaining: false, colorCoding: true,
                                showPercent: true,
-                               fiveHourReset: "19:00",
+                               weeklyReset: item.weekly == nil ? nil : "금 22:59",
                                openClawDotColor: item.openClaw.dotColor)
             }
         }
@@ -421,10 +414,10 @@ private struct MenuBarHostStrip: View {
     var body: some View {
         HStack(spacing: 26) {
             ForEach(items, id: \.id) { item in
-                MenuBarContent(fiveHourUsed: 12, weeklyUsed: 34,
+                MenuBarContent(weeklyUsed: 34,
                                showRemaining: false, colorCoding: true,
                                showPercent: true,
-                               fiveHourReset: "19:00",
+                               weeklyReset: "금 22:59",
                                openClawDotColor: item.openClaw.dotColor,
                                serverHostDotColor: item.host.dotColor)
             }
@@ -589,9 +582,9 @@ private struct GitHubMenuBarStrip: View {
     var mergeReady = false
     var body: some View {
         HStack(spacing: 0) {
-            MenuBarContent(fiveHourUsed: 34, weeklyUsed: 61,
+            MenuBarContent(weeklyUsed: 61,
                            showRemaining: false, colorCoding: true,
-                           showPercent: true, fiveHourReset: "19:00",
+                           showPercent: true, weeklyReset: "금 22:59",
                            openClawDotColor: Palette.green)
             GitHubMenuBarContent(count: count, dot: dot.color, mergeReady: mergeReady)
         }

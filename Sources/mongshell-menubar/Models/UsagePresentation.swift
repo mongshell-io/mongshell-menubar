@@ -19,7 +19,7 @@ struct UsagePresentation: Equatable {
         case rateLimited(retryAt: Date)
         case failed(String)
         case cliAccount
-        /// Loaded, but the 5-hour or weekly limit was missing from the
+        /// Loaded, but the weekly limit was missing from the
         /// response — its gauge is grey, not 0% (#130).
         case unreadLimits
         /// The user declined the own-token Keychain prompt and the app

@@ -52,7 +52,6 @@ func iso(_ s: String) -> Date? {
 func response(extraLimits: String = "", topLevel: String = "") -> Data {
     body("""
     {
-      "five_hour": {"utilization": 4, "resets_at": "2026-10-21T06:10:00.825239+00:00"},
       "seven_day": {"utilization": 4, "resets_at": "2026-10-26T15:00:00+00:00"},
       "seven_day_breakdown": {"as_of": "2026-10-21T05:00:00+00:00",
                               "window_started_at": "2026-10-19T15:00:00+00:00", "rows": []},
@@ -63,8 +62,6 @@ func response(extraLimits: String = "", topLevel: String = "") -> Data {
       "spend": null,
       "extra_usage": null,
       "limits": [
-        {"kind":"session","group":"session","percent":4,"severity":"normal",
-         "resets_at":"2026-10-21T06:10:00.825239+00:00","scope":null,"is_active":true},
         {"kind":"weekly_all","group":"weekly","percent":23,"severity":"normal",
          "resets_at":"2026-10-26T15:00:00+00:00","scope":null,"is_active":false},
         {"kind":"weekly_scoped","group":"weekly","percent":29,"severity":"normal",
@@ -77,15 +74,12 @@ func response(extraLimits: String = "", topLevel: String = "") -> Data {
     """)
 }
 
-let sessionReset = iso("2026-10-21T06:10:00.825239+00:00")
 let weeklyReset = iso("2026-10-26T15:00:00+00:00")
 
 // MARK: (a) the real response shape
 
 do {
     let snap = try UsageAPIClient.parse(response())
-    check("session → fiveHourPercent", snap.fiveHourPercent == 4, String(describing: snap.fiveHourPercent))
-    check("session → fiveHourResetAt", snap.fiveHourResetAt == sessionReset, "\(String(describing: snap.fiveHourResetAt))")
     check("weekly_all → weeklyAllPercent", snap.weeklyAllPercent == 23, String(describing: snap.weeklyAllPercent))
     check("weekly_all → weeklyResetAt", snap.weeklyResetAt == weeklyReset, "\(String(describing: snap.weeklyResetAt))")
     check("weekly_scoped → one model row", snap.models.count == 1, "\(snap.models)")
@@ -102,7 +96,7 @@ do {
     check("real response parses", false, "\(error)")
 }
 
-// MARK: (b) an unknown kind is kept, the known three are untouched
+// MARK: (b) an unknown kind is kept, the known rows are untouched
 
 do {
     let snap = try UsageAPIClient.parse(response(extraLimits: """
@@ -118,9 +112,8 @@ do {
     check("extra resetAt", extra?.resetAt == iso("2026-11-05T07:59:00+00:00"),
           "\(String(describing: extra?.resetAt))")
     check("extra is_active carried", extra?.isActive == true, "\(String(describing: extra?.isActive))")
-    check("known three unchanged: session", snap.fiveHourPercent == 4 && snap.fiveHourResetAt == sessionReset)
-    check("known three unchanged: weekly_all", snap.weeklyAllPercent == 23 && snap.weeklyResetAt == weeklyReset)
-    check("known three unchanged: weekly_scoped",
+    check("known rows unchanged: weekly_all", snap.weeklyAllPercent == 23 && snap.weeklyResetAt == weeklyReset)
+    check("known rows unchanged: weekly_scoped",
           snap.models == [ModelUsage(name: "Fable 5", percent: 29)], "\(snap.models)")
 } catch {
     check("response with unknown kind parses", false, "\(error)")
@@ -162,10 +155,8 @@ do {
 
 do {
     let snap = try UsageAPIClient.parse(body("""
-    {"five_hour": {"utilization": 64, "resets_at": "2026-10-21T06:10:00+00:00"},
-     "seven_day": {"utilization": 23, "resets_at": "2026-10-26T15:00:00+00:00"}}
+    {"seven_day": {"utilization": 23, "resets_at": "2026-10-26T15:00:00+00:00"}}
     """))
-    check("flat fallback → five_hour read", snap.fiveHourPercent == 64, String(describing: snap.fiveHourPercent))
     check("flat fallback → seven_day read", snap.weeklyAllPercent == 23, String(describing: snap.weeklyAllPercent))
     check("flat fallback → no extra limits", snap.extraLimits.isEmpty, "\(snap.extraLimits)")
     check("flat fallback → no unknown buckets", snap.unknownTopLevel.isEmpty, "\(snap.unknownTopLevel)")
@@ -173,58 +164,58 @@ do {
     check("flat response parses", false, "\(error)")
 }
 
-// MARK: (c2) a 5-hour/weekly limit the response no longer names is unread, not 0% (#130)
+// MARK: (c1) the retired 5-hour limit is ignored wherever it still arrives
 
 do {
-    let renamed = try UsageAPIClient.parse(body("""
-    {"limits": [
-      {"kind":"session_v2","percent":64,"resets_at":"2026-10-21T06:10:00+00:00"},
-      {"kind":"weekly_all","percent":23,"resets_at":"2026-10-26T15:00:00+00:00"}]}
-    """))
-    check("renamed session kind → 5-hour unread, not 0%", renamed.fiveHourPercent == nil,
-          String(describing: renamed.fiveHourPercent))
-    check("renamed session kind → weekly still read", renamed.weeklyAllPercent == 23,
-          String(describing: renamed.weeklyAllPercent))
-    check("renamed session kind → snapshot reports an unread limit", renamed.hasUnreadLimit)
-
-    let noWeekly = try UsageAPIClient.parse(body("""
-    {"limits": [{"kind":"session","percent":64,"resets_at":"2026-10-21T06:10:00+00:00"}]}
-    """))
-    check("weekly_all missing → weekly unread, not 0%", noWeekly.weeklyAllPercent == nil,
-          String(describing: noWeekly.weeklyAllPercent))
-    check("weekly_all missing → 5-hour still read", noWeekly.fiveHourPercent == 64)
-
-    let noPercent = try UsageAPIClient.parse(body("""
-    {"limits": [{"kind":"session","resets_at":"2026-10-21T06:10:00+00:00"},
-                {"kind":"weekly_all","percent":"23%"}]}
-    """))
-    check("session row without a number → unread, not 0%",
-          noPercent.fiveHourPercent == nil && noPercent.weeklyAllPercent == nil,
-          "\(String(describing: noPercent.fiveHourPercent)) \(String(describing: noPercent.weeklyAllPercent))")
-
-    let noPercentWithResets = try UsageAPIClient.parse(body("""
-    {"limits": [{"kind":"session","resets_at":"2026-10-21T06:10:00+00:00"},
-                {"kind":"weekly_all","percent":"23%","resets_at":"2026-10-26T15:00:00+00:00"}]}
-    """))
-    check("row without a number, no flat fallback → its reset is unread too",
-          noPercentWithResets.fiveHourResetAt == nil && noPercentWithResets.weeklyResetAt == nil,
-          "\(String(describing: noPercentWithResets.fiveHourResetAt)) \(String(describing: noPercentWithResets.weeklyResetAt))")
-
-    let empty = try UsageAPIClient.parse(body("{}"))
-    check("nothing recognisable → both unread", empty.fiveHourPercent == nil && empty.weeklyAllPercent == nil)
-
-    // The flat objects mirror session/weekly_all, so a renamed row falls
-    // back to its own window's flat object before giving up.
-    let mirrored = try UsageAPIClient.parse(body("""
+    let legacy = try UsageAPIClient.parse(body("""
     {"five_hour": {"utilization": 41, "resets_at": "2026-10-21T06:10:00+00:00"},
      "limits": [
-      {"kind":"session_v2","percent":64},
-      {"kind":"weekly_all","percent":23}]}
+      {"kind":"session","percent":null,"resets_at":null},
+      {"kind":"weekly_all","percent":23,"resets_at":"2026-10-26T15:00:00+00:00"}]}
     """))
-    check("renamed session kind with five_hour present → five_hour read",
-          mirrored.fiveHourPercent == 41 && mirrored.fiveHourResetAt == iso("2026-10-21T06:10:00+00:00"),
-          String(describing: mirrored.fiveHourPercent))
-    check("weekly_all row wins over the flat seven_day", mirrored.weeklyAllPercent == 23)
+    check("session row → no extra limit, not a 0% row", legacy.extraLimits.isEmpty, "\(legacy.extraLimits)")
+    check("five_hour object → no unknown bucket", legacy.unknownTopLevel.isEmpty, "\(legacy.unknownTopLevel)")
+    check("retired window left over → nothing unread", !legacy.hasUnreadLimit)
+    check("retired window left over → nothing logged", AuthDebugLog.usageUnknownLine(legacy) == nil,
+          AuthDebugLog.usageUnknownLine(legacy) ?? "")
+} catch {
+    check("response with a retired window parses", false, "\(error)")
+}
+
+// MARK: (c2) a weekly limit the response no longer names is unread, not 0% (#130)
+
+do {
+    let noWeekly = try UsageAPIClient.parse(body("""
+    {"limits": [{"kind":"weekly_all_v2","percent":64,"resets_at":"2026-10-21T06:10:00+00:00"}]}
+    """))
+    check("weekly_all renamed → weekly unread, not 0%", noWeekly.weeklyAllPercent == nil,
+          String(describing: noWeekly.weeklyAllPercent))
+    check("weekly_all renamed → snapshot reports an unread limit", noWeekly.hasUnreadLimit)
+
+    let noPercent = try UsageAPIClient.parse(body("""
+    {"limits": [{"kind":"weekly_all","percent":"23%","resets_at":"2026-10-26T15:00:00+00:00"}]}
+    """))
+    check("row without a number → unread, not 0%", noPercent.weeklyAllPercent == nil,
+          String(describing: noPercent.weeklyAllPercent))
+    check("row without a number, no flat fallback → its reset is unread too",
+          noPercent.weeklyResetAt == nil, String(describing: noPercent.weeklyResetAt))
+
+    let empty = try UsageAPIClient.parse(body("{}"))
+    check("nothing recognisable → unread", empty.weeklyAllPercent == nil)
+
+    // The flat object mirrors weekly_all, so a renamed row falls back to it
+    // before giving up; a readable row wins over it.
+    let mirrored = try UsageAPIClient.parse(body("""
+    {"seven_day": {"utilization": 41, "resets_at": "2026-10-26T15:00:00+00:00"},
+     "limits": [{"kind":"weekly_all_v2","percent":64}]}
+    """))
+    check("renamed weekly_all with seven_day present → seven_day read",
+          mirrored.weeklyAllPercent == 41 && mirrored.weeklyResetAt == weeklyReset,
+          String(describing: mirrored.weeklyAllPercent))
+    let both = try UsageAPIClient.parse(body("""
+    {"seven_day": {"utilization": 41}, "limits": [{"kind":"weekly_all","percent":23}]}
+    """))
+    check("weekly_all row wins over the flat seven_day", both.weeklyAllPercent == 23)
 
     check("real response shape → nothing unread", !(try UsageAPIClient.parse(response())).hasUnreadLimit)
 } catch {
@@ -335,23 +326,20 @@ do {
 // reads as 1% — the openclaw and GitHub readers already refused it.
 do {
     let limits = try UsageAPIClient.parse(body("""
-        {"limits": [{"kind":"session","percent":true},
-                    {"kind":"weekly_all","percent":false},
+        {"limits": [{"kind":"weekly_all","percent":false},
                     {"kind":"weekly_scoped","percent":true,
                      "scope":{"model":{"display_name":"Opus"}}},
                     {"kind":"bonus","percent":true}]}
         """))
-    check("session percent true → unread, not 1%", limits.fiveHourPercent == nil,
-          "\(String(describing: limits.fiveHourPercent))")
     check("weekly_all percent false → unread, not 0%", limits.weeklyAllPercent == nil,
           "\(String(describing: limits.weeklyAllPercent))")
     check("scoped / extra percent true → 0, not 1",
           limits.models.first?.percent == 0 && limits.extraLimits.first?.percent == 0,
           "\(limits.models.map(\.percent)) \(limits.extraLimits.map(\.percent))")
 
-    let flat = try UsageAPIClient.parse(body(#"{"five_hour": {"utilization": true}, "seven_day": {"utilization": false}}"#))
-    check("flat utilization bool → unread", flat.fiveHourPercent == nil && flat.weeklyAllPercent == nil,
-          "\(String(describing: flat.fiveHourPercent)) \(String(describing: flat.weeklyAllPercent))")
+    let flat = try UsageAPIClient.parse(body(#"{"seven_day": {"utilization": false}}"#))
+    check("flat utilization bool → unread", flat.weeklyAllPercent == nil,
+          "\(String(describing: flat.weeklyAllPercent))")
 } catch {
     check("response with bool percents parses", false, "\(error)")
 }
@@ -398,7 +386,7 @@ do {
           "\(snap.extraLimits.count)")
     check("\(over) unknown objects → \(Config.usageUnknownTopLevelCap) kept",
           snap.unknownTopLevel.count == Config.usageUnknownTopLevelCap, "\(snap.unknownTopLevel.count)")
-    check("known rows survive the overflow", snap.fiveHourPercent == 4 && snap.models.count == 1)
+    check("known rows survive the overflow", snap.weeklyAllPercent == 23 && snap.models.count == 1)
 } catch {
     check("response over the caps parses", false, "\(error)")
 }
@@ -424,7 +412,7 @@ func interpretError(_ status: Int, retryAfter: String? = nil, _ data: Data = Dat
 
 do {
     let snap = try? UsageAPIClient.interpret(statusCode: 200, retryAfter: nil, data: response())
-    check("200 → parsed snapshot", snap?.fiveHourPercent == 4 && snap?.weeklyAllPercent == 23)
+    check("200 → parsed snapshot", snap?.weeklyAllPercent == 23)
     check("200 with a broken body → badResponse", interpretError(200, body("not json")) == .badResponse)
     check("401 → unauthorized", interpretError(401) == .unauthorized)
     check("403 → unauthorized", interpretError(403) == .unauthorized)
@@ -569,7 +557,7 @@ do {
 do {
     let now = Date(timeIntervalSince1970: 1_790_000_000)
     var snap = UsageSnapshot.sample(now: now)
-    snap.fiveHourPercent = 42
+    snap.weeklyAllPercent = 42
 
     var s = UsageSession()
     s.begin(accessToken: "own", source: .oauthLogin)
@@ -946,7 +934,7 @@ do {
 do {
     let now = Date(timeIntervalSince1970: 1_790_000_000)
     var snap = UsageSnapshot.sample(now: now)
-    snap.fiveHourPercent = 42
+    snap.weeklyAllPercent = 42
 
     var r = UsageSession()
     r.begin(accessToken: "cli", source: .claudeCodeCLI)
@@ -976,9 +964,9 @@ do {
 do {
     let launch = Date(timeIntervalSince1970: 1_790_000_000)
     let later = launch.addingTimeInterval(10 * 3600)
-    let samplePhrase = "3시간 8분 후 초기화"
-    check("sample built at a moment reads 3시간 8분 then",
-          TimeText.resetsIn(UsageSnapshot.sample(now: later).fiveHourResetAt, now: later) == samplePhrase)
+    let samplePhrase = "3일 8시간 후 초기화"
+    check("sample built at a moment reads 3일 8시간 then",
+          TimeText.resetsIn(UsageSnapshot.sample(now: later).weeklyResetAt, now: later) == samplePhrase)
 
     // Signed out at launch, still signed out ten hours on: a sample pinned to
     // launch would read 곧 초기화 by now and stay there.
@@ -992,8 +980,8 @@ do {
         var x = UsageSession()
         x.present(.sample(now: launch), state: .signedOut)
         event(&x)
-        let phrase = TimeText.resetsIn(x.snapshot.fiveHourResetAt, now: later)
-        check("\(name) ten hours after launch → sample still reads 3시간 8분 (#133)",
+        let phrase = TimeText.resetsIn(x.snapshot.weeklyResetAt, now: later)
+        check("\(name) ten hours after launch → sample still reads 3일 8시간 (#133)",
               phrase == samplePhrase, phrase)
     }
 }
@@ -1003,21 +991,20 @@ do {
 do {
     let launch = Date(timeIntervalSince1970: 1_790_000_000)
     let later = launch.addingTimeInterval(10 * 3600)
-    let samplePhrase = "3시간 8분 후 초기화"
+    let samplePhrase = "3일 8시간 후 초기화"
 
     var x = UsageSession()
     x.present(.sample(now: launch), state: .signedOut)
     x.failed("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다", now: later)
-    let phrase = TimeText.resetsIn(x.snapshot.fiveHourResetAt, now: later)
-    check("failed over a sample ten hours on → sample still reads 3시간 8분 (#133)",
+    let phrase = TimeText.resetsIn(x.snapshot.weeklyResetAt, now: later)
+    check("failed over a sample ten hours on → sample still reads 3일 8시간 (#133)",
           phrase == samplePhrase && x.loadState == .error("Keychain 이 잠겨 있어 로그인 정보를 읽지 못했습니다"),
           phrase)
     x.failed("again", now: later.addingTimeInterval(3600))
     check("failed again over the sample → rebuilt again",
           x.snapshot == .sample(now: later.addingTimeInterval(3600)))
 
-    let real = UsageSnapshot(fiveHourPercent: 40, fiveHourResetAt: launch.addingTimeInterval(600),
-                             weeklyAllPercent: 10, weeklyResetAt: nil, models: [], extraLimits: [],
+    let real = UsageSnapshot(weeklyAllPercent: 10, weeklyResetAt: launch.addingTimeInterval(600), models: [], extraLimits: [],
                              unknownTopLevel: [], creditsText: nil, lastUpdated: launch)
     var y = UsageSession()
     y.loaded(real, source: .oauthLogin)
@@ -1028,8 +1015,8 @@ do {
     var z = UsageSession()
     z.present(.sample(now: launch), state: .signedOut)
     z.rateLimited(retryAfter: nil, now: later, pollBase: 60)
-    let limitedPhrase = TimeText.resetsIn(z.snapshot.fiveHourResetAt, now: later)
-    check("rateLimited over a sample ten hours on → sample still reads 3시간 8분 (#133)",
+    let limitedPhrase = TimeText.resetsIn(z.snapshot.weeklyResetAt, now: later)
+    check("rateLimited over a sample ten hours on → sample still reads 3일 8시간 (#133)",
           limitedPhrase == samplePhrase, limitedPhrase)
     var w = UsageSession()
     w.loaded(real, source: .oauthLogin)
@@ -1348,25 +1335,28 @@ do {
     check("past the reset → 곧 초기화", TimeText.resetsIn(reset, now: reset) == "곧 초기화")
     check("no reset time → empty, not 곧 초기화", TimeText.resetsIn(nil, now: now) == "",
           TimeText.resetsIn(nil, now: now))
+    check("over a day → days and hours, not 80시간",
+          TimeText.resetsIn(now.addingTimeInterval(3 * 86400 + 8 * 3600 + 30), now: now) == "3일 8시간 후 초기화",
+          TimeText.resetsIn(now.addingTimeInterval(3 * 86400 + 8 * 3600 + 30), now: now))
     check("weekly phrase: no reset time → empty", TimeText.resetsAt(nil) == "")
 
-    // The real shape with its session row renamed: the flat `five_hour`
+    // The real shape with its weekly row renamed: the flat `seven_day`
     // (utilization 4) fills the window and the log says so.
     let renamedBody = String(decoding: response(), as: UTF8.self)
-        .replacingOccurrences(of: #""kind":"session""#, with: #""kind":"session_v2""#)
+        .replacingOccurrences(of: #""kind":"weekly_all""#, with: #""kind":"weekly_all_v2""#)
     let renamed = try UsageAPIClient.parse(body(renamedBody))
-    check("session row renamed, five_hour present → read flat and noted",
-          renamed.fiveHourPercent == 4 && renamed.flatFallbacks == ["five_hour"],
-          "\(String(describing: renamed.fiveHourPercent)) \(renamed.flatFallbacks)")
+    check("weekly row renamed, seven_day present → read flat and noted",
+          renamed.weeklyAllPercent == 4 && renamed.flatFallbacks == ["seven_day"],
+          "\(String(describing: renamed.weeklyAllPercent)) \(renamed.flatFallbacks)")
     let line = AuthDebugLog.usageUnknownLine(renamed) ?? ""
     check("flat fallback → a log line naming the window",
-          line.contains("read flat five_hour"), line)
+          line.contains("read flat seven_day"), line)
     check("flat fallback → a dedupe key, so the line is written once",
           AuthDebugLog.usageUnknownKey(renamed) != nil)
 
-    let flatOnly = try UsageAPIClient.parse(body(#"{"five_hour": {"utilization": 41}, "seven_day": {"utilization": 9}}"#))
-    check("no limits array → flat objects read, nothing noted",
-          flatOnly.fiveHourPercent == 41 && flatOnly.weeklyAllPercent == 9 && flatOnly.flatFallbacks.isEmpty,
+    let flatOnly = try UsageAPIClient.parse(body(#"{"seven_day": {"utilization": 9}}"#))
+    check("no limits array → flat object read, nothing noted",
+          flatOnly.weeklyAllPercent == 9 && flatOnly.flatFallbacks.isEmpty,
           "\(flatOnly.flatFallbacks)")
     check("real response shape → nothing noted", (try UsageAPIClient.parse(response())).flatFallbacks.isEmpty)
 } catch {
@@ -1422,8 +1412,7 @@ do {
     let now = Date(timeIntervalSince1970: 1_790_000_000)
     let dead = OAuthToken(accessToken: "a1", refreshToken: "r1", expiresAt: nil)
     let holdsR1 = KeychainExpectation.holds(refreshToken: "r1")
-    let snap = UsageSnapshot(fiveHourPercent: 10, fiveHourResetAt: nil,
-                             weeklyAllPercent: 20, weeklyResetAt: nil, models: [], extraLimits: [],
+    let snap = UsageSnapshot(weeklyAllPercent: 20, weeklyResetAt: nil, models: [], extraLimits: [],
                              unknownTopLevel: [], creditsText: nil, lastUpdated: now)
     func lapse(_ own: OwnTokenLookup) -> LapseStep {
         UsageRefreshPolicy.lapse(match: UsageRefreshPolicy.keychainMatch(own: own, expects: holdsR1))

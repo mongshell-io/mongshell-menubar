@@ -1,7 +1,7 @@
 # mongshell-menubar — macOS 메뉴바 Claude 사용량 표시 앱
 
-맥 메뉴바에 Claude 사용량을 Claude 마크 + 5시간·7일 링 게이지(숫자 없음)로 상시 표시하고,
-클릭하면 5시간·7일 한도의 정확한 %와 초기화 시각, 모델별 주간 사용량, 계정 상태를 보여주는
+맥 메뉴바에 Claude 사용량을 Claude 마크 + 7일 링 게이지(숫자 없음)와 초기화 시각으로 상시 표시하고,
+클릭하면 7일 한도의 정확한 %와 초기화 시각, 모델별 주간 사용량, 계정 상태를 보여주는
 팝오버가 열리는 메뉴바 앱입니다.
 
 <img width="136" height="50" alt="image" src="https://github.com/user-attachments/assets/d01dd02e-0eff-4366-93ae-cb75ac4850f1" />
@@ -10,10 +10,10 @@
 
 
 ## 메뉴바 표시
-**Claude 마크(테라코타 스타버스트)** + 5시간·7일 사용률을 **작은 링 게이지**로 컴팩트하게
-표시합니다 — 왼쪽이 5h, 오른쪽이 7d. 링은 사용한 만큼 채워지고, 색상 코딩 켜짐 시 사용량
-3단계(초록 <50 · 주황 <80 · 빨강 ≥80)로 색칠됩니다. **5h는 링 옆에 초기화 시각(예: `19:00`)을
-함께** 보여주고(5시간 창은 리셋 시각을 놓치기 쉬워서), 7d는 링만 둡니다. 정확한 %와 7d 리셋 시각은 클릭 시 뜨는 팝오버에서 봅니다.
+**Claude 마크(테라코타 스타버스트)** + 7일 사용률을 **작은 링 게이지**로 컴팩트하게
+표시합니다. 링은 사용한 만큼 채워지고, 색상 코딩 켜짐 시 사용량
+3단계(초록 <50 · 주황 <80 · 빨강 ≥80)로 색칠됩니다. 링 옆에는 **초기화 요일과 시각(예: `금 22:59`)을
+함께** 보여줍니다. 정확한 %와 모델별 사용량은 클릭 시 뜨는 팝오버에서 봅니다.
 응답에서 한도를 읽지 못하면 0%(초록) 대신 **점선 회색 링**과 "—" 로 그리고, 팝오버에 "사용량 형식을
 읽지 못했습니다" 배너가 뜹니다 — 비공식 엔드포인트의 형식이 바뀌었다는 신호입니다.
 
@@ -181,11 +181,11 @@ Sources/mongshell-menubar/
   App/RegionClickRouting.swift 클릭을 Claude·GitHub 영역 중 어디로 보낼지 판정(순수 함수)
   App/SnapshotRenderer.swift 오프스크린 PNG QA 렌더러(MONGSHELL_SNAPSHOT)
   Views/ClaudeMarkView.swift Claude 스타버스트 마크 Canvas 렌더러
-  Views/MenuBarIconView.swift 상태바 마크 + 5h/7d 링 게이지(+5h 초기화 시각,
+  Views/MenuBarIconView.swift 상태바 마크 + 7d 링 게이지(+초기화 요일·시각,
                             읽지 못한 한도는 점선 회색 링), openclaw 신호등
                             (+ 그 아래 서버 호스트 신호등), 다크/라이트 적응
-  Views/HoverSummaryView.swift hover 즉시 요약(5h/7d · 초기화 3열 Grid)
-  Views/PopoverView.swift   라이트 팝오버 308px(5시간/주간/모델별 + openclaw 섹션
+  Views/HoverSummaryView.swift hover 즉시 요약(7d · 초기화 3열 Grid)
+  Views/PopoverView.swift   라이트 팝오버 308px(주간/세부 한도 + openclaw 섹션
                             + 서버 섹션)
   Views/PopoverHeader.swift 두 팝오버가 함께 쓰는 머리말(제목·연결 배지·⋯ 메뉴)
   Views/PopoverBanner.swift 두 팝오버가 함께 쓰는 머리말 아래 한 줄 배너
@@ -248,9 +248,9 @@ Sources/mongshell-openclaw-agent/     서버 맥용 에이전트 (server/README.
 - **엔드포인트**: `GET https://api.anthropic.com/api/oauth/usage`.
   - 헤더: `Authorization: Bearer …`, `anthropic-beta: oauth-2025-04-20`,
     **`User-Agent: claude-code/<version>` (필수 — 없으면 429 도배)**.
-  - 응답: `limits` 배열의 `session`(5시간)·`weekly_all`(7일)·`weekly_scoped`(모델별) 행의
-    0–100 % + 초기화 시각. 행이 없으면 `five_hour`·`seven_day` 객체로 대신 읽고, 둘 다 없으면
-    그 한도는 비워 둡니다(0% 로 보이지 않음). 자세한 규칙은
+  - 응답: `limits` 배열의 `weekly_all`(7일)·`weekly_scoped`(모델별) 행의
+    0–100 % + 초기화 시각. 행이 없으면 `seven_day` 객체로 대신 읽고, 둘 다 없으면
+    그 한도는 비워 둡니다(0% 로 보이지 않음). 폐지된 5시간 한도(`session`·`five_hour`)가 남아 와도 무시합니다. 자세한 규칙은
     [docs/architecture.md](docs/architecture.md) § Data Flow 1.
 - **폴링**: 기본이자 최소 180초(설정에서 3·5·10·15분). 429 시 지수 백오프.
 - **토큰은 각자 Keychain에만 저장**, 외부 서버로 절대 전송하지 않습니다.

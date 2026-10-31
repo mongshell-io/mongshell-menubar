@@ -331,9 +331,9 @@ final class UsageModel: ObservableObject {
         case .show(let snap):
             session.loaded(snap, source: source)
             logUnknownLimitsIfChanged(snap)
-            // An unread 5-hour limit is not "under 25%": skipping it keeps the
+            // An unread weekly limit is not "under 25%": skipping it keeps the
             // watch from re-arming and repeating a level already sent (#130).
-            if let five = snap.fiveHourPercent { maybeNotify(percent: five) }
+            if let weekly = snap.weeklyAllPercent { maybeNotify(percent: weekly) }
         case .signOut:
             session.rejected(accessToken: token.accessToken, now: Date())
         case .expireSession:

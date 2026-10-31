@@ -6,7 +6,8 @@ enum TimeText {
     /// 재시도") is redrawn — the `TimelineView` period of the views showing one.
     static let minuteTick: TimeInterval = 60
 
-    /// "3시간 8분 후 초기화" / "12분 후 초기화" from a future date; "곧 초기화"
+    /// "3일 8시간 후 초기화" / "3시간 8분 후 초기화" / "12분 후 초기화" from a
+    /// future date; "곧 초기화"
     /// once it has passed (the next poll brings the new window). Empty when
     /// there is no date — an unknown reset time is not "soon".
     static func resetsIn(_ date: Date?, now: Date = Date()) -> String {
@@ -15,6 +16,7 @@ enum TimeText {
         let secs = Int(date.timeIntervalSince(now))
         let h = secs / 3600
         let m = (secs % 3600) / 60
+        if h >= 24 { return "\(h / 24)일 \(h % 24)시간 후 초기화" }
         if h > 0 { return "\(h)시간 \(m)분 후 초기화" }
         return "\(m)분 후 초기화"
     }
@@ -26,15 +28,6 @@ enum TimeText {
         fmt.locale = Locale(identifier: "ko_KR")
         fmt.dateFormat = "EEEE HH:mm"
         return "\(fmt.string(from: date)) 초기화"
-    }
-
-    /// "14:40" — compact absolute reset clock for the menu bar (5h window).
-    static func clockShort(_ date: Date?) -> String? {
-        guard let date else { return nil }
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "ko_KR")
-        fmt.dateFormat = "HH:mm"
-        return fmt.string(from: date)
     }
 
     /// "일 21:59" — compact weekday + reset clock for the menu bar (weekly window).

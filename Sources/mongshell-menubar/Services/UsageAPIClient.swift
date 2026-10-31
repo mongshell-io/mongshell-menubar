@@ -82,13 +82,16 @@ struct UsageAPIClient {
     /// and (for scoped rows) `scope.model.display_name`:
     /// ```
     /// "limits": [
-    ///   { "kind":"session",       "percent":64, "resets_at":"…" },
     ///   { "kind":"weekly_all",     "percent":23, "resets_at":"…" },
     ///   { "kind":"weekly_scoped",  "percent":29, "resets_at":"…",
     ///     "scope":{ "model":{ "display_name":"Fable" } } } ]
     /// ```
-    /// (`five_hour`/`seven_day` objects mirror session/weekly_all; the old
-    /// `seven_day_<model>` keys are always null now.)
+    /// (the `seven_day` object mirrors weekly_all; the old `seven_day_<model>`
+    /// keys are always null now.)
+    ///
+    /// Plans dropped the 5-hour limit in 2026-10. A `session` row or a
+    /// `five_hour` object that still arrives is ignored, not shown: it may
+    /// carry null, which would read as a 0% row.
     ///
     /// Any other `kind` (a limit reset or bonus granted from the settings
     /// page would arrive as one) is kept as an `ExtraLimit` rather than
@@ -101,8 +104,8 @@ struct UsageAPIClient {
 
         // nil until read: a limit the response no longer names stays unread
         // rather than showing as 0% (#130).
-        var fivePct: Int?, weeklyPct: Int?
-        var fiveReset: Date?, weeklyReset: Date?
+        var weeklyPct: Int?
+        var weeklyReset: Date?
         var models: [ModelUsage] = []
         var extraLimits: [ExtraLimit] = []
         var seenExtraKinds: [String: Int] = [:]
@@ -115,12 +118,11 @@ struct UsageAPIClient {
             // under two spellings ("Fable" / "Fable 5") in the same section.
             let scopeModel = scopeModelName(limit).map(prettyModelName)
             switch limit["kind"] as? String {
+            case "session":
+                break
             // A row whose percent cannot be read leaves its reset unread too:
             // the window has no value, so no reset time or countdown is drawn
             // beside the empty ring (#130).
-            case "session":
-                fivePct = percentValue(limit["percent"])
-                fiveReset = fivePct == nil ? nil : reset
             case "weekly_all":
                 weeklyPct = percentValue(limit["percent"])
                 weeklyReset = weeklyPct == nil ? nil : reset
@@ -143,16 +145,11 @@ struct UsageAPIClient {
             }
         }
 
-        // The flat objects mirror session/weekly_all, so each is the
-        // fallback for its own window when `limits` is absent or no longer
-        // carries a readable row for it. A fallback taken while `limits` is
-        // there is noted for the debug log: the row it replaced went away.
+        // The flat object mirrors weekly_all, so it is the fallback when
+        // `limits` is absent or no longer carries a readable row for it. A
+        // fallback taken while `limits` is there is noted for the debug log:
+        // the row it replaced went away.
         var flatFallbacks: [String] = []
-        if fivePct == nil, let five = root["five_hour"] as? [String: Any],
-           let pct = percentValue(five["utilization"]) {
-            fivePct = pct; fiveReset = ResponseDate.parse(five["resets_at"])
-            if !limits.isEmpty { flatFallbacks.append("five_hour") }
-        }
         if weeklyPct == nil, let weekly = root["seven_day"] as? [String: Any],
            let pct = percentValue(weekly["utilization"]) {
             weeklyPct = pct; weeklyReset = ResponseDate.parse(weekly["resets_at"])
@@ -160,8 +157,6 @@ struct UsageAPIClient {
         }
 
         return UsageSnapshot(
-            fiveHourPercent: fivePct,
-            fiveHourResetAt: fiveReset,
             weeklyAllPercent: weeklyPct,
             weeklyResetAt: weeklyReset,
             models: models,
