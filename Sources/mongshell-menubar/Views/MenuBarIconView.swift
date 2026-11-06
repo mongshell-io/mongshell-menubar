@@ -1,13 +1,15 @@
 import SwiftUI
 
 /// The status-bar content: Claude mark + a compact ring gauge for the 7-day
-/// window + its reset (weekday and clock). Hosted inside the NSStatusItem
+/// window + its reset (weekday and clock), and — opted into — the API credit
+/// ring (#165). Hosted inside the NSStatusItem
 /// button via NSHostingView. The rest lives in the popover, to keep the bar
 /// short.
 struct MenuBarIconView: View {
     @ObservedObject var model: UsageModel
     @ObservedObject var prefs: Preferences
     @ObservedObject var openClaw: OpenClawModel
+    @ObservedObject var credit: APICreditModel
 
     private var weeklyUsed: Int? { model.snapshot.weeklyAllPercent }
 
@@ -19,6 +21,7 @@ struct MenuBarIconView: View {
                        colorCoding: prefs.colorCoding,
                        showPercent: prefs.showPercent,
                        weeklyReset: TimeText.weekdayClockShort(model.snapshot.weeklyResetAt),
+                       creditRing: APICreditRing(prefs: prefs, credit: credit),
                        openClawDotColor: dots.openClaw,
                        serverHostDotColor: dots.serverHost)
     }
@@ -35,6 +38,9 @@ struct MenuBarContent: View {
     /// Weekly reset (e.g. "금 22:59") shown next to the gauge — with one
     /// window left it is the only date the bar has to carry. nil hides it.
     var weeklyReset: String? = nil
+    /// Non-nil = draw the API credit ring right of the weekly gauge (#165).
+    /// Part of the gauge group: hidden with it when `showPercent` is off.
+    var creditRing: APICreditRing? = nil
     /// Non-nil = append the unified openclaw indicator (paw + traffic-light dot)
     /// in this color. nil = hide it entirely.
     var openClawDotColor: Color? = nil
@@ -51,6 +57,9 @@ struct MenuBarContent: View {
 
             if showPercent {
                 weeklyGauge
+                if let creditRing {
+                    creditGauge(creditRing)
+                }
             }
 
             if let openClawDotColor {
@@ -79,19 +88,45 @@ struct MenuBarContent: View {
         }
     }
 
+    /// "$" + a ring the weekly ring's size. The fill is always what is left —
+    /// `showRemaining` is the usage gauges' mode — and the color reads the
+    /// spend, by the weekly ring's rule.
+    private func creditGauge(_ ring: APICreditRing) -> some View {
+        HStack(spacing: CreditGauge.glyphRingSpacing) {
+            Text("$")
+                .font(.system(size: CreditGauge.glyphSize, weight: .semibold))
+                .foregroundStyle(.secondary)
+            switch ring {
+            case .estimate(let remaining, let spent):
+                MenuRing(percent: remaining, color: riskColor(spent))
+                    .frame(width: MenuRing.size, height: MenuRing.size)
+            case .unknown:
+                unknownRing
+            }
+        }
+    }
+
     /// A tiny ring gauge (no number). Fill follows the display
     /// mode (consumed vs remaining); color always tracks risk (consumed).
     @ViewBuilder private func ring(_ used: Int?) -> some View {
         if let used {
             let display = Meter(usedPercent: used, showRemaining: showRemaining, colorCoding: colorCoding).displayPercent
-            let color = colorCoding ? Palette.statusColor(for: used, colorCoding: true) : Color.primary
-            MenuRing(percent: display, color: color)
-                .frame(width: 13, height: 13)
+            MenuRing(percent: display, color: riskColor(used))
+                .frame(width: MenuRing.size, height: MenuRing.size)
         } else {
-            Circle()
-                .stroke(Palette.menuBarUsageUnknown, style: Palette.usageUnknownStroke(lineWidth: MenuRing.lineWidth))
-                .frame(width: 13, height: 13)
+            unknownRing
         }
+    }
+
+    private func riskColor(_ used: Int) -> Color {
+        colorCoding ? Palette.statusColor(for: used, colorCoding: true) : Color.primary
+    }
+
+    /// Nothing read to draw: a dashed grey ring.
+    private var unknownRing: some View {
+        Circle()
+            .stroke(Palette.menuBarUsageUnknown, style: Palette.usageUnknownStroke(lineWidth: MenuRing.lineWidth))
+            .frame(width: MenuRing.size, height: MenuRing.size)
     }
 
     /// openclaw "아이콘 + 신호등": a paw glyph followed by the health-colored dot,
@@ -157,9 +192,16 @@ private enum StackedIndicator {
     static let dotSize: CGFloat = 6
 }
 
+/// The credit gauge's "$" glyph, set tight against its ring (#165).
+private enum CreditGauge {
+    static let glyphSize: CGFloat = 10
+    static let glyphRingSpacing: CGFloat = 2
+}
+
 /// A minimal ring gauge sized for the menu bar (top-start, clockwise fill).
 private struct MenuRing: View {
     static let lineWidth: CGFloat = 2.2
+    static let size: CGFloat = 13
 
     let percent: Int
     let color: Color
@@ -189,5 +231,16 @@ struct OpenClawDots {
     init(prefs: Preferences, openClaw model: OpenClawModel) {
         openClaw = prefs.showsOpenClaw ? model.health.dotColor : nil
         serverHost = prefs.showsOpenClaw ? model.hostHealth.dotColor : nil
+    }
+}
+
+extension APICreditRing {
+    /// The menu bar's credit ring — one rule for the bar and the settings
+    /// preview, like `OpenClawDots`.
+    @MainActor init?(prefs: Preferences, credit: APICreditModel, now: Date = Date()) {
+        guard let ring = APICreditRing.make(enabled: prefs.showCreditInMenuBar,
+                                            keySaved: credit.showsSection,
+                                            estimate: credit.estimate(now: now)) else { return nil }
+        self = ring
     }
 }

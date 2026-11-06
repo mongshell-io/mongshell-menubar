@@ -58,7 +58,7 @@ struct APICreditPopoverSection: View {
                         .foregroundStyle(Palette.textSecondary)
                         .lineLimit(1)
                 }
-                Text("추정치 · 최근 비용 반영 몇 분 지연")
+                Text("추정치 · 오늘(UTC) 사용분은 다음 날 반영")
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.textTertiary)
                     .lineLimit(1)

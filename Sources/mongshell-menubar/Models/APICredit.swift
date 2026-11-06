@@ -77,6 +77,12 @@ struct APICreditEstimate: Equatable {
         return Int(min(100, max(0, percent.rounded(.up))))
     }
 
+    /// Percent of the grant left, 0…100 — the menu bar ring's fill (#165).
+    /// Rounded down, like the dollars, so what is left is never overstated.
+    var remainingPercent: Int {
+        Int((remainingFraction * 100).rounded(.down))
+    }
+
     /// "$123.45" — whole cents, rounded down so what is left is never
     /// overstated.
     static func dollarsText(cents: Decimal) -> String {
@@ -95,6 +101,22 @@ struct APICreditEstimate: Equatable {
     }
 
     static let centsPerDollar = 100
+}
+
+/// The menu bar's credit ring (#165), or nil when it isn't drawn: only once
+/// the user has turned it on and a key is stored. With no estimate to show —
+/// before the first read, or a read for another cycle — it is the unknown ring.
+enum APICreditRing: Equatable {
+    case unknown
+    /// Fill is what is left; the three-step color reads what is spent.
+    case estimate(remainingPercent: Int, spentPercent: Int)
+
+    static func make(enabled: Bool, keySaved: Bool, estimate: APICreditEstimate?) -> APICreditRing? {
+        guard enabled, keySaved else { return nil }
+        guard let estimate else { return .unknown }
+        return .estimate(remainingPercent: estimate.remainingPercent,
+                         spentPercent: estimate.spentPercent)
+    }
 }
 
 /// Whether a typed-in Admin key can be saved (Decision #162).

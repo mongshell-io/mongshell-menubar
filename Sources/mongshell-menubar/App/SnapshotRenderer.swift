@@ -153,6 +153,13 @@ enum SnapshotRenderer {
     /// Keychain, no network. $76.55 spent of $200 leaves $123.44 — the
     /// spend has fractional cents, and what is left is rounded down.
     private static func renderAPICredit(to base: URL, now: Date) {
+        // The opt-in menu bar ring (#165), beside the weekly gauge.
+        for scheme in [ColorScheme.dark, .light] {
+            let name = scheme == .dark ? "dark" : "light"
+            write(MenuBarCreditStrip(scheme: scheme).frame(width: 760, height: 44)
+                    .environment(\.colorScheme, scheme),
+                  to: base, "menubar_credit_strip_\(name)", scale: 3)
+        }
         UsageModel.shared.presentForSnapshot(.sample(now: now), state: .signedOut)
         let spent = Decimal(string: "7655.12345")!
         snapshotCredit.presentForSnapshot(spentCents: spent, error: nil, now: now)
@@ -167,7 +174,7 @@ enum SnapshotRenderer {
         snapshotCredit.presentForSnapshot(spentCents: nil, error: nil, now: now)
         write(PopoverPreview(), to: base, "popover_api_credit_loading", scale: 2)
         snapshotCredit.presentForSnapshot(spentCents: spent, error: nil, now: now)
-        writeWindowed(APICreditSectionPreview(), size: NSSize(width: 380, height: 420),
+        writeWindowed(APICreditSectionPreview(), size: NSSize(width: 380, height: 500),
                       to: base, "settings_api_credit")
     }
 
@@ -416,6 +423,34 @@ private struct MenuBarStrip: View {
                                showPercent: true,
                                weeklyReset: item.weekly == nil ? nil : "금 22:59",
                                openClawDotColor: item.openClaw.dotColor)
+            }
+        }
+        .padding(.horizontal, 18)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(SnapshotBackdrop.menuBar(scheme))
+    }
+}
+
+/// Menu-bar mock for the API credit ring (#165): plenty left, little left
+/// (red), no estimate yet (dashed grey), and color coding off (monochrome,
+/// fill still what is left). The weekly ring stays the same in all of them.
+private struct MenuBarCreditStrip: View {
+    let scheme: ColorScheme
+    private let items: [(id: Int, ring: APICreditRing, colorCoding: Bool)] = [
+        (0, .estimate(remainingPercent: 61, spentPercent: 39), true),
+        (1, .estimate(remainingPercent: 12, spentPercent: 88), true),
+        (2, .unknown, true),
+        (3, .estimate(remainingPercent: 61, spentPercent: 39), false),
+    ]
+    var body: some View {
+        HStack(spacing: 26) {
+            ForEach(items, id: \.id) { item in
+                MenuBarContent(weeklyUsed: 34,
+                               showRemaining: false, colorCoding: item.colorCoding,
+                               showPercent: true,
+                               weeklyReset: "금 22:59",
+                               creditRing: item.ring,
+                               openClawDotColor: OpenClawHealth.ok(detail: "").dotColor)
             }
         }
         .padding(.horizontal, 18)
@@ -700,7 +735,7 @@ private struct APICreditSectionPreview: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 380, height: 420)
+        .frame(width: 380, height: 500)
     }
 }
 

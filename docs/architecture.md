@@ -247,17 +247,18 @@ APICreditModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·�
              (커서는 직접 퍼센트 인코딩 — `+`·`&`·`=` 가 그대로 가지 않게)
    └─ @Published spentCents / spentCycleStart / lastUpdated / lastError
         ├─ APICreditPopoverSection   (약 $N 남음 / $월 크레딧 · 남은 비율 막대 · 다음 갱신일 · 추정치 캡션 · 오류 한 줄)
-        └─ APICreditSettingsSection  (Admin 키 상태·입력·삭제 · 월 크레딧 · 갱신일)
+        ├─ MenuBarIconView           (옵트인 — `$` + 남은 비율 링, `APICreditRing`, Decision #165)
+        └─ APICreditSettingsSection  (Admin 키 상태·입력·삭제 · 월 크레딧 · 갱신일 · 메뉴바 링 토글)
 ```
 
 - 추정 잔액 = max(0, 월 크레딧 − 이번 주기 사용액) (`APICreditEstimate`). 지급 크레딧이 구매 크레딧보다 먼저 쓰이므로 근사가 성립한다. 표시 금액은 센트 아래를 버린다. 읽은 사용액이 다른 주기의 것(주기가 넘어갔거나 갱신일을 바꿈)이면 값 없음("—")으로 보인다.
 - 막대 채움은 남은 비율이고, 색은 사용 비율로 사용량 3단계 색을 따른다(색상 코딩이 꺼지면 모노크롬). `showRemaining` 의 영향을 받지 않는다.
 - 주기: 백그라운드 10분(`Config.apiCreditPollSeconds` — Admin API 는 분당 1회 이하를 권한다) · 클릭 팝오버를 열 때 값이 2분(`Config.apiCreditRefreshOnOpenAge`)보다 오래됐거나 다른 주기의 것이면 1회 · 갱신일을 바꾸면 마지막 변경 1.5초 뒤 1회(`Config.apiCreditRenewalDebounceSeconds` — Stepper 연타가 요청 한 번). 429 는 지수 백오프(상한 1시간, 더 긴 `Retry-After` 를 따름, `APICreditPollPolicy`)이고, 그 시각 전에는 폴링·팝오버·갱신일 어느 경로로도 요청하지 않는다 — 검사는 모든 경로가 지나는 `refreshOnce` 입구 한 곳이고, 폴링 루프는 다른 경로가 정한 더 늦은 시각까지 잔다. 잠자기 직후 실패와 Keychain 을 읽지 못한 경우는 `WakeRetry`·30초 재시도를 따른다.
 - 실패는 마지막 값을 남긴 채 섹션에 회색 한 줄로 보인다 — 401/403 은 "Admin 키를 확인하세요", 그 밖은 "불러오지 못했습니다". 행이 있는데 하나도 읽지 못한 응답은 $0 사용이 아니라 오류다.
-- 반영 지연: 이 보고서는 약 5분 안에 반영된다. 신규 `/v1/organizations/analytics/cost` 는 4~24시간 늦어 쓰지 않는다.
+- 반영 지연 (실측, #165): 보고서는 **끝난 UTC 날의 버킷만** 돌려준다 — `ending_at` 을 미래(다음 UTC 자정, 이틀 뒤)로 보내도 200 이지만 오늘(UTC) 버킷은 없다. 그래서 오늘 사용분은 UTC 날이 끝난 뒤(한국 시각 09:00)에야 합산되고, 추정 잔액은 최대 하루치 사용분만큼 많게 보일 수 있다. 팝오버 캡션이 이를 말한다("추정치 · 오늘(UTC) 사용분은 다음 날 반영"). 어제까지의 합은 Console 의 "이번 달 지출" 과 일치했다. 조회 범위의 끝은 그대로 다음 UTC 자정이다 — 보고서가 오늘 버킷을 돌려주기 시작하면 그대로 들어온다. 신규 `/v1/organizations/analytics/cost` 는 4~24시간 늦어 쓰지 않는다.
 - 경계 근사: 버킷이 UTC 일 단위라, 주기 시작이 든 UTC 날의 주기 시작 이전 사용분도 이번 주기로 센다 — 남은 크레딧을 부풀리지 않는 쪽으로 근사한다.
 - 키를 저장·삭제하거나 갱신일을 바꾸면 세대를 올려 진행 중인 읽기의 답을 버린다. 키를 바꾸면 이전 키로 읽은 값도 버린다(다른 조직일 수 있다).
-- 키가 없으면 폴링도 없고 팝오버에 섹션·구분선이 없다. 메뉴바와 hover 요약은 이 기능과 무관하다. 설정의 Admin 키 입력칸은 PHILOSOPHY 원칙 2 의 설정 진입점 예외로 항상 보인다.
+- 키가 없으면 폴링도 없고 팝오버에 섹션·구분선이 없다. hover 요약은 이 기능과 무관하다. 메뉴바 링(Decision #165)은 설정의 "메뉴바에 크레딧 표시"(기본 꺼짐, `Preferences.showCreditInMenuBar`)를 켜고 키가 저장돼 있을 때만, 그리고 게이지·퍼센트 표시가 켜져 있을 때만 주간 게이지 오른쪽에 그린다. 채움은 남은 비율(내림, `showRemaining` 무관), 색은 사용 비율의 3단계 색(색상 코딩이 꺼지면 모노크롬), 추정이 없으면(첫 읽기 전·다른 주기) 점선 회색 링이다. 설정의 Admin 키 입력칸은 PHILOSOPHY 원칙 2 의 설정 진입점 예외로 항상 보인다.
 
 ### 응답 읽기 공통 규칙
 

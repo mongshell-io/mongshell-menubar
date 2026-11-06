@@ -92,13 +92,16 @@ GraphQL API 요청 1회(3분 주기, 설정 1~10분; 팝오버를 열면 즉시,
 ## API 크레딧 추정 잔액 (선택 기능 — Admin 키를 저장한 경우에만)
 Max/Ultra 구독에 매달 들어오는 API 크레딧(Ultra $200)은 결제 주기 끝에 사라지는데, 잔액을
 읽는 공식 API 가 없습니다. 설정의 **API 크레딧** 섹션에 Console 조직의 **Admin API 키**
-(`sk-ant-admin…`)를 저장하면, Admin API 비용 보고서(`/v1/organizations/cost_report`, 약 5분
-안에 반영)로 이번 주기의 사용액을 합산해 **클릭 팝오버에 "약 $N 남음 / $월 크레딧"** 과 막대,
+(`sk-ant-admin…`)를 저장하면, Admin API 비용 보고서(`/v1/organizations/cost_report`)로
+이번 주기의 사용액을 합산해 **클릭 팝오버에 "약 $N 남음 / $월 크레딧"** 과 막대,
 다음 갱신일을 보여 줍니다. 월 크레딧(기본 $200)과 갱신일(매월 N일)은 설정에서 입력합니다 —
 결제 주기 시작일은 API 로 알 수 없기 때문입니다. 지급 크레딧이 먼저 쓰인다는 전제의 **추정치**이고,
-사용액은 UTC 일 단위로 합산됩니다. 키는 Keychain 에만 두고 `api.anthropic.com` 외 어디에도
+사용액은 UTC 일 단위로 합산되며, 보고서가 끝난 UTC 날만 돌려주므로 **오늘(UTC) 사용분은 다음 날
+(한국 시각 오전 9시) 반영**됩니다 — 그만큼 잔액이 많아 보일 수 있습니다. 키는 Keychain 에만 두고 `api.anthropic.com` 외 어디에도
 보내지 않으며, 10분마다(팝오버를 열 때 값이 2분보다 오래됐으면 즉시) 읽습니다. **키가 없으면
-팝오버 어디에도 흔적이 없고, 메뉴바와 hover 요약은 바뀌지 않습니다.**
+팝오버 어디에도 흔적이 없고, 메뉴바와 hover 요약은 바뀌지 않습니다.** 키를 저장한 뒤 설정의
+**메뉴바에 크레딧 표시** 를 켜면(기본 꺼짐) 주간 게이지 오른쪽에 `$` 와 남은 크레딧 링이 붙습니다
+(Decision #165).
 
 ## 설치 — 각자 빌드해서 쓰기 (Apple 계정 불필요)
 직접 빌드한 앱은 Gatekeeper에 막히지 않습니다. 필요한 건 **macOS 26+ 와 Xcode
@@ -208,7 +211,7 @@ Sources/mongshell-menubar/
   Views/GitHubPopoverView.swift      GitHub 팝오버(배너 + 내 PR/최근 머지 섹션, 검사 칩)
   Views/GitHubSettingsSection.swift  GitHub 표시 토글·토큰·PAT·갱신 주기·레포 숨기기
   Views/APICreditPopoverSection.swift 팝오버의 API 크레딧 섹션(추정 잔액·막대·다음 갱신일)
-  Views/APICreditSettingsSection.swift Admin 키·월 크레딧·갱신일 설정 섹션
+  Views/APICreditSettingsSection.swift Admin 키·월 크레딧·갱신일·메뉴바 링 토글 설정 섹션
   Design/Palette.swift      색 토큰 SSOT(사용량 3단계·팝오버 표면/텍스트)
   Models/…                  Preferences, UsageState(UsageSnapshot·LoadState·429 대기 규칙),
                             UsageModel(폴링 루프·토큰 갱신·보류 토큰 저장·로그인/로그아웃 조율),
