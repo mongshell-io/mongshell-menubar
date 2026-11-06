@@ -45,7 +45,7 @@ status item 의 폭도 AppDelegate 가 잡는다. 메뉴바 뷰(두 영역 모�
 
 | 표면 | 뷰 | 제약 |
 |---|---|---|
-| 메뉴바 | `MenuBarIconView`, `ClaudeMarkView`, `GitHubMenuBarView` | 폭이 유한하다. 상시 표시 항목 추가는 무엇을 뺄지 함께 제시해야 한다. 신호등은 세로로 **두 줄까지** 쌓는다 (Decision #31). 옵트인 두 번째 영역(Decision #45)은 글리프 · 점 · 숫자 하나까지 — 글리프가 머지 가능 여부를 겸하고, 상태와 무관하게 칸 폭은 고정이다 (Decision #52 후속 (#56)) |
+| 메뉴바 | `MenuBarIconView`, `ClaudeMarkView`, `GitHubMenuBarView` | 폭이 유한하다. 상시 표시 항목 추가는 무엇을 뺄지 함께 제시해야 한다. 신호등은 세로로 **두 줄까지** 쌓는다 (Decision #31). API 크레딧 링은 옵트인 예외다 — 사용자가 켠 경우에만 주간 게이지 묶음 안, 주간 링 오른쪽에 `$` + 같은 크기 링 하나 (Decision #165). 옵트인 두 번째 영역(Decision #45)은 글리프 · 점 · 숫자 하나까지 — 글리프가 머지 가능 여부를 겸하고, 상태와 무관하게 칸 폭은 고정이다 (Decision #52 후속 (#56)) |
 | hover 요약 | `HoverSummaryView`, `GitHubHoverSummaryView` | 즉시 표시가 존재 이유다 — 지연을 만드는 애니메이션·비동기 로드 금지. hover 는 갱신을 일으키지 않는다 |
 | 클릭 팝오버 / 설정창 | `PopoverView`, `APICreditPopoverSection`, `SettingsView`, `ClaudeSettingsSection`, `OpenClawSettingsSection`, `GitHubPopoverView`, `GitHubSettingsSection`, `APICreditSettingsSection` | 정확한 숫자와 상세는 여기로 미룬다 |
 
@@ -93,6 +93,6 @@ openclaw·Claude Code 설정처럼 전제가 없을 수 있는 요소는 **비�
 
 GitHub 영역도 같다 (Decision #45). `Preferences` 의 "GitHub 표시" 가 꺼져 있으면 메뉴바의 두 번째 영역(헤어라인 포함)·GitHub 팝오버·hover 요약을 그리지 않는다. 켜져 있는데 토큰이 없거나 거부된 것은 "없음" 이 아니다 — 회색 점과 팝오버 배너로 보인다. 빈 목록으로 가장하지 않는다.
 
-API 크레딧도 같다 (Decision #162). Admin 키가 저장돼 있지 않으면 팝오버의 API 크레딧 섹션(구분선 포함)을 그리지 않는다. 키가 있는데 읽기에 실패한 것은 "없음" 이 아니다 — 마지막 값을 남기고 회색 한 줄로 이유를 보인다. 이 섹션은 팝오버에만 있다 — 메뉴바·hover 요약에 넣지 않는다.
+API 크레딧도 같다 (Decision #162). Admin 키가 저장돼 있지 않으면 팝오버의 API 크레딧 섹션(구분선 포함)을 그리지 않는다. 키가 있는데 읽기에 실패한 것은 "없음" 이 아니다 — 마지막 값을 남기고 회색 한 줄로 이유를 보인다. hover 요약에는 넣지 않는다. 메뉴바 링(Decision #165)은 "메뉴바에 크레딧 표시" 토글(기본 꺼짐)·키 저장·게이지 표시(`showPercent`)가 모두 켜졌을 때만 그리고, 아니면 자리를 남기지 않는다. 노출·채움·색 판정은 `APICreditRing` 하나를 메뉴바와 설정 미리보기가 함께 쓴다. 링 채움은 항상 남은 비율이다 — `showRemaining` 은 사용량 게이지의 모드라 이 링에 걸지 않고, 색은 위 표시 모드 규칙대로 사용 비율이 정한다.
 
-설정 진입점 예외는 PHILOSOPHY 원칙 2 를 따른다 — 현재 해당하는 것은 `OpenClawSettingsSection` 의 상태 URL 입력칸, `GitHubSettingsSection` 의 "GitHub 표시" 토글, `APICreditSettingsSection` 의 Admin 키 입력칸이다 (월 크레딧·갱신일은 키를 저장한 뒤에만 나타난다). 토글이 꺼져 있을 때 그 섹션에 남는 것은 토글과 그 아래 한 줄 설명뿐이고, 토큰 상태·PAT 입력·갱신 주기·레포 숨기기는 켠 뒤에만 나타난다. 토글은 `Preferences` 에 직접 바인딩하지 않고 `GitHubModel.setEnabled(_:)` 를 거친다 — 켜는 동작이 첫 Keychain 읽기이기 때문이다.
+설정 진입점 예외는 PHILOSOPHY 원칙 2 를 따른다 — 현재 해당하는 것은 `OpenClawSettingsSection` 의 상태 URL 입력칸, `GitHubSettingsSection` 의 "GitHub 표시" 토글, `APICreditSettingsSection` 의 Admin 키 입력칸이다 (월 크레딧·갱신일·"메뉴바에 크레딧 표시" 토글은 키를 저장한 뒤에만 나타난다). 토글이 꺼져 있을 때 그 섹션에 남는 것은 토글과 그 아래 한 줄 설명뿐이고, 토큰 상태·PAT 입력·갱신 주기·레포 숨기기는 켠 뒤에만 나타난다. 토글은 `Preferences` 에 직접 바인딩하지 않고 `GitHubModel.setEnabled(_:)` 를 거친다 — 켜는 동작이 첫 Keychain 읽기이기 때문이다.

@@ -141,9 +141,11 @@ struct CostReportClient: Sendable {
     /// holding `cycleStart`: the part of that day before the local cycle
     /// start is counted as spent, which can only understate what is left —
     /// the other way (the next UTC midnight) would drop the cycle's first
-    /// hours. `starting_at` is inclusive and a bucket is returned when it
-    /// ends by `ending_at`, so the end is the next UTC midnight after `now`:
-    /// today's bucket ends there and so is included, partial as it is.
+    /// hours. The end is the next UTC midnight after `now`, where today's
+    /// bucket would end — but the report only returns completed UTC days
+    /// (measured, #165), so today's spend is not in the total until the UTC
+    /// day is over. A future `ending_at` is accepted; it costs nothing and
+    /// picks today up should the report start returning it.
     static func queryRange(cycleStart: Date, now: Date) -> DateInterval {
         let start = utcCalendar.startOfDay(for: cycleStart)
         let today = utcCalendar.startOfDay(for: now)

@@ -7,7 +7,8 @@ import Foundation
 // page whose rows are all unreadable is an error rather than $0 spent; the
 // status code maps onto the error the model branches on (401/403 → the key,
 // 429 → back off with Retry-After); the query range starts at the UTC day
-// holding the cycle start and ends at the next UTC midnight; the billing
+// holding the cycle start and ends at the next UTC midnight (the report
+// itself leaves today out until the UTC day ends — #165); the billing
 // cycle clamps a renewal day past the month's end and turns over at local
 // midnight of the renewal day; what is left never goes below zero, a spend
 // read for another cycle is not shown, and the dollar text rounds down; the
@@ -117,7 +118,7 @@ do {
     let range = CostReportClient.queryRange(cycleStart: cycleStart, now: now)
     check("range starts at the UTC day holding the cycle start",
           range.start == utc.date(from: DateComponents(year: 2026, month: 11, day: 14)), "\(range.start)")
-    check("range ends at the next UTC midnight, so today's bucket is in",
+    check("range ends at the next UTC midnight, where today's bucket would end",
           range.end == utc.date(from: DateComponents(year: 2026, month: 11, day: 21)), "\(range.end)")
 
     let req = CostReportClient.request(adminKey: "sk-ant-admin01-test", range: range, page: "p2")

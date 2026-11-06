@@ -18,7 +18,7 @@ non_goals:
 | 종류 | 예 | 규칙 |
 |---|---|---|
 | 상태 소유 객체 | `UsageModel`, `OpenClawModel`, `ClaudeSettingsModel`, `Preferences`, `LoginItemModel`, `GitHubModel`, `APICreditModel` | `@MainActor final class … : ObservableObject` |
-| 값 타입 | `UsageSnapshot`, `ModelUsage`, `OpenClawHealth`, `ServerHost` / `ServerHostPower` / `ServerHostDisk` / `ServerHostRunners` / `ServerHostLevel`, `ServerHostHealth` | `struct`/`enum`, `Equatable`, 로직 없음에 가깝게. 단 판정 규칙을 테스트 가능하게 담는 순수 값 타입은 허용 (`OpenClawReading` — 두절 판정, `OpenClawHealWatch` — 복구 알림 판정, `OpenClawHealAlert` — 복구 알림 문구, `ServerHostAlertWatch` — 서버 호스트 알림 판정, `GitHubPullRequest` — PR 배지·점·숫자 판정, `GitHubCILine` — hover CI 줄 판정, `GitHubMergePolicy` — 머지 버튼 노출·요청·머지 상태 이월 판정, `UsageRetryPolicy` — 429 대기·수동 새로고침 차단 판정, `UsageRefreshPolicy` — 사용량 토큰 선택·선제 갱신·401 → 갱신 → 재요청 판정, `UsageSession` — 사용량 표시 상태와 세션 플래그의 전이, `UsageThresholdWatch` — 사용량 임계 알림 판정, `UsagePresentation` — 사용량 배지·배너·버튼·계정 행 노출 판정, `GitHubPresentation` — GitHub 연결 배지·배너·버튼·토큰 행 노출 판정, `WakeRetry` — 잠자기에서 깬 직후 실패한 폴링의 재시도 간격 판정, 사용량·GitHub·openclaw·API 크레딧 폴링 루프 공용, `APICreditCycle`·`APICreditEstimate`·`APICreditPollPolicy` — API 크레딧의 결제 주기·추정 잔액·429 백오프 판정) |
+| 값 타입 | `UsageSnapshot`, `ModelUsage`, `OpenClawHealth`, `ServerHost` / `ServerHostPower` / `ServerHostDisk` / `ServerHostRunners` / `ServerHostLevel`, `ServerHostHealth` | `struct`/`enum`, `Equatable`, 로직 없음에 가깝게. 단 판정 규칙을 테스트 가능하게 담는 순수 값 타입은 허용 (`OpenClawReading` — 두절 판정, `OpenClawHealWatch` — 복구 알림 판정, `OpenClawHealAlert` — 복구 알림 문구, `ServerHostAlertWatch` — 서버 호스트 알림 판정, `GitHubPullRequest` — PR 배지·점·숫자 판정, `GitHubCILine` — hover CI 줄 판정, `GitHubMergePolicy` — 머지 버튼 노출·요청·머지 상태 이월 판정, `UsageRetryPolicy` — 429 대기·수동 새로고침 차단 판정, `UsageRefreshPolicy` — 사용량 토큰 선택·선제 갱신·401 → 갱신 → 재요청 판정, `UsageSession` — 사용량 표시 상태와 세션 플래그의 전이, `UsageThresholdWatch` — 사용량 임계 알림 판정, `UsagePresentation` — 사용량 배지·배너·버튼·계정 행 노출 판정, `GitHubPresentation` — GitHub 연결 배지·배너·버튼·토큰 행 노출 판정, `WakeRetry` — 잠자기에서 깬 직후 실패한 폴링의 재시도 간격 판정, 사용량·GitHub·openclaw·API 크레딧 폴링 루프 공용, `APICreditCycle`·`APICreditEstimate`·`APICreditPollPolicy`·`APICreditRing` — API 크레딧의 결제 주기·추정 잔액·429 백오프·메뉴바 링 노출 판정) |
 
 ## `@MainActor` 격리
 
@@ -31,7 +31,7 @@ non_goals:
 
 ## 싱글턴
 
-`UsageModel.shared` / `Preferences.shared` / `OpenClawModel.shared` / `ClaudeSettingsModel.shared` 는 의도된 싱글턴이다 — AppKit 호스트와 SwiftUI 뷰가 **같은 인스턴스를 관찰해야** 하기 때문. 새 싱글턴을 늘리지 않는다. 그 이유가 없는 상태는 소유자에게 주입한다 — `LoginItemModel` 이 그 선례이고, `GitHubModel`(Decision #45)도 같다: AppDelegate 가 만들어 소유하고 메뉴바·hover·팝오버·설정 뷰에 넘긴다. `APICreditModel`(Decision #162)도 같다 — 팝오버와 설정 뷰에 넘긴다. AppDelegate 가 모든 뷰를 만들므로 "같은 인스턴스" 는 주입으로 성립한다.
+`UsageModel.shared` / `Preferences.shared` / `OpenClawModel.shared` / `ClaudeSettingsModel.shared` 는 의도된 싱글턴이다 — AppKit 호스트와 SwiftUI 뷰가 **같은 인스턴스를 관찰해야** 하기 때문. 새 싱글턴을 늘리지 않는다. 그 이유가 없는 상태는 소유자에게 주입한다 — `LoginItemModel` 이 그 선례이고, `GitHubModel`(Decision #45)도 같다: AppDelegate 가 만들어 소유하고 메뉴바·hover·팝오버·설정 뷰에 넘긴다. `APICreditModel`(Decision #162)도 같다 — 팝오버·설정 뷰와, 옵트인 링(Decision #165)을 위해 메뉴바 뷰에 넘긴다. AppDelegate 가 모든 뷰를 만들므로 "같은 인스턴스" 는 주입으로 성립한다.
 
 `UsageModel` 의 외부 경계(Keychain·OAuth·사용량 API·알림·읽는 설정 둘)는 `UsageModel.Boundaries` 클로저 묶음 하나로 주입되고, 실앱 값 `.live` 와 `shared` 는 `UsageModelLive.swift` 에 있다 — 테스트 번들이 `UsageModel.swift` 를 AppKit·UserNotifications 없이 컴파일하도록 (Decision #150). `init(boundaries:)` 로 인스턴스를 더 만드는 곳은 순서 테스트뿐이다. 경계를 더할 때는 이 묶음에 클로저를 하나 늘린다 — 프로토콜 계층을 세우지 않는다.
 
