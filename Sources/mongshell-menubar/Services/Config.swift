@@ -189,6 +189,12 @@ enum Config {
     static let apiCreditPollSeconds = 600
     /// Opening the popover refreshes once the value is older than this.
     static let apiCreditRefreshOnOpenAge: TimeInterval = 120
+    /// After a Keychain read that couldn't reach the item (locked at login,
+    /// say), the next read comes this soon rather than a full poll later.
+    static let apiCreditKeychainRetrySeconds = 30
+    /// Stepping the renewal day re-reads once the clicks have settled this
+    /// long, so a run of clicks sends one request, not one each.
+    static let apiCreditRenewalDebounceSeconds = 1.5
     /// Ceiling on the 429 backoff, seconds.
     static let apiCreditMaxBackoffSeconds = 3600
 

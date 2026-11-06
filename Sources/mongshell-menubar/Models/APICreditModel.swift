@@ -11,6 +11,9 @@ enum APICreditKeyState: Equatable {
     /// The save was refused with this status; the old key is gone with it
     /// (delete then add).
     case saveFailed(OSStatus)
+    /// The user cancelled the Keychain prompt. Remembered for the session —
+    /// no read asks again until the settings' retry, a save or a clear.
+    case declined
 }
 
 /// Owns the estimated API credit balance (Decision #162): the cycle's spend
@@ -39,6 +42,8 @@ final class APICreditModel: ObservableObject {
     private let store = AdminKeyStore()
     private let client = CostReportClient()
     private var pollTask: Task<Void, Never>?
+    /// The refresh a renewal-day change asked for, waiting out the debounce.
+    private var renewalRefreshTask: Task<Void, Never>?
     /// Bumped whenever a read in flight stops speaking for what is stored or
     /// asked for — a key saved or cleared, a renewal day changed. A read
     /// checks it after each await and drops its answer if it moved (#141).
@@ -48,8 +53,11 @@ final class APICreditModel: ObservableObject {
     private var inFlightGeneration: Int?
     private var consecutiveRateLimits = 0
     private var retryAfter: TimeInterval?
-    /// No popover-open refresh before this while backing off a 429.
+    /// No request of any kind before this while backing off a 429.
     private var notBefore: Date?
+    /// The last Keychain read couldn't reach the item; the loop asks again
+    /// after `Config.apiCreditKeychainRetrySeconds`.
+    private var keychainUnavailable = false
     /// Set by `presentForSnapshot` so reference images never reach the
     /// Keychain or the network.
     private var frozen = false
@@ -66,11 +74,10 @@ final class APICreditModel: ObservableObject {
     }
 
     /// Opening the popover refreshes once the value is older than
-    /// `Config.apiCreditRefreshOnOpenAge` — or belongs to another cycle —
-    /// unless a 429 backoff is running.
+    /// `Config.apiCreditRefreshOnOpenAge` — or belongs to another cycle.
+    /// A running 429 backoff is honored by `refreshOnce`.
     func popoverOpened(now: Date = Date()) {
         guard !frozen, keyState == .saved else { return }
-        if let notBefore, now < notBefore { return }
         let currentCycle = cycle(now: now).start
         let fresh = lastUpdated.map { now.timeIntervalSince($0) < Config.apiCreditRefreshOnOpenAge } ?? false
         guard !fresh || spentCycleStart != currentCycle else { return }
@@ -84,21 +91,11 @@ final class APICreditModel: ObservableObject {
 
     // MARK: Settings
 
-    /// Why a typed-in key would be refused, or nil when it can be saved.
-    static func keyInputProblem(_ raw: String) -> String? {
-        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if key.isEmpty { return "" }
-        guard key.hasPrefix(Config.adminKeyPrefix) else {
-            return "Admin 키(\(Config.adminKeyPrefix)…)만 사용할 수 있습니다"
-        }
-        return nil
-    }
-
     /// Stores a new key and reads the cost report with it. Whatever was read
     /// with the old key is dropped — the new one may be another organization.
     func saveKey(_ raw: String) async {
         let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard Self.keyInputProblem(key) == nil else { return }
+        guard AdminKeyInput.problem(key) == nil else { return }
         stopPolling()
         clearReading()
         let savedIn = generation
@@ -119,20 +116,36 @@ final class APICreditModel: ObservableObject {
         await store.clear()
     }
 
+    /// Asks the Keychain again after a cancelled prompt — the settings'
+    /// button, the one way past a remembered decline besides save/clear.
+    func retryKeychain() {
+        guard keyState == .declined else { return }
+        keyState = .unknown
+        restartPolling()
+    }
+
     func setMonthlyCredit(_ usd: Int) {
         let range = Config.apiCreditMonthlyUSDRange
         prefs.apiCreditMonthlyUSD = min(max(usd, range.lowerBound), range.upperBound)
     }
 
     /// A new renewal day is a new cycle: the read in flight is for the old
-    /// one, so it is dropped and the new cycle is read at once.
+    /// one, so it is dropped at once, and the new cycle is read once the
+    /// clicks settle (`Config.apiCreditRenewalDebounceSeconds`) — a run of
+    /// Stepper clicks sends one request.
     func setRenewalDay(_ day: Int) {
         let days = APICreditCycle.renewalDays
         let clamped = min(max(day, days.lowerBound), days.upperBound)
         guard clamped != prefs.apiCreditRenewalDay else { return }
         prefs.apiCreditRenewalDay = clamped
         generation += 1
-        if keyState == .saved { refreshNow() }
+        renewalRefreshTask?.cancel()
+        guard !frozen, keyState == .saved else { return }
+        renewalRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Config.apiCreditRenewalDebounceSeconds))
+            guard !Task.isCancelled else { return }
+            await self?.refreshOnce()
+        }
     }
 
     // MARK: Reading
@@ -163,6 +176,8 @@ final class APICreditModel: ObservableObject {
     private func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
+        renewalRefreshTask?.cancel()
+        renewalRefreshTask = nil
         generation += 1
     }
 
@@ -177,13 +192,19 @@ final class APICreditModel: ObservableObject {
         var mark = WakeRetry.Mark()
         while !Task.isCancelled {
             await refreshOnce()
-            if keyState == .absent { return }
+            if keyState == .absent || keyState == .declined { return }
             wake.armIfSlept(mark.sleptSince)
-            let failed = lastError != nil && consecutiveRateLimits == 0
-            let secs = wake.wait(normal: APICreditPollPolicy.wait(consecutiveRateLimits: consecutiveRateLimits,
+            let failed = keychainUnavailable || (lastError != nil && consecutiveRateLimits == 0)
+            var secs = wake.wait(normal: APICreditPollPolicy.wait(consecutiveRateLimits: consecutiveRateLimits,
                                                                   retryAfter: retryAfter),
                                  failed: failed)
             wake.polled(failed: failed)
+            if keychainUnavailable { secs = min(secs, Config.apiCreditKeychainRetrySeconds) }
+            // A 429 met by another path (popover open, renewal day) may have
+            // set a later `notBefore` than this loop's own wait.
+            if let notBefore {
+                secs = max(secs, Int(notBefore.timeIntervalSinceNow.rounded(.up)))
+            }
             mark = WakeRetry.Mark()
             try? await Task.sleep(for: .seconds(secs))
         }
@@ -191,9 +212,11 @@ final class APICreditModel: ObservableObject {
 
     /// One read: the key from the Keychain, then the cycle's cost report.
     /// The loop runs it, and so do the popover-open and renewal-day
-    /// refreshes — a second read for the same generation is skipped rather
-    /// than sent twice.
+    /// refreshes — so the 429 backoff is honored here, for all of them, and
+    /// a second read for the same generation is skipped rather than sent
+    /// twice.
     private func refreshOnce() async {
+        if let notBefore, Date() < notBefore { return }
         let readIn = generation
         guard inFlightGeneration != readIn else { return }
         inFlightGeneration = readIn
@@ -201,6 +224,7 @@ final class APICreditModel: ObservableObject {
 
         let lookup = await store.load()
         guard readIn == generation else { return }
+        keychainUnavailable = false
         let key: String
         switch lookup {
         case .found(let found):
@@ -210,8 +234,12 @@ final class APICreditModel: ObservableObject {
             keyState = .absent
             clearReading()
             return
+        case .declined:
+            keyState = .declined
+            return
         case .unavailable:
-            // Not "no key": try again on the next poll, showing what we had.
+            // Not "no key": asked again shortly, showing what we had.
+            keychainUnavailable = true
             return
         }
 
@@ -261,5 +289,6 @@ final class APICreditModel: ObservableObject {
         consecutiveRateLimits = 0
         retryAfter = nil
         notBefore = nil
+        keychainUnavailable = false
     }
 }

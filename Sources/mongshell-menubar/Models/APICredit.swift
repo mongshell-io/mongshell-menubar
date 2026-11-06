@@ -97,6 +97,27 @@ struct APICreditEstimate: Equatable {
     static let centsPerDollar = 100
 }
 
+/// Whether a typed-in Admin key can be saved (Decision #162).
+enum AdminKeyInput {
+    /// Why it would be refused, or nil when it can be saved. Empty input is
+    /// refused with an empty reason — there is nothing to say yet.
+    ///
+    /// Token characters only: a key carrying a newline or other control
+    /// character makes `URLRequest` drop the `x-api-key` header without a
+    /// word, and the result would read as a rejected key.
+    static func problem(_ raw: String) -> String? {
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if key.isEmpty { return "" }
+        guard key.hasPrefix(Config.adminKeyPrefix) else {
+            return "Admin 키(\(Config.adminKeyPrefix)…)만 사용할 수 있습니다"
+        }
+        guard key.wholeMatch(of: #/[A-Za-z0-9_\-]+/#) != nil else {
+            return "키에 쓸 수 없는 문자가 들어 있습니다"
+        }
+        return nil
+    }
+}
+
 /// How long the credit poll waits (Decision #162). A 429 backs off
 /// exponentially from the base interval, capped, and never sooner than the
 /// server's `Retry-After` (capped the same).

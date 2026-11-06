@@ -59,14 +59,26 @@ struct CostReportClient: Sendable {
     /// USD spent in `range`, in cents, following `next_page` up to
     /// `Config.costReportMaxPages`.
     func fetchSpentCents(adminKey: String, range: DateInterval) async throws(CostReportError) -> Decimal {
+        try await Self.sumPages(maxPages: Config.costReportMaxPages) { page throws(CostReportError) in
+            try await fetchPage(adminKey: adminKey, range: range, page: page)
+        }
+    }
+
+    /// Sums the pages `fetch` hands back, following `next_page` from the
+    /// first (nil cursor) for at most `maxPages`. Split from the transport so
+    /// the paging rules are testable. Every way of stopping short is an
+    /// error, never the partial total: a total that misses pages undercounts
+    /// the spend and overstates what is left.
+    static func sumPages(maxPages: Int,
+                         fetch: (String?) async throws(CostReportError) -> CostReportPage)
+        async throws(CostReportError) -> Decimal {
         var total = Decimal(0)
         var page: String?
-        for _ in 0..<Config.costReportMaxPages {
-            let result = try await fetchPage(adminKey: adminKey, range: range, page: page)
+        for _ in 0..<maxPages {
+            let result = try await fetch(page)
             total += result.spentCents
             guard result.hasMore else { return total }
-            // `has_more` with no cursor can't be followed; summing what came
-            // would undercount the spend.
+            // `has_more` with no cursor can't be followed.
             guard let next = result.nextPage else { throw .badResponse }
             page = next
         }
@@ -108,7 +120,12 @@ struct CostReportClient: Sendable {
             URLQueryItem(name: "limit", value: String(Config.costReportBucketLimit)),
         ]
         if let page { items.append(URLQueryItem(name: "page", value: page)) }
-        components.queryItems = items
+        // Encoded by hand: `queryItems` leaves `+` as is, which the server
+        // reads as a space — an opaque page cursor holding one would break.
+        components.percentEncodedQueryItems = items.map {
+            URLQueryItem(name: $0.name,
+                         value: $0.value?.addingPercentEncoding(withAllowedCharacters: queryValueAllowed))
+        }
         var req = URLRequest(url: components.url!)
         req.httpMethod = "GET"
         req.setValue(adminKey, forHTTPHeaderField: "x-api-key")
@@ -133,6 +150,14 @@ struct CostReportClient: Sendable {
         let end = utcCalendar.date(byAdding: .day, value: 1, to: today)!
         return DateInterval(start: start, end: max(start, end))
     }
+
+    /// What may stand bare in a query value: `urlQueryAllowed` less the
+    /// characters that delimit or mean something inside a query.
+    private static let queryValueAllowed: CharacterSet = {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "+&=;")
+        return allowed
+    }()
 
     private static let utcCalendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
@@ -174,19 +199,23 @@ struct CostReportClient: Sendable {
     /// ```
     /// `amount` is a decimal string in cents. Tolerant: a row whose amount or
     /// currency can't be read is skipped, and a row in another currency is
-    /// read but not added. But if the page had rows and not one could be
-    /// read, the shape has changed under us — that is an error, not $0
-    /// spent, which would show the whole credit as left.
+    /// read but not added. But if the page had buckets and not one carried a
+    /// `results` array, or had rows and not one could be read, the shape has
+    /// changed under us — that is an error, not $0 spent, which would show
+    /// the whole credit as left. A negative amount (a refund or adjustment)
+    /// is read as 0: subtracting it would overstate what is left.
     static func parse(_ data: Data) throws(CostReportError) -> CostReportPage {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let buckets = root["data"] as? [Any]
         else { throw .badResponse }
 
         var total = Decimal(0)
+        var readBuckets = 0
         var rows = 0
         var readRows = 0
         for case let bucket as [String: Any] in buckets {
             guard let results = bucket["results"] as? [Any] else { continue }
+            readBuckets += 1
             for result in results {
                 rows += 1
                 guard let row = result as? [String: Any],
@@ -194,9 +223,10 @@ struct CostReportClient: Sendable {
                       let amount = cents(row["amount"])
                 else { continue }
                 readRows += 1
-                if currency.uppercased() == "USD" { total += amount }
+                if currency.uppercased() == "USD" { total += max(0, amount) }
             }
         }
+        if !buckets.isEmpty && readBuckets == 0 { throw .badResponse }
         if rows > 0 && readRows == 0 { throw .badResponse }
 
         // A JSON bool only — JSONSerialization hands `1` back as an NSNumber too.

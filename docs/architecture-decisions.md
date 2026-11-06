@@ -537,6 +537,9 @@
 - **결과**:
   - 섹션은 사용량 상세 아래, openclaw 위에 놓인다. 막대는 남은 비율로 채우고 색은 사용 비율의 3단계 색이다(색상 코딩이 꺼지면 모노크롬). 실패는 마지막 값을 남긴 채 회색 한 줄로 보인다.
   - 행이 있는데 하나도 읽지 못한 응답, 따라갈 수 없거나 상한(5쪽)을 넘는 페이지는 $0 사용이 아니라 오류다 — 모르는 것을 "다 남았다" 로 접지 않는다.
-  - 갱신일·주기 계산(`APICreditCycle`)·추정(`APICreditEstimate`)·백오프(`APICreditPollPolicy`)는 순수 타입이라 `scripts/test.sh` 의 `api-credit-tests` 가 고정한다. 모델 `APICreditModel` 은 `GitHubModel` 처럼 AppDelegate 가 소유·주입한다.
+  - 음수 행(환불·조정)은 0 으로 읽는다 — 사용액을 줄여 남은 양을 부풀리지 않는다. `results` 배열을 가진 버킷이 하나도 없는 응답도 오류다.
+  - 429 백오프 시각 전에는 어느 경로(폴링·팝오버 열기·갱신일 변경)로도 요청하지 않고, 갱신일 Stepper 연타는 디바운스로 요청 한 번이 된다. Admin 키 항목의 대화상자 취소는 세션 동안 기억한다(#143 과 같은 이유).
+  - 갱신일·주기 계산(`APICreditCycle`)·추정(`APICreditEstimate`)·백오프(`APICreditPollPolicy`)·페이지 합산(`CostReportClient.sumPages`)·키 입력 검사(`AdminKeyInput`)는 순수 함수라 `scripts/test.sh` 의 `api-credit-tests` 가 고정한다. 모델 `APICreditModel` 은 `GitHubModel` 처럼 AppDelegate 가 소유·주입한다.
+- **미검증 (실측 예정)**: `ending_at` 을 다음 UTC 자정(미래)으로 보내 오늘의 부분 버킷을 받는다는 전제와 `anthropic-version: 2023-06-01` 수용 여부는 문서 해석일 뿐 실제 Admin 키로 확인하지 않았다. 오늘 버킷이 빠지면 당일 사용분만큼 잔액이 부풀려 보이므로, 첫 실사용에서 Console 의 당일 비용과 대조해 측정한다.
 - **트레이드오프**: 결제 주기 시작일은 API 로 알 수 없어 사용자가 입력해야 하고, 틀리면 추정이 틀린다. 버킷이 UTC 일 단위라 주기 시작이 든 UTC 날의 주기 시작 이전 사용분도 이번 주기로 센다(남은 양을 낮게 보는 쪽). 구매 크레딧이나 조직의 다른 사용자가 쓴 비용도 사용액에 들어간다. Admin 키는 조직 관리 권한이 있는 키라 노출 시 피해가 크다 — Keychain 에만 두고 한 호스트에만 보내며, 앱은 읽기 엔드포인트만 부른다.
 - **폐기 조건**: 크레딧 잔액을 직접 주는 공식 API 가 생기거나, 비용 보고서가 폐지돼 신규 analytics API 만 남으면 다시 본다.

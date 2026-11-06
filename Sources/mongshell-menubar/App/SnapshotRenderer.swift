@@ -150,7 +150,8 @@ enum SnapshotRenderer {
     }
 
     /// The API credit section (Decision #162) on a canned spend — no
-    /// Keychain, no network. $76.55 spent of $200 leaves $123.45.
+    /// Keychain, no network. $76.55 spent of $200 leaves $123.44 — the
+    /// spend has fractional cents, and what is left is rounded down.
     private static func renderAPICredit(to base: URL, now: Date) {
         UsageModel.shared.presentForSnapshot(.sample(now: now), state: .signedOut)
         let spent = Decimal(string: "7655.12345")!

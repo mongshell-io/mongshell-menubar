@@ -7,6 +7,11 @@ import Security
 enum AdminKeyLookup: Equatable, Sendable {
     case found(String)
     case missing
+    /// The user cancelled the Keychain prompt — their answer, remembered by
+    /// the caller for the session so the prompt doesn't come back on every
+    /// poll (as for the own Claude token, #143). Only `errSecUserCanceled`,
+    /// for the reason `OwnTokenLookup.isUserRefusal` gives.
+    case declined
     case unavailable(OSStatus)
 }
 
@@ -35,6 +40,8 @@ struct AdminKeyStore: Sendable {
             return .found(key)
         case errSecItemNotFound:
             return .missing
+        case errSecUserCanceled:
+            return .declined
         default:
             return .unavailable(status)
         }

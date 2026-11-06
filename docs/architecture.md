@@ -228,7 +228,8 @@ GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주�
 ```
 APICreditModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주입, 싱글턴 아님)
    └─ AdminKeyStore.load()          ← Keychain service Config.ownKeychainService, account "anthropic-admin-key" (KeychainQueue — #141)
-        없음 → 섹션을 감추고 루프 종료 / 읽지 못함(잠김 등) → 상태 유지, 다음 폴링에 다시
+        없음 → 섹션을 감추고 루프 종료 / 대화상자 취소 → 세션 동안 기억, 루프 종료(설정의 "Keychain 다시 시도"·저장·삭제로만 해제)
+        읽지 못함(잠김 등) → 상태 유지, Config.apiCreditKeychainRetrySeconds(30초) 뒤 다시
    └─ APICreditCycle.current(renewalDay:now:)   ← Preferences.apiCreditRenewalDay (매월 N일, 그달에 없으면 말일, 로컬 자정)
    └─ CostReportClient.queryRange(cycleStart:now:)  →  [주기 시작이 든 UTC 날 00:00, 다음 UTC 자정)
    └─ CostReportClient.fetchSpentCents(adminKey:range:)
@@ -240,7 +241,10 @@ APICreditModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·�
              (BoundedHTTP: 타임아웃 30초, 리다이렉트 거부, 본문 1MB 캡, 200 만 본문 읽음)
         └─ interpret → 200: parse / 401·403: .unauthorized / 429: .rateLimited(Retry-After) / 그 밖: .http
         └─ parse: data[].results[] 의 amount(센트 단위 10진 문자열)를 currency == USD 인 행만 합산
-             has_more 면 next_page 를 따라 최대 Config.costReportMaxPages 쪽, 넘기거나 커서가 없으면 오류
+             음수 행(환불·조정)은 0 으로 — 남은 양을 부풀리지 않는다
+             버킷이 있는데 results 배열을 가진 버킷이 하나도 없거나, 행이 있는데 하나도 못 읽으면 오류
+        └─ sumPages: has_more 면 next_page 를 따라 최대 Config.costReportMaxPages 쪽, 넘기거나 커서가 없으면 오류
+             (커서는 직접 퍼센트 인코딩 — `+`·`&`·`=` 가 그대로 가지 않게)
    └─ @Published spentCents / spentCycleStart / lastUpdated / lastError
         ├─ APICreditPopoverSection   (약 $N 남음 / $월 크레딧 · 남은 비율 막대 · 다음 갱신일 · 추정치 캡션 · 오류 한 줄)
         └─ APICreditSettingsSection  (Admin 키 상태·입력·삭제 · 월 크레딧 · 갱신일)
@@ -248,7 +252,7 @@ APICreditModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·�
 
 - 추정 잔액 = max(0, 월 크레딧 − 이번 주기 사용액) (`APICreditEstimate`). 지급 크레딧이 구매 크레딧보다 먼저 쓰이므로 근사가 성립한다. 표시 금액은 센트 아래를 버린다. 읽은 사용액이 다른 주기의 것(주기가 넘어갔거나 갱신일을 바꿈)이면 값 없음("—")으로 보인다.
 - 막대 채움은 남은 비율이고, 색은 사용 비율로 사용량 3단계 색을 따른다(색상 코딩이 꺼지면 모노크롬). `showRemaining` 의 영향을 받지 않는다.
-- 주기: 백그라운드 10분(`Config.apiCreditPollSeconds` — Admin API 는 분당 1회 이하를 권한다) · 클릭 팝오버를 열 때 값이 2분(`Config.apiCreditRefreshOnOpenAge`)보다 오래됐거나 다른 주기의 것이면 1회. 429 는 지수 백오프(상한 1시간, 더 긴 `Retry-After` 를 따름, `APICreditPollPolicy`)이고 그동안 팝오버를 열어도 요청하지 않는다. 잠자기 직후 실패는 `WakeRetry` 를 따른다.
+- 주기: 백그라운드 10분(`Config.apiCreditPollSeconds` — Admin API 는 분당 1회 이하를 권한다) · 클릭 팝오버를 열 때 값이 2분(`Config.apiCreditRefreshOnOpenAge`)보다 오래됐거나 다른 주기의 것이면 1회 · 갱신일을 바꾸면 마지막 변경 1.5초 뒤 1회(`Config.apiCreditRenewalDebounceSeconds` — Stepper 연타가 요청 한 번). 429 는 지수 백오프(상한 1시간, 더 긴 `Retry-After` 를 따름, `APICreditPollPolicy`)이고, 그 시각 전에는 폴링·팝오버·갱신일 어느 경로로도 요청하지 않는다 — 검사는 모든 경로가 지나는 `refreshOnce` 입구 한 곳이고, 폴링 루프는 다른 경로가 정한 더 늦은 시각까지 잔다. 잠자기 직후 실패와 Keychain 을 읽지 못한 경우는 `WakeRetry`·30초 재시도를 따른다.
 - 실패는 마지막 값을 남긴 채 섹션에 회색 한 줄로 보인다 — 401/403 은 "Admin 키를 확인하세요", 그 밖은 "불러오지 못했습니다". 행이 있는데 하나도 읽지 못한 응답은 $0 사용이 아니라 오류다.
 - 반영 지연: 이 보고서는 약 5분 안에 반영된다. 신규 `/v1/organizations/analytics/cost` 는 4~24시간 늦어 쓰지 않는다.
 - 경계 근사: 버킷이 UTC 일 단위라, 주기 시작이 든 UTC 날의 주기 시작 이전 사용분도 이번 주기로 센다 — 남은 크레딧을 부풀리지 않는 쪽으로 근사한다.
@@ -302,7 +306,7 @@ Claude Code 사용자는 로그인 없이 기존 토큰을 재사용한다. 다�
 
 토큰은 Keychain 에만 있고 `api.github.com` 한 호스트에만 전송된다 — 리다이렉트를 따르지 않으므로 3xx 로 다른 호스트에 보내지는 경로가 없다. 폴링은 query 뿐이고, 쓰기는 사용자가 버튼을 눌러 보낸 squash 머지 mutation 하나다 (§ 4, Decision #49).
 
-**Anthropic Admin API 키** (API 크레딧 추정, Decision #162): Console 조직의 Admin 키(`sk-ant-admin…`, 그 밖의 접두는 입력칸에서 거부)를 Keychain `Config.ownKeychainService`, account `anthropic-admin-key` 에 둔다. 저장은 GitHub PAT 와 같이 지우고 추가하며, 화면에는 "저장됨" 만 보이고 키 값은 다시 보여 주지 않는다. 키는 `api.anthropic.com` 한 호스트의 비용 보고서 요청(`x-api-key`)에만 실리고, `BoundedHTTP` 로 보내 리다이렉트를 따르지 않는다. 읽기 전용이다 — 조직 설정·키를 바꾸는 Admin API 는 부르지 않는다.
+**Anthropic Admin API 키** (API 크레딧 추정, Decision #162): Console 조직의 Admin 키(`sk-ant-admin…` 로 시작하고 영숫자·`_`·`-` 만 — 그 밖은 입력칸에서 거부. 줄바꿈이 든 키는 `URLRequest` 가 헤더를 말없이 빼 401 처럼 보인다)를 Keychain `Config.ownKeychainService`, account `anthropic-admin-key` 에 둔다. 저장은 GitHub PAT 와 같이 지우고 추가하며, 화면에는 "저장됨" 만 보이고 키 값은 다시 보여 주지 않는다. 항목 읽기의 대화상자 취소(`errSecUserCanceled`)는 자체 Claude 토큰(#143)처럼 세션 동안 기억해 다시 묻지 않고, 설정에 "Keychain 접근 취소됨" 과 다시 시도 버튼으로 보인다. 키는 `api.anthropic.com` 한 호스트의 비용 보고서 요청(`x-api-key`)에만 실리고, `BoundedHTTP` 로 보내 리다이렉트를 따르지 않는다. 읽기 전용이다 — 조직 설정·키를 바꾸는 Admin API 는 부르지 않는다.
 
 ## Infrastructure
 

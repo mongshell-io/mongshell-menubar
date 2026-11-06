@@ -72,6 +72,15 @@ check("no rows at all is $0 spent",
 check("an empty data array is $0 spent",
       (try? parse(#"{"data":[],"has_more":false,"next_page":null}"#).get())?.spentCents == 0)
 
+check("buckets without a results array are an error, not $0",
+      parse(#"{"data":[{"starting_at":"2026-11-01T00:00:00Z","rows":[{"amount":"500","currency":"USD"}]}],"has_more":false}"#)
+        == .failure(.badResponse))
+check("a bucket without results beside a readable one is skipped",
+      (try? parse(#"{"data":[{"rows":[]},{"results":[{"amount":"7","currency":"USD"}]}],"has_more":false}"#).get())?
+        .spentCents == 7)
+check("a negative row (refund) adds nothing, never lowers the spend",
+      (try? parse(#"{"data":[{"results":[{"amount":"300","currency":"USD"},{"amount":"-200.5","currency":"USD"}]}],"has_more":false}"#).get())?
+        .spentCents == 300)
 check("not JSON is an error", parse("<html>") == .failure(.badResponse))
 check("no data array is an error", parse(#"{"error":{"type":"x"}}"#) == .failure(.badResponse))
 
@@ -119,6 +128,56 @@ do {
           items["starting_at"] == "2026-11-14T00:00:00Z" && items["ending_at"] == "2026-11-21T00:00:00Z"
           && items["bucket_width"] == "1d" && items["page"] == "p2", "\(items)")
 }
+
+// MARK: paging
+
+func page(_ cents: Decimal, more: Bool = false, next: String? = nil) -> CostReportPage {
+    CostReportPage(spentCents: cents, hasMore: more, nextPage: next)
+}
+
+func sum(maxPages: Int = 5, _ pages: [String?: CostReportPage]) async -> (Result<Decimal, CostReportError>, [String?]) {
+    var asked: [String?] = []
+    do {
+        let total = try await CostReportClient.sumPages(maxPages: maxPages) { cursor throws(CostReportError) in
+            asked.append(cursor)
+            guard let found = pages[cursor] else { throw .badResponse }
+            return found
+        }
+        return (.success(total), asked)
+    } catch {
+        return (.failure(error), asked)
+    }
+}
+
+do {
+    let (total, asked) = await sum([nil: page(100, more: true, next: "p2"), "p2": page(50)])
+    check("pages are added up, following next_page", total == .success(150) && asked == [nil, "p2"], "\(total) \(asked)")
+    let (noCursor, _) = await sum([nil: page(100, more: true, next: nil)])
+    check("has_more without a cursor is an error, not the partial total", noCursor == .failure(.badResponse))
+    let (capped, cappedAsked) = await sum(maxPages: 2, [nil: page(1, more: true, next: "a"),
+                                                       "a": page(1, more: true, next: "b"),
+                                                       "b": page(1)])
+    check("past the page cap is an error, not the partial total",
+          capped == .failure(.badResponse) && cappedAsked.count == 2, "\(capped)")
+}
+
+do {
+    let range = DateInterval(start: Date(timeIntervalSince1970: 0), duration: 86_400)
+    let req = CostReportClient.request(adminKey: "k", range: range, page: "a+b/c=d&e")
+    let query = req.url?.query ?? ""
+    check("a page cursor's + & = are percent-encoded", query.contains("page=a%2Bb/c%3Dd%26e"), query)
+    let items = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    check("the cursor reads back as sent", items.first { $0.name == "page" }?.value == "a+b/c=d&e")
+}
+
+// MARK: key input
+
+check("an Admin key is accepted", AdminKeyInput.problem("  sk-ant-admin01-AbC_d-9\n") == nil)
+check("a regular API key is refused", AdminKeyInput.problem("sk-ant-api03-abc").map { !$0.isEmpty } == true)
+check("a key with an inner newline is refused",
+      AdminKeyInput.problem("sk-ant-admin01-ab\ncd").map { !$0.isEmpty } == true)
+check("a key with a space is refused", AdminKeyInput.problem("sk-ant-admin01-ab cd").map { !$0.isEmpty } == true)
+check("empty input has nothing to say yet", AdminKeyInput.problem("  ") == "")
 
 // MARK: billing cycle
 
@@ -195,6 +254,9 @@ do {
     let first = APICreditPollPolicy.wait(consecutiveRateLimits: 1, retryAfter: nil)
     let second = APICreditPollPolicy.wait(consecutiveRateLimits: 2, retryAfter: nil)
     check("a 429 backs off past the base, and grows", first > base && second > first, "\(first) \(second)")
+    check("a shorter Retry-After does not cut the backoff",
+          APICreditPollPolicy.wait(consecutiveRateLimits: 1, retryAfter: 60) == first && first == base * 2,
+          "\(first)")
     check("the backoff is capped",
           APICreditPollPolicy.wait(consecutiveRateLimits: 40, retryAfter: nil) == Config.apiCreditMaxBackoffSeconds)
     check("a longer Retry-After wins, capped",
