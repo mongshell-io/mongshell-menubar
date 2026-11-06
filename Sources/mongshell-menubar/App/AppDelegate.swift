@@ -107,8 +107,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Not a singleton either: every view that observes it is made here and
     // handed this instance (Decision #45).
     private let github = GitHubModel(prefs: Preferences.shared)
-    // Injected like `github`: only the Claude popover and the settings
-    // window observe it (Decision #162).
+    // Injected like `github`: the Claude popover, the settings window and —
+    // for its opt-in ring — the menu bar observe it (Decision #162, #165).
     private let credit = APICreditModel(prefs: Preferences.shared)
 
     /// Quitting waits for the Keychain queue, capped by
@@ -131,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory) // menu-bar only, no Dock icon
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        let icon = MenuBarIconView(model: model, prefs: prefs, openClaw: openClaw)
+        let icon = MenuBarIconView(model: model, prefs: prefs, openClaw: openClaw, credit: credit)
         install(PassthroughHostingView(rootView: icon), as: .claude)
         install(PassthroughHostingView(rootView: GitHubMenuBarView(model: github, prefs: prefs)),
                 as: .github)

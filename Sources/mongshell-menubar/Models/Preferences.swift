@@ -83,6 +83,10 @@ final class Preferences: ObservableObject {
     /// 다시 읽어야 한다.
     @AppStorage("apiCreditRenewalDay") var apiCreditRenewalDay: Int = Config.apiCreditDefaultRenewalDay
 
+    /// 메뉴바 주간 게이지 옆에 크레딧 링을 그릴지 (#165). 기본 꺼짐 — 메뉴바 폭을
+    /// 쓰는 옵트인이다. Admin 키가 없으면 켜져 있어도 그리지 않는다 (`APICreditRing`).
+    @AppStorage("showCreditInMenuBar") var showCreditInMenuBar: Bool = false
+
     private init() {}
 }
 

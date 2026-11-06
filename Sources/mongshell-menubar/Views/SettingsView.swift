@@ -39,6 +39,7 @@ struct SettingsView: View {
                                    colorCoding: prefs.colorCoding,
                                    showPercent: prefs.showPercent,
                                    weeklyReset: TimeText.weekdayClockShort(model.snapshot.weeklyResetAt),
+                                   creditRing: APICreditRing(prefs: prefs, credit: credit),
                                    openClawDotColor: previewDots.openClaw,
                                    serverHostDotColor: previewDots.serverHost)
                 }

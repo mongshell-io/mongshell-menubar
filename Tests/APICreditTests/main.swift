@@ -11,7 +11,9 @@ import Foundation
 // cycle clamps a renewal day past the month's end and turns over at local
 // midnight of the renewal day; what is left never goes below zero, a spend
 // read for another cycle is not shown, and the dollar text rounds down; the
-// 429 backoff grows, is capped and honors Retry-After.
+// 429 backoff grows, is capped and honors Retry-After; the menu bar ring
+// is drawn only when turned on with a key, fills with what is left rounded
+// down, and is the unknown ring without an estimate.
 //
 // Run with `./scripts/test.sh`, which compiles this against the real sources
 // (the @MainActor model is left out, as for the other bundles).
@@ -244,6 +246,24 @@ do {
           APICreditEstimate.make(monthlyUSD: 200, spentCents: nil, spentCycleStart: nil,
                                  currentCycleStart: cycleStart) == nil)
     check("small amounts keep two digits", APICreditEstimate.dollarsText(cents: 5) == "$0.05")
+}
+
+// MARK: menu bar ring (#165)
+
+do {
+    let cycleStart = Date(timeIntervalSince1970: 1_000_000)
+    let estimate = APICreditEstimate.make(monthlyUSD: 200, spentCents: Decimal(string: "7655.12345"),
+                                          spentCycleStart: cycleStart, currentCycleStart: cycleStart)
+    check("ring fill is what is left, rounded down", estimate?.remainingPercent == 61)
+    check("ring: fill left, color spent",
+          APICreditRing.make(enabled: true, keySaved: true, estimate: estimate)
+              == .estimate(remainingPercent: 61, spentPercent: 39))
+    check("ring: no estimate is the unknown ring",
+          APICreditRing.make(enabled: true, keySaved: true, estimate: nil) == .unknown)
+    check("ring: not drawn while turned off",
+          APICreditRing.make(enabled: false, keySaved: true, estimate: estimate) == nil)
+    check("ring: not drawn without a stored key",
+          APICreditRing.make(enabled: true, keySaved: false, estimate: nil) == nil)
 }
 
 // MARK: backoff

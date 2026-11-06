@@ -3,7 +3,7 @@ import SwiftUI
 /// The API credit rows of the settings form (Decision #162). The Admin key
 /// field is always shown — it is the only way in (PHILOSOPHY 원칙 2) — with
 /// one line saying what it needs; the credit amount and renewal day appear
-/// once a key is stored. The key itself is never shown back.
+/// once a key is stored, with the menu bar ring's toggle (#165). The key itself is never shown back.
 struct APICreditSettingsSection: View {
     @ObservedObject var model: APICreditModel
     @ObservedObject var prefs: Preferences
@@ -66,6 +66,9 @@ struct APICreditSettingsSection: View {
                 LabeledContent("크레딧 갱신일", value: "매월 \(prefs.apiCreditRenewalDay)일")
             }
             Text("그달에 없는 날이면 말일에 갱신된 것으로 봅니다. 사용액은 UTC 일 단위로 합산합니다.")
+                .font(.caption).foregroundStyle(.secondary)
+            Toggle("메뉴바에 크레딧 표시", isOn: $prefs.showCreditInMenuBar)
+            Text("주간 게이지 옆에 남은 크레딧을 링으로 그립니다. 게이지·퍼센트 표시가 꺼져 있으면 함께 숨습니다.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
