@@ -7,6 +7,7 @@ struct SettingsView: View {
     @ObservedObject var claude: ClaudeSettingsModel
     @ObservedObject var loginItem: LoginItemModel
     @ObservedObject var github: GitHubModel
+    @ObservedObject var credit: APICreditModel
 
     private let intervals = [180, 300, 600, 900]
 
@@ -68,6 +69,10 @@ struct SettingsView: View {
 
             Section("GitHub") {
                 GitHubSettingsSection(model: github, prefs: prefs)
+            }
+
+            Section("API 크레딧") {
+                APICreditSettingsSection(model: credit, prefs: prefs)
             }
 
             Section("계정") {

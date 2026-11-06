@@ -15,7 +15,7 @@ non_goals:
 
 뷰는 **그리기만 한다.** 데이터를 가져오거나 저장하지 않는다.
 
-- 상태는 `Models/` 의 `@MainActor ObservableObject` (`UsageModel`, `Preferences`, `OpenClawModel`, `GitHubModel`, `ClaudeSettingsModel`, `LoginItemModel`) 를 `@ObservedObject` 로 관찰한다. 인스턴스는 AppDelegate(와 스냅샷 렌더러)가 뷰를 만들 때 넘겨 준다 — `@EnvironmentObject` 는 쓰지 않는다.
+- 상태는 `Models/` 의 `@MainActor ObservableObject` (`UsageModel`, `Preferences`, `OpenClawModel`, `GitHubModel`, `APICreditModel`, `ClaudeSettingsModel`, `LoginItemModel`) 를 `@ObservedObject` 로 관찰한다. 인스턴스는 AppDelegate(와 스냅샷 렌더러)가 뷰를 만들 때 넘겨 준다 — `@EnvironmentObject` 는 쓰지 않는다.
 - 뷰 안에서 `URLSession`·`Process`·`FileManager`·Keychain 을 직접 부르지 않는다. 필요하면 모델에 메서드를 만들고 그것을 호출한다.
 - 사용자 액션은 모델 메서드 호출로 끝난다 (`refreshNow()`, `applyStatusURL(_:)` 등).
 - 두 팝오버의 머리말(제목·연결 배지·⋯ 메뉴)과 배너는 `PopoverHeader`·`PopoverBanner` 를 함께 쓴다. ⋯ 메뉴의 "설정…"·"종료" 는 `PopoverHeader` 가 고정하고, 영역은 자기 항목만 넣는다 — 따로 구현하다 GitHub 메뉴에서 종료가 빠진 적이 있다(#74).
@@ -47,7 +47,7 @@ status item 의 폭도 AppDelegate 가 잡는다. 메뉴바 뷰(두 영역 모�
 |---|---|---|
 | 메뉴바 | `MenuBarIconView`, `ClaudeMarkView`, `GitHubMenuBarView` | 폭이 유한하다. 상시 표시 항목 추가는 무엇을 뺄지 함께 제시해야 한다. 신호등은 세로로 **두 줄까지** 쌓는다 (Decision #31). 옵트인 두 번째 영역(Decision #45)은 글리프 · 점 · 숫자 하나까지 — 글리프가 머지 가능 여부를 겸하고, 상태와 무관하게 칸 폭은 고정이다 (Decision #52 후속 (#56)) |
 | hover 요약 | `HoverSummaryView`, `GitHubHoverSummaryView` | 즉시 표시가 존재 이유다 — 지연을 만드는 애니메이션·비동기 로드 금지. hover 는 갱신을 일으키지 않는다 |
-| 클릭 팝오버 / 설정창 | `PopoverView`, `SettingsView`, `ClaudeSettingsSection`, `OpenClawSettingsSection`, `GitHubPopoverView`, `GitHubSettingsSection` | 정확한 숫자와 상세는 여기로 미룬다 |
+| 클릭 팝오버 / 설정창 | `PopoverView`, `APICreditPopoverSection`, `SettingsView`, `ClaudeSettingsSection`, `OpenClawSettingsSection`, `GitHubPopoverView`, `GitHubSettingsSection`, `APICreditSettingsSection` | 정확한 숫자와 상세는 여기로 미룬다 |
 
 메뉴바에 무언가를 더하려는 변경은 [docs/PHILOSOPHY.md](../../../docs/PHILOSOPHY.md) § Design Principles 1 을 먼저 통과해야 한다. Claude 사용량 외의 신호라면 같은 문서의 § Admission Criteria 도 통과해야 한다.
 
@@ -93,4 +93,6 @@ openclaw·Claude Code 설정처럼 전제가 없을 수 있는 요소는 **비�
 
 GitHub 영역도 같다 (Decision #45). `Preferences` 의 "GitHub 표시" 가 꺼져 있으면 메뉴바의 두 번째 영역(헤어라인 포함)·GitHub 팝오버·hover 요약을 그리지 않는다. 켜져 있는데 토큰이 없거나 거부된 것은 "없음" 이 아니다 — 회색 점과 팝오버 배너로 보인다. 빈 목록으로 가장하지 않는다.
 
-설정 진입점 예외는 PHILOSOPHY 원칙 2 를 따른다 — 현재 해당하는 것은 `OpenClawSettingsSection` 의 상태 URL 입력칸과 `GitHubSettingsSection` 의 "GitHub 표시" 토글이다. 토글이 꺼져 있을 때 그 섹션에 남는 것은 토글과 그 아래 한 줄 설명뿐이고, 토큰 상태·PAT 입력·갱신 주기·레포 숨기기는 켠 뒤에만 나타난다. 토글은 `Preferences` 에 직접 바인딩하지 않고 `GitHubModel.setEnabled(_:)` 를 거친다 — 켜는 동작이 첫 Keychain 읽기이기 때문이다.
+API 크레딧도 같다 (Decision #162). Admin 키가 저장돼 있지 않으면 팝오버의 API 크레딧 섹션(구분선 포함)을 그리지 않는다. 키가 있는데 읽기에 실패한 것은 "없음" 이 아니다 — 마지막 값을 남기고 회색 한 줄로 이유를 보인다. 이 섹션은 팝오버에만 있다 — 메뉴바·hover 요약에 넣지 않는다.
+
+설정 진입점 예외는 PHILOSOPHY 원칙 2 를 따른다 — 현재 해당하는 것은 `OpenClawSettingsSection` 의 상태 URL 입력칸, `GitHubSettingsSection` 의 "GitHub 표시" 토글, `APICreditSettingsSection` 의 Admin 키 입력칸이다 (월 크레딧·갱신일은 키를 저장한 뒤에만 나타난다). 토글이 꺼져 있을 때 그 섹션에 남는 것은 토글과 그 아래 한 줄 설명뿐이고, 토큰 상태·PAT 입력·갱신 주기·레포 숨기기는 켠 뒤에만 나타난다. 토글은 `Preferences` 에 직접 바인딩하지 않고 `GitHubModel.setEnabled(_:)` 를 거친다 — 켜는 동작이 첫 Keychain 읽기이기 때문이다.

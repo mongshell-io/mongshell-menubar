@@ -72,6 +72,17 @@ final class Preferences: ObservableObject {
     /// 포함하지 않는다 — 토큰 없음은 숨기는 게 아니라 배너로 보인다.
     var showsGitHub: Bool { githubEnabled }
 
+    // MARK: API credit (Decision #162)
+
+    /// 매달 들어오는 API 크레딧(USD, 정수). 쓰기는 `APICreditModel.setMonthlyCredit` 만 —
+    /// 범위(`Config.apiCreditMonthlyUSDRange`)를 거친다.
+    @AppStorage("apiCreditMonthlyUSD") var apiCreditMonthlyUSD: Int = Config.apiCreditDefaultMonthlyUSD
+
+    /// 크레딧 갱신일(매월 N일, 1–31). 그달에 없는 날이면 말일로 본다
+    /// (`APICreditCycle`). 쓰기는 `APICreditModel.setRenewalDay` 만 — 주기가 바뀌어
+    /// 다시 읽어야 한다.
+    @AppStorage("apiCreditRenewalDay") var apiCreditRenewalDay: Int = Config.apiCreditDefaultRenewalDay
+
     private init() {}
 }
 

@@ -89,6 +89,17 @@ GraphQL API 요청 1회(3분 주기, 설정 1~10분; 팝오버를 열면 즉시,
 켠 사람만 그 폭(약 52pt)을 치릅니다
 ([PHILOSOPHY § Admission Criteria 4 의 예외](docs/PHILOSOPHY.md#admission-criteria)).
 
+## API 크레딧 추정 잔액 (선택 기능 — Admin 키를 저장한 경우에만)
+Max/Ultra 구독에 매달 들어오는 API 크레딧(Ultra $200)은 결제 주기 끝에 사라지는데, 잔액을
+읽는 공식 API 가 없습니다. 설정의 **API 크레딧** 섹션에 Console 조직의 **Admin API 키**
+(`sk-ant-admin…`)를 저장하면, Admin API 비용 보고서(`/v1/organizations/cost_report`, 약 5분
+안에 반영)로 이번 주기의 사용액을 합산해 **클릭 팝오버에 "약 $N 남음 / $월 크레딧"** 과 막대,
+다음 갱신일을 보여 줍니다. 월 크레딧(기본 $200)과 갱신일(매월 N일)은 설정에서 입력합니다 —
+결제 주기 시작일은 API 로 알 수 없기 때문입니다. 지급 크레딧이 먼저 쓰인다는 전제의 **추정치**이고,
+사용액은 UTC 일 단위로 합산됩니다. 키는 Keychain 에만 두고 `api.anthropic.com` 외 어디에도
+보내지 않으며, 10분마다(팝오버를 열 때 값이 2분보다 오래됐으면 즉시) 읽습니다. **키가 없으면
+팝오버 어디에도 흔적이 없고, 메뉴바와 hover 요약은 바뀌지 않습니다.**
+
 ## 설치 — 각자 빌드해서 쓰기 (Apple 계정 불필요)
 직접 빌드한 앱은 Gatekeeper에 막히지 않습니다. 필요한 건 **macOS 26+ 와 Xcode
 (또는 Command Line Tools)** 뿐.
@@ -189,13 +200,15 @@ Sources/mongshell-menubar/
                             + 서버 섹션)
   Views/PopoverHeader.swift 두 팝오버가 함께 쓰는 머리말(제목·연결 배지·⋯ 메뉴)
   Views/PopoverBanner.swift 두 팝오버가 함께 쓰는 머리말 아래 한 줄 배너
-  Views/SettingsView.swift  일반(자동 실행)·메뉴바·업데이트(폴링·알림)·Claude Code·서버·GitHub·계정
+  Views/SettingsView.swift  일반(자동 실행)·메뉴바·업데이트(폴링·알림)·Claude Code·서버·GitHub·API 크레딧·계정
   Views/ClaudeSettingsSection.swift  settings.json 편집 섹션(한글 설명 캡션)
   Views/OpenClawSettingsSection.swift openclaw 상태 URL 입력·상태·확인 간격 섹션
   Views/GitHubMenuBarView.swift      두 번째 영역(헤어라인 · PR 글리프 · 점 · 숫자)
   Views/GitHubHoverSummaryView.swift GitHub 영역 hover 두 줄 요약(CI · 내 PR)
   Views/GitHubPopoverView.swift      GitHub 팝오버(배너 + 내 PR/최근 머지 섹션, 검사 칩)
   Views/GitHubSettingsSection.swift  GitHub 표시 토글·토큰·PAT·갱신 주기·레포 숨기기
+  Views/APICreditPopoverSection.swift 팝오버의 API 크레딧 섹션(추정 잔액·막대·다음 갱신일)
+  Views/APICreditSettingsSection.swift Admin 키·월 크레딧·갱신일 설정 섹션
   Design/Palette.swift      색 토큰 SSOT(사용량 3단계·팝오버 표면/텍스트)
   Models/…                  Preferences, UsageState(UsageSnapshot·LoadState·429 대기 규칙),
                             UsageModel(폴링 루프·토큰 갱신·보류 토큰 저장·로그인/로그아웃 조율),
@@ -211,6 +224,8 @@ Sources/mongshell-menubar/
                             GitHubState(연결 상태·스냅샷·폴링 주기 규칙),
                             GitHubPresentation(GitHub 연결 배지·배너·버튼·토큰 행 판정),
                             GitHubModel(토큰 결정·GraphQL 폴링·팝오버 열림 주기·머지),
+                            APICredit(결제 주기·추정 잔액·백오프 판정),
+                            APICreditModel(Admin 키·비용 보고서 폴링),
                             ClaudeSettingsModel(settings.json ↔ 구조체),
                             LoginItemModel(로그인 항목 상태 캐시/안내)
   Services/…                Config, Credentials(Keychain), UsageAPIClient, AuthService(PKCE),
@@ -223,6 +238,7 @@ Sources/mongshell-menubar/
                             JSONNumber(JSON 숫자 읽기 — bool 은 숫자 아님), ResponseDate(ISO 8601 읽기),
                             OpenClawStatusClient(상태 URL HTTPS 읽기/관대한 디코딩),
                             GitHubAPIClient(GraphQL 1요청·응답 해석), GitHubCredentials(자체 PAT → gh Keychain),
+                            CostReportClient(Admin API 비용 보고서 읽기·합산), AdminKeyCredentials(Admin 키 Keychain),
                             ClaudeSettingsStore(settings.json 입출력/파일 감시),
                             LoginItemService(SMAppService 로그인 항목 등록)
 
@@ -259,6 +275,10 @@ Sources/mongshell-openclaw-agent/     서버 맥용 에이전트 (server/README.
   `POST https://api.github.com/graphql` 하나이며, 리다이렉트를 따르지 않아 토큰이 다른
   호스트로 가는 경로가 없습니다. 자세한 흐름은 [docs/architecture.md](docs/architecture.md)
   § Data Flow 4.
+- **API 크레딧(Admin 키를 저장한 경우)**: Admin 키(Keychain)로 Anthropic **공식** Admin API
+  `GET https://api.anthropic.com/v1/organizations/cost_report` 를 읽습니다. 리다이렉트를 따르지
+  않아 키가 다른 호스트로 가는 경로가 없습니다. 자세한 흐름은 [docs/architecture.md](docs/architecture.md)
+  § Data Flow 5.
 
 ## ⚠️ 배포 전 반드시 알아둘 것 (비공식 도구)
 - Claude **구독(Pro/Max) 한도에는 공식 API가 없습니다.** 위 엔드포인트는 **비공개**이며

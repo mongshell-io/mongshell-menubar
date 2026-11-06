@@ -107,6 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Not a singleton either: every view that observes it is made here and
     // handed this instance (Decision #45).
     private let github = GitHubModel(prefs: Preferences.shared)
+    // Injected like `github`: only the Claude popover and the settings
+    // window observe it (Decision #162).
+    private let credit = APICreditModel(prefs: Preferences.shared)
 
     /// Quitting waits for the Keychain queue, capped by
     /// `Config.keychainDrainOnQuitSeconds`, so a renewed token's save still
@@ -152,7 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         clickPopovers[.claude] = Self.makePopover(PopoverView(
-            model: model, prefs: prefs, openClaw: openClaw,
+            model: model, prefs: prefs, openClaw: openClaw, credit: credit,
             onOpenSettings: { [weak self] in self?.openSettings() },
             onQuit: { NSApp.terminate(nil) }
         ), behavior: .transient)
@@ -223,6 +226,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Parks in .off (no polling, no Keychain read) until switched on in
         // settings.
         github.start()
+
+        // Parks (no polling, nothing in the popover) when no Admin key is
+        // stored.
+        credit.start()
     }
 
     /// A popover hosting `content`, sized to it. Click popovers stay
@@ -388,6 +395,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if region == .claude, prefs.showsOpenClaw {
             openClaw.refreshNow()
         }
+        // The API credit refreshes on open once its value is a few minutes
+        // old (`APICreditModel.popoverOpened`).
+        if region == .claude {
+            credit.popoverOpened()
+        }
         // GitHub refreshes once on open — skipped while backing off or
         // stopped for the user (`GitHubPollPolicy.refreshesOnOpen`).
         if region == .github {
@@ -422,7 +434,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let view = SettingsView(model: model, prefs: prefs, openClaw: openClaw,
-                                claude: claude, loginItem: loginItem, github: github)
+                                claude: claude, loginItem: loginItem, github: github,
+                                credit: credit)
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 380, height: 700),
             styleMask: [.titled, .closable],

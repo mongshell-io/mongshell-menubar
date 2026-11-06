@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs the regression tests: Claude Code settings, the openclaw server agent,
 # the app's openclaw status client, the OAuth token path, the GitHub PR
-# region, the usage response parser, the usage model's await order, then
+# region, the usage response parser, the API credit estimate, the usage
+# model's await order, then
 # server/install.sh's option rules.
 #
 # Not `swift test`: that needs XCTest or swift-testing, and neither ships with
@@ -52,6 +53,7 @@ ENTRY_POINT='func [A-Za-z]+.*\) async'
 check_nonsending 1 "$ENTRY_POINT" "$SERVICES/KeychainQueue.swift"
 check_nonsending 4 "$ENTRY_POINT" "$SERVICES/Credentials.swift"
 check_nonsending 4 "$ENTRY_POINT" "$SERVICES/GitHubCredentials.swift"
+check_nonsending 3 "$ENTRY_POINT" "$SERVICES/AdminKeyCredentials.swift"
 check_nonsending 4 'var (lookupOwnToken|saveOwnToken|clearOwnToken|loadClaudeCodeToken):' \
   "$ROOT/Sources/mongshell-menubar/Models/UsageModel.swift"
 
@@ -196,6 +198,21 @@ swiftc -o "$OUT/usage-tests" \
 
 echo "▶ running usage tests"
 "$OUT/usage-tests"
+
+# The API credit estimate (Decision #162): the cost report's parsing and
+# status codes, the query range, the billing cycle, the estimate and the
+# backoff. The @MainActor model and the Keychain store are left out, as above.
+echo "▶ compiling api credit tests"
+swiftc -o "$OUT/api-credit-tests" \
+  "$APP/Models/APICredit.swift" \
+  "$APP/Services/BoundedHTTP.swift" \
+  "$APP/Services/Config.swift" \
+  "$APP/Services/CostReportClient.swift" \
+  "$APP/Services/JSONNumber.swift" \
+  "$ROOT/Tests/APICreditTests/main.swift"
+
+echo "▶ running api credit tests"
+"$OUT/api-credit-tests"
 
 # The @MainActor model itself, on fake boundaries (#150): where it re-checks
 # the login generation after each await. The live boundaries
