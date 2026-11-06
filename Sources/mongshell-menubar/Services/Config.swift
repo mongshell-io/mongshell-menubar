@@ -148,6 +148,55 @@ enum Config {
     /// filling memory.
     static let githubMaxResponseBytes: Int64 = 4 * 1024 * 1024
 
+    // MARK: API credit (Decision #162)
+
+    /// The legacy Admin API cost report. Chosen over the newer
+    /// `/v1/organizations/analytics/cost`, which lags 4–24 hours; this one
+    /// reflects spend within about five minutes. Public, documented API —
+    /// unlike the usage endpoint above — on the same Anthropic host, the
+    /// only one the Admin key is ever sent to.
+    static let costReportURL = URL(string: "https://api.anthropic.com/v1/organizations/cost_report")!
+    /// `anthropic-version` for the Admin API. The documentation's examples
+    /// show newer dated values, but `2023-06-01` is the long-standing one
+    /// every Anthropic API version still accepts, and the cost report's
+    /// shape has not changed under it — so no newer value is needed.
+    static let anthropicAPIVersion = "2023-06-01"
+    /// The app's own User-Agent, as for GitHub — this is the public API, so
+    /// there is no reason to pass for Claude Code here.
+    static let costReportUserAgent = githubUserAgent
+    /// Our own Keychain item for the Console Admin key, beside the OAuth
+    /// token and the GitHub PAT under `ownKeychainService`.
+    static let adminKeyKeychainAccount = "anthropic-admin-key"
+    /// What a Console Admin key starts with. A regular API key cannot read
+    /// the cost report, so it is refused at the field instead of as a 401.
+    static let adminKeyPrefix = "sk-ant-admin"
+
+    /// One-day buckets per page — the endpoint's maximum for `1d`. A cycle
+    /// spans at most 33 UTC days (31 days, plus the UTC day the local
+    /// cycle start falls in, plus today), so two pages always cover it.
+    static let costReportBucketLimit = 31
+    /// Pages followed per refresh. Past this the total is not trusted —
+    /// stopping short would undercount spend and overstate what is left.
+    static let costReportMaxPages = 5
+    /// Largest cost report page read. A month of daily buckets with a few
+    /// rows each is a few tens of KB; the cap keeps a surprising answer
+    /// from filling memory.
+    static let costReportMaxResponseBytes: Int64 = 1024 * 1024
+
+    /// Background refresh interval, seconds. The Admin API asks for at most
+    /// one cost poll a minute; spend that lands within minutes is shown as
+    /// an estimate anyway, so ten minutes is fresh enough.
+    static let apiCreditPollSeconds = 600
+    /// Opening the popover refreshes once the value is older than this.
+    static let apiCreditRefreshOnOpenAge: TimeInterval = 120
+    /// Ceiling on the 429 backoff, seconds.
+    static let apiCreditMaxBackoffSeconds = 3600
+
+    /// Ultra's monthly API credit, the plan this was built for.
+    static let apiCreditDefaultMonthlyUSD = 200
+    static let apiCreditMonthlyUSDRange = 1...100_000
+    static let apiCreditDefaultRenewalDay = 1
+
     /// Append-only OAuth diagnostics (`AuthDebugLog`). A debugging aid, not
     /// user data, so it lives in the per-user temporary directory ($TMPDIR —
     /// mode 0700, emptied on reboot) rather than the shared /tmp: that one is

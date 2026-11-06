@@ -5,6 +5,7 @@ struct PopoverView: View {
     @ObservedObject var model: UsageModel
     @ObservedObject var prefs: Preferences
     @ObservedObject var openClaw: OpenClawModel
+    @ObservedObject var credit: APICreditModel
     var onOpenSettings: () -> Void
     var onQuit: () -> Void
 
@@ -29,6 +30,12 @@ struct PopoverView: View {
             if !snap.models.isEmpty || !snap.extraLimits.isEmpty {
                 hairline
                 detailLimitsSection
+            }
+            // Only with an Admin key stored — otherwise no section and no
+            // hairline (Decision #162, PHILOSOPHY 원칙 2).
+            if credit.showsSection {
+                hairline
+                APICreditPopoverSection(credit: credit, prefs: prefs)
             }
             if prefs.showsOpenClaw {
                 hairline

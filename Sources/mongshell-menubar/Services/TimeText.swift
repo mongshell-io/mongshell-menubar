@@ -87,6 +87,14 @@ enum TimeText {
         n < 10 ? "0\(n)" : "\(n)"
     }
 
+    /// "다음 갱신 11월 15일" — when the monthly API credit renews (Decision #162).
+    static func creditRenewal(_ date: Date) -> String {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "ko_KR")
+        fmt.dateFormat = "M월 d일"
+        return "다음 갱신 \(fmt.string(from: date))"
+    }
+
     /// Absolute clock time of the last successful fetch, e.g. "오후 2:32 갱신".
     /// Empty for the sentinel `.distantPast` (sample data).
     static func updatedClock(_ date: Date) -> String {

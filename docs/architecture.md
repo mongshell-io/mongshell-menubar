@@ -17,8 +17,9 @@ non_goals:
 | 최소 플랫폼 | macOS 26 (Decision #40) |
 | UI | SwiftUI 뷰 + AppKit 호스팅 (`NSStatusItem`, `NSPopover`, `NSWindow`) |
 | 동시성 | Swift Concurrency (`@MainActor` 격리, `Task`, `async/await`) |
-| 네트워크 | `URLSession` (Foundation). HTTPS 클라이언트(사용량·OAuth 토큰·openclaw 상태·GitHub)는 `BoundedHTTP` 를 공유한다 — ephemeral 세션, 리다이렉트 거부, 바이트 캡 |
+| 네트워크 | `URLSession` (Foundation). HTTPS 클라이언트(사용량·OAuth 토큰·openclaw 상태·GitHub·비용 보고서)는 `BoundedHTTP` 를 공유한다 — ephemeral 세션, 리다이렉트 거부, 바이트 캡 |
 | GitHub PR (선택 기능) | GitHub GraphQL API (`POST https://api.github.com/graphql`, 공식 API) — `URLSession` 위 `BoundedHTTP` (Decision #45) |
+| API 크레딧 (선택 기능) | Anthropic Admin API 비용 보고서 (`GET https://api.anthropic.com/v1/organizations/cost_report`, 공식 API) — `URLSession` 위 `BoundedHTTP` (Decision #162) |
 | 로컬 리스너 | `Network.framework` (`NWListener`) — OAuth 루프백 |
 | 자격증명 | Security.framework Keychain (generic password) — 모든 `SecItem*` 호출은 전용 직렬 큐 `KeychainQueue` 에서 (#141) |
 | 설정 영속화 | `UserDefaults` (`@AppStorage`) |
@@ -220,11 +221,45 @@ GitHubModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주�
 - 꺼져 있으면 폴링도 없고 메뉴바·팝오버·hover 어디에도 흔적이 없다. 설정의 "GitHub 표시" 토글은 PHILOSOPHY 원칙 2 의 설정 진입점 예외로 항상 보인다. 켜는 동작이 첫 Keychain 읽기이며, gh 항목 접근 거부는 세션 동안 기억해 설정에서만 재시도한다.
 - Keychain 읽기·PAT 저장·삭제는 `async` 이고 `KeychainQueue` 에서 돈다 (#141). 토큰을 읽는 사이 세대가 바뀌면(PAT 적용·지우기, 켜고 끄기) 그 갱신은 읽은 것을 버린다 — 바꾼 쪽이 `refreshNow()` 로 새 갱신을 부른다. 세대는 PAT 저장·삭제를 보내기 **전에** 올리고, 저장이 실패하면 한 번 더 올려 저장 중에 시작된 갱신의 답도 버린다(PAT 저장 실패 정지가 그 답에 덮이지 않게). 머지는 토큰을 읽은 뒤 그 시점의 목록·상태·진행 표시로 판정하고, 읽는 사이 세대가 바뀌었으면 `listStale` 로 판정해 보내지 않는다 (`GitHubMergePolicy.gate` 의 `tokenGeneration`). 같은 PR 의 토큰 읽기가 나가 있는 동안(대화상자가 떠 있을 수 있다) 다시 누르거나 그 머지가 나가 있거나 끝났으면 토큰을 다시 읽지 않는다 (`GitHubMergePolicy.startsTokenRead`). gh 항목 거부는 그 사이 세대가 바뀌었어도 기억한다 — 읽기는 거부가 기억되지 않은 동안에만 나가므로, 그 거부가 대화상자에 대한 사용자의 마지막 답이다.
 
+### 5. API 크레딧 추정 (선택 경로)
+
+설정에 Console 조직의 Admin API 키를 저장한 경우에만 돈다 (Decision #162). 잔액을 읽는 공식 API 가 없어, 이번 결제 주기의 사용액을 비용 보고서로 합산해 월 크레딧에서 뺀다.
+
+```
+APICreditModel.pollLoop()  ──(@MainActor, Task — AppDelegate 가 소유·주입, 싱글턴 아님)
+   └─ AdminKeyStore.load()          ← Keychain service Config.ownKeychainService, account "anthropic-admin-key" (KeychainQueue — #141)
+        없음 → 섹션을 감추고 루프 종료 / 읽지 못함(잠김 등) → 상태 유지, 다음 폴링에 다시
+   └─ APICreditCycle.current(renewalDay:now:)   ← Preferences.apiCreditRenewalDay (매월 N일, 그달에 없으면 말일, 로컬 자정)
+   └─ CostReportClient.queryRange(cycleStart:now:)  →  [주기 시작이 든 UTC 날 00:00, 다음 UTC 자정)
+   └─ CostReportClient.fetchSpentCents(adminKey:range:)
+        └─ GET https://api.anthropic.com/v1/organizations/cost_report
+               ?starting_at=…&ending_at=…&bucket_width=1d&limit=31[&page=<next_page>]
+             x-api-key: <Admin 키>
+             anthropic-version: 2023-06-01
+             User-Agent: mongshell-menubar/<버전>
+             (BoundedHTTP: 타임아웃 30초, 리다이렉트 거부, 본문 1MB 캡, 200 만 본문 읽음)
+        └─ interpret → 200: parse / 401·403: .unauthorized / 429: .rateLimited(Retry-After) / 그 밖: .http
+        └─ parse: data[].results[] 의 amount(센트 단위 10진 문자열)를 currency == USD 인 행만 합산
+             has_more 면 next_page 를 따라 최대 Config.costReportMaxPages 쪽, 넘기거나 커서가 없으면 오류
+   └─ @Published spentCents / spentCycleStart / lastUpdated / lastError
+        ├─ APICreditPopoverSection   (약 $N 남음 / $월 크레딧 · 남은 비율 막대 · 다음 갱신일 · 추정치 캡션 · 오류 한 줄)
+        └─ APICreditSettingsSection  (Admin 키 상태·입력·삭제 · 월 크레딧 · 갱신일)
+```
+
+- 추정 잔액 = max(0, 월 크레딧 − 이번 주기 사용액) (`APICreditEstimate`). 지급 크레딧이 구매 크레딧보다 먼저 쓰이므로 근사가 성립한다. 표시 금액은 센트 아래를 버린다. 읽은 사용액이 다른 주기의 것(주기가 넘어갔거나 갱신일을 바꿈)이면 값 없음("—")으로 보인다.
+- 막대 채움은 남은 비율이고, 색은 사용 비율로 사용량 3단계 색을 따른다(색상 코딩이 꺼지면 모노크롬). `showRemaining` 의 영향을 받지 않는다.
+- 주기: 백그라운드 10분(`Config.apiCreditPollSeconds` — Admin API 는 분당 1회 이하를 권한다) · 클릭 팝오버를 열 때 값이 2분(`Config.apiCreditRefreshOnOpenAge`)보다 오래됐거나 다른 주기의 것이면 1회. 429 는 지수 백오프(상한 1시간, 더 긴 `Retry-After` 를 따름, `APICreditPollPolicy`)이고 그동안 팝오버를 열어도 요청하지 않는다. 잠자기 직후 실패는 `WakeRetry` 를 따른다.
+- 실패는 마지막 값을 남긴 채 섹션에 회색 한 줄로 보인다 — 401/403 은 "Admin 키를 확인하세요", 그 밖은 "불러오지 못했습니다". 행이 있는데 하나도 읽지 못한 응답은 $0 사용이 아니라 오류다.
+- 반영 지연: 이 보고서는 약 5분 안에 반영된다. 신규 `/v1/organizations/analytics/cost` 는 4~24시간 늦어 쓰지 않는다.
+- 경계 근사: 버킷이 UTC 일 단위라, 주기 시작이 든 UTC 날의 주기 시작 이전 사용분도 이번 주기로 센다 — 남은 크레딧을 부풀리지 않는 쪽으로 근사한다.
+- 키를 저장·삭제하거나 갱신일을 바꾸면 세대를 올려 진행 중인 읽기의 답을 버린다. 키를 바꾸면 이전 키로 읽은 값도 버린다(다른 조직일 수 있다).
+- 키가 없으면 폴링도 없고 팝오버에 섹션·구분선이 없다. 메뉴바와 hover 요약은 이 기능과 무관하다. 설정의 Admin 키 입력칸은 PHILOSOPHY 원칙 2 의 설정 진입점 예외로 항상 보인다.
+
 ### 응답 읽기 공통 규칙
 
-바깥에서 받은 JSON(사용량 응답·OAuth 토큰 응답·Claude Code 자격증명·openclaw 상태 문서·GitHub 응답)을 읽는 규칙 셋은 한 타입씩에 모여 있다 (`Services/`). 규칙마다 적용 범위가 다르므로 각 항목에 적는다.
+바깥에서 받은 JSON(사용량 응답·OAuth 토큰 응답·Claude Code 자격증명·openclaw 상태 문서·GitHub 응답·비용 보고서)을 읽는 규칙 셋은 한 타입씩에 모여 있다 (`Services/`). 규칙마다 적용 범위가 다르므로 각 항목에 적는다.
 
-- **숫자는 `JSONNumber`** (#135). JSON `true`/`false` 는 숫자가 아니다 — `JSONSerialization` 이 bool 을 1/0 으로 돌려주므로 그대로 읽으면 `true` 가 1% · 1초 · 1센트가 된다. NaN·무한대도 버린다. 적용 범위: 사용량 응답(퍼센트·크레딧 금액과 지수), OAuth 토큰 응답의 `expires_in`, Claude Code 자격증명의 `expiresAt`, openclaw 상태 문서(배터리·디스크·러너 수치), GitHub 응답(PR 번호·검사 개수·워크플로 id·실행 번호·한도). bool 이 온 자리는 그 값이 없는 것으로 읽는다(토큰 만료 시각이면 만료 없음, 크레딧 지수면 기본값 2).
+- **숫자는 `JSONNumber`** (#135). JSON `true`/`false` 는 숫자가 아니다 — `JSONSerialization` 이 bool 을 1/0 으로 돌려주므로 그대로 읽으면 `true` 가 1% · 1초 · 1센트가 된다. NaN·무한대도 버린다. 적용 범위: 사용량 응답(퍼센트·크레딧 금액과 지수), OAuth 토큰 응답의 `expires_in`, Claude Code 자격증명의 `expiresAt`, openclaw 상태 문서(배터리·디스크·러너 수치), GitHub 응답(PR 번호·검사 개수·워크플로 id·실행 번호·한도), 비용 보고서(숫자로 온 `amount` — 문서상 형식은 문자열이다). bool 이 온 자리는 그 값이 없는 것으로 읽는다(토큰 만료 시각이면 만료 없음, 크레딧 지수면 기본값 2).
 - **화면·로그에 닿는 문자열은 `DisplayText`** (#136). 제어문자·줄바꿈은 공백이 되고, 호출자가 정한 글자 상한(`Config`)과 유니코드 스칼라 480개 상한으로 자른다. 적용 범위: openclaw 상태 문서(detail · `agentVersion` · 모르는 health 값), 사용량 응답(`kind` · 모델명 · 최상위 키 이름), GitHub 응답(PR 제목 · 레포 이름 · 검사 이름 · 머지 실패 메시지). 정규화는 표시용 문자열에만 쓴다 — 검사 재실행을 묶는 식별 키는 응답 원문으로 만든다(정규화로 잘리거나 제어문자만 다른 서로 다른 검사가 하나로 합쳐지지 않게). 정규화 후 레포 이름이 빈 PR 은 보일 것도 레포 숨김으로 가릴 키도 없어 버린다.
 - **시각은 `ResponseDate`** — ISO 8601, 소수 초 있음·없음 둘 다.
 
@@ -267,6 +302,8 @@ Claude Code 사용자는 로그인 없이 기존 토큰을 재사용한다. 다�
 
 토큰은 Keychain 에만 있고 `api.github.com` 한 호스트에만 전송된다 — 리다이렉트를 따르지 않으므로 3xx 로 다른 호스트에 보내지는 경로가 없다. 폴링은 query 뿐이고, 쓰기는 사용자가 버튼을 눌러 보낸 squash 머지 mutation 하나다 (§ 4, Decision #49).
 
+**Anthropic Admin API 키** (API 크레딧 추정, Decision #162): Console 조직의 Admin 키(`sk-ant-admin…`, 그 밖의 접두는 입력칸에서 거부)를 Keychain `Config.ownKeychainService`, account `anthropic-admin-key` 에 둔다. 저장은 GitHub PAT 와 같이 지우고 추가하며, 화면에는 "저장됨" 만 보이고 키 값은 다시 보여 주지 않는다. 키는 `api.anthropic.com` 한 호스트의 비용 보고서 요청(`x-api-key`)에만 실리고, `BoundedHTTP` 로 보내 리다이렉트를 따르지 않는다. 읽기 전용이다 — 조직 설정·키를 바꾸는 Admin API 는 부르지 않는다.
+
 ## Infrastructure
 
 호스팅 인프라가 없다. 배포는 로컬 빌드 산출물이다. openclaw 원격 감시를 쓰면 사용자가 운영하는 서버 맥에 에이전트를 로컬 빌드로 설치한다.
@@ -279,7 +316,7 @@ Claude Code 사용자는 로그인 없이 기존 토큰을 재사용한다. 다�
 
 - **App Sandbox 미사용** — Keychain 의 타 앱 항목(Claude Code 자격증명, gh CLI 토큰) 접근이 샌드박스와 양립하지 않는다.
 - 버전 SSOT 는 git tag (`v1.0.0`, `v1.0.1` …) 이며 GitHub Releases 가 배포 채널이다.
-- 외부 SaaS 의존은 Anthropic 호스트다. openclaw 원격 감시를 쓰면 Tailscale(Funnel)이, GitHub PR 영역을 켜면 `api.github.com` 이 추가된다.
+- 외부 SaaS 의존은 Anthropic 호스트다. openclaw 원격 감시를 쓰면 Tailscale(Funnel)이, GitHub PR 영역을 켜면 `api.github.com` 이 추가된다. API 크레딧 추정은 같은 `api.anthropic.com` 의 공식 Admin API 를 쓴다.
 
 ## 알려진 제약
 

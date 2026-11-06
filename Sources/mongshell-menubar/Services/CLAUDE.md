@@ -29,6 +29,8 @@ non_goals:
 | 알림 센터 (UserNotifications — 권한 요청·앱 번들 확인 포함) | `Notifier` |
 | GitHub 토큰 (자체 PAT 항목 · gh CLI 항목 읽기) | `GitHubCredentials` |
 | GitHub GraphQL (`api.github.com` 단일 호스트 — 폴링 query + 내 PR 의 squash 머지 mutation 하나, Decision #49) | `GitHubAPIClient` |
+| Anthropic Admin 키 (자체 항목 읽기·저장·삭제, Decision #162) | `AdminKeyCredentials` (`AdminKeyStore`) |
+| Admin API 비용 보고서 (`api.anthropic.com` 단일 호스트, 읽기 전용 — Decision #162) | `CostReportClient` |
 
 외부 경계가 아닌 순수 헬퍼가 넷 있다 — `TimeText`(시간 표기의 SSOT), `DisplayText`(바깥 문자열을 한 줄·유한 길이로), `JSONNumber`(JSON 숫자 읽기 — bool 은 숫자가 아니다), `ResponseDate`(ISO 8601 읽기). 뒤의 셋은 여러 클라이언트가 파싱 경계에서 같은 규칙을 쓰게 하려고 여기 있다 — 복사본이 어긋난 것이 #107·#135·#136 의 원인이었다. 규칙과 적용 범위는 [docs/architecture.md § 응답 읽기 공통 규칙](../../../docs/architecture.md#응답-읽기-공통-규칙) 이 권위다. 순수 헬퍼는 둘 이상의 `Services/` 타입이 같은 규칙을 나눠 써야 할 때만 여기 둔다.
 
@@ -60,6 +62,12 @@ non_goals:
 - 링크 규칙(허용 스킴·호스트)은 [docs/architecture.md § 4. GitHub PR 폴링](../../../docs/architecture.md#4-github-pr-폴링-선택-경로) 이 권위다. 링크 검증은 `GitHubAPIClient` 의 파싱 경계 한 곳에서만 한다 — 뷰는 걸러진 URL 만 받는다.
 - 에러는 타입으로 올린다 — 토큰 없음·401·403/429/`RATE_LIMITED`·네트워크를 호출자가 구분해 배너와 백오프를 가른다. 응답 헤더 `x-oauth-scopes` 는 `repo` 포함 여부를 호출자에게 돌려준다.
 
+## API 크레딧 (Decision #162)
+
+- Admin 키는 GitHub PAT 와 같이 다룬다 — Keychain 에만 두고, 저장은 지우고 추가하며, 로그·에러 문구·화면에 키 값을 넣지 않는다(설정에는 "저장됨" 까지). 읽기는 없음(`.missing`)과 읽지 못함(`.unavailable`)을 나눠 올린다 — 잠긴 Keychain 을 "키 없음" 으로 접어 섹션을 감추지 않는다.
+- `CostReportClient` 는 `Config.costReportURL` 한 호스트에만 요청하고 리다이렉트를 따르지 않는다. Admin API 중 읽기 엔드포인트(비용 보고서)만 부른다.
+- 디코딩은 관대하게 읽되 "다 남았다" 로 접지 않는다 — 읽을 수 없는 행은 건너뛰지만, 행이 있는데 하나도 읽지 못했거나 페이지를 끝까지 따라가지 못하면 $0 이 아니라 오류다.
+
 ## 파일 쓰기
 
 사용자 파일을 쓸 때 지키는 절차 — 하나라도 빠지면 Decision #11 의 불변식이 깨진다.
@@ -74,7 +82,7 @@ non_goals:
 
 `SecItem*` 은 "키체인 접근 허용" 대화상자가 떠 있는 동안 돌아오지 않는다. 그래서 **메인 스레드에서 부르지 않는다** (#141).
 
-- `SecItem*` 은 `KeychainQueue.run` 안에서만 부른다. `CredentialStore`·`GitHubCredentialStore` 의 바깥 진입점은 `async` 이고, 동기 본문(`…Blocking`)은 `private` 이다.
+- `SecItem*` 은 `KeychainQueue.run` 안에서만 부른다. `CredentialStore`·`GitHubCredentialStore`·`AdminKeyStore` 의 바깥 진입점은 `async` 이고, 동기 본문(`…Blocking`)은 `private` 이다.
 - 큐는 하나, 직렬이다 — 같은 항목의 읽기·쓰기가 겹치지 않고, 같은 actor 에서 차례로 부른 호출은 부른 순서대로 돈다. 그 순서는 `KeychainQueue.run` 과 그리로 가는 모든 `async` 진입점이 **`nonisolated(nonsending)`** 이어야 성립한다 — 호출자의 actor 위에서 첫 suspend 전에 큐에 오르기 때문이다. 그냥 nonisolated `async` 면 전역 executor 로 먼저 건너가(SE-0338) 메인에서 차례로 부른 호출이 아무 순서로나 큐에 오른다 (로그인 저장이 먼저 부른 폴링 삭제보다 앞설 수 있다). 타깃 전체에 `NonisolatedNonsendingByDefault` 를 켜지 않는다 — 네트워크 클라이언트 같은 다른 nonisolated `async` 까지 메인으로 끌어온다. 저장처럼 여러 호출로 된 일(update → delete → add, delete → add)은 한 작업으로 올려 사이에 다른 호출이 끼지 않게 한다.
 - await 뒤 상태가 바뀌었을 수 있다는 호출자 쪽 규약은 [Models/CLAUDE.md § `@MainActor` 격리](../Models/CLAUDE.md#mainactor-격리) 가 정한다.
 - 큐에서 쓰는 `AuthDebugLog` 는 메인과 동시에 쓰일 수 있어 한 줄씩 잠그고 덧붙인다.

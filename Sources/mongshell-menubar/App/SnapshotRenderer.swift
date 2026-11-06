@@ -28,6 +28,10 @@ enum SnapshotRenderer {
         UserDefaults.standard.setVolatileDomain([
             "openClawStatusURL": "https://openclaw-server.example.ts.net:8443/0123456789abcdef0123456789abcdef",
             "menuBarTarget": MenuBarTarget.claudeAndOpenClaw.rawValue,
+            // Pinned so the API credit images read the same renewal day
+            // whatever the operator set.
+            "apiCreditRenewalDay": 15,
+            "apiCreditMonthlyUSD": Config.apiCreditDefaultMonthlyUSD,
         ], forName: UserDefaults.argumentDomain)
         // Floored to an even second: the running-check dot blinks on the
         // clock's parity, and the run's wall time would otherwise pick the frame.
@@ -138,8 +142,32 @@ enum SnapshotRenderer {
                       to: base, "settings_openclaw")
 
         renderGitHub(to: base, now: now)
+        // Last: once shown, the credit section stays in every popover image
+        // after it, and the ones above are without a key.
+        renderAPICredit(to: base, now: now)
 
         return true
+    }
+
+    /// The API credit section (Decision #162) on a canned spend — no
+    /// Keychain, no network. $76.55 spent of $200 leaves $123.45.
+    private static func renderAPICredit(to base: URL, now: Date) {
+        UsageModel.shared.presentForSnapshot(.sample(now: now), state: .signedOut)
+        let spent = Decimal(string: "7655.12345")!
+        snapshotCredit.presentForSnapshot(spentCents: spent, error: nil, now: now)
+        write(PopoverPreview(), to: base, "popover_api_credit", scale: 2)
+        // Past the grant: nothing left, the bar empty and red.
+        snapshotCredit.presentForSnapshot(spentCents: Decimal(23_456), error: nil, now: now)
+        write(PopoverPreview(), to: base, "popover_api_credit_spent", scale: 2)
+        // A rejected key keeps the last value and says so in grey.
+        snapshotCredit.presentForSnapshot(spentCents: spent, error: .unauthorized, now: now)
+        write(PopoverPreview(), to: base, "popover_api_credit_error", scale: 2)
+        // Before the first read lands.
+        snapshotCredit.presentForSnapshot(spentCents: nil, error: nil, now: now)
+        write(PopoverPreview(), to: base, "popover_api_credit_loading", scale: 2)
+        snapshotCredit.presentForSnapshot(spentCents: spent, error: nil, now: now)
+        writeWindowed(APICreditSectionPreview(), size: NSSize(width: 380, height: 420),
+                      to: base, "settings_api_credit")
     }
 
     /// The GitHub region (Decision #45) on canned PRs. The region stays off
@@ -439,7 +467,8 @@ private struct SettingsPreview: View {
     var body: some View {
         SettingsView(model: .shared, prefs: .shared,
                      openClaw: .shared, claude: .shared,
-                     loginItem: LoginItemModel(), github: GitHubModel(prefs: .shared))
+                     loginItem: LoginItemModel(), github: GitHubModel(prefs: .shared),
+                     credit: snapshotCredit)
     }
 }
 
@@ -657,11 +686,29 @@ private struct HoverPreview: View {
     }
 }
 
+/// The API credit model every snapshot view shares. Never started: it stays
+/// keyless (no section) until `renderAPICredit` presents a canned spend.
+@MainActor private let snapshotCredit = APICreditModel(prefs: .shared)
+
+/// The API credit section alone, with a key stored.
+private struct APICreditSectionPreview: View {
+    var body: some View {
+        Form {
+            Section("API 크레딧") {
+                APICreditSettingsSection(model: snapshotCredit, prefs: .shared)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 380, height: 420)
+    }
+}
+
 /// The live popover with sample data.
 private struct PopoverPreview: View {
     var body: some View {
         PopoverView(
             model: UsageModel.shared, prefs: Preferences.shared, openClaw: OpenClawModel.shared,
+            credit: snapshotCredit,
             onOpenSettings: {}, onQuit: {}
         )
         .padding(24)
