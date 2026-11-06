@@ -78,6 +78,10 @@ struct SettingsView: View {
             Section("계정") {
                 accountRow
             }
+
+            Section("정보") {
+                LabeledContent("버전", value: Config.appVersion)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 380, height: 700)
