@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The header both popovers share (#107): a leading mark, the title, the
 /// connection badge and the ⋯ menu. The menu always holds "설정…" and ends in
-/// a divider and "종료" — #74 was the GitHub menu drifting from the Claude
+/// a divider, the running version and "종료" — #74 was the GitHub menu drifting from the Claude
 /// one until it had no way to quit. Each region supplies only its own items,
 /// before and after "설정…".
 struct PopoverHeader<Mark: View, BeforeSettings: View, AfterSettings: View>: View {
@@ -30,6 +30,9 @@ struct PopoverHeader<Mark: View, BeforeSettings: View, AfterSettings: View>: Vie
                 Button("설정…") { onOpenSettings() }
                 afterSettings()
                 Divider()
+                // Read-only line: which build is running (a disabled item
+                // renders greyed, which suits information that isn't an action).
+                Text("버전 \(Config.appVersion)")
                 Button("mongshell-menubar 종료") { onQuit() }
             } label: {
                 Image(systemName: "ellipsis.circle")

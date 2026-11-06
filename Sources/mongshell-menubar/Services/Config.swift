@@ -9,6 +9,14 @@ import Foundation
 /// Claude credentials go nowhere except Anthropic's own hosts and live only
 /// in the local Keychain.
 enum Config {
+    /// This build's version — the bundle's `CFBundleShortVersionString`, which
+    /// `make_app.sh` stamps from the git tag (Decision #47). A bare binary
+    /// (snapshot render, tests) has no bundle and reads "dev". Shown in the
+    /// popover ⋯ menu and the settings window so a rebuilt app is recognizable,
+    /// and sent in our own User-Agents.
+    static let appVersion: String =
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+
     /// Subscription usage endpoint (same data as Claude Code `/usage`).
     static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 
@@ -89,13 +97,8 @@ enum Config {
     /// request, so bundling costs nothing extra.
     static let githubGraphQLURL = URL(string: "https://api.github.com/graphql")!
 
-    /// GitHub rejects requests without a User-Agent (403). The version is the
-    /// bundle's `CFBundleShortVersionString`; a bare binary (snapshot render,
-    /// tests) has no bundle and sends "dev".
-    static let githubUserAgent: String = {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        return "mongshell-menubar/\(version ?? "dev")"
-    }()
+    /// GitHub rejects requests without a User-Agent (403).
+    static let githubUserAgent = "mongshell-menubar/\(appVersion)"
 
     /// Where the gh CLI keeps its token: a generic password under this service,
     /// account = GitHub username (so lookups go by service alone). gh stores
