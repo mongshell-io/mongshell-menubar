@@ -1848,6 +1848,103 @@ do {
               && q.contains("latestStatus { state }"), q)
 }
 
+// MARK: #169 머지 커밋의 commit status 도 배포 신호
+
+print("▸ commit status 배포 신호 (#169)")
+do {
+    func status(_ context: String = "Vercel", minutesAgo: Double, _ state: PRDeploySignalState) -> PRDeploySignal {
+        PRDeploySignal(source: .commitStatus(context: context),
+                       createdAt: now.addingTimeInterval(-minutesAgo * 60), state: state)
+    }
+    func deployment(_ env: String, minutesAgo: Double, _ state: PRDeploySignalState) -> PRDeploySignal {
+        PRDeploySignal(source: .deployment(environment: env),
+                       createdAt: now.addingTimeInterval(-minutesAgo * 60), state: state)
+    }
+    func merged(_ number: Int, in repo: String = "mongshell-io/auction2sell", minutesAgo: Double,
+                _ signals: [PRDeploySignal] = []) -> GitHubPullRequest {
+        var p = GitHubPullRequest(repository: repo, number: number, title: "t",
+                                  url: URL(string: "https://github.com/\(repo)/pull/\(number)"),
+                                  isDraft: false, reviewDecision: .none, mergeable: .unknown,
+                                  mergeState: .unknown, checksRollup: .success, checks: [],
+                                  checksListComplete: true, updatedAt: now,
+                                  mergedAt: now.addingTimeInterval(-minutesAgo * 60),
+                                  nodeID: nil, headSHA: nil)
+        p.deploySignals = signals
+        return p
+    }
+    func judged(_ list: [GitHubPullRequest]) -> [Int: PRDeployStatus] {
+        let byID = PRDeployWatch.statuses(of: list, now: now)
+        var out: [Int: PRDeployStatus] = [:]
+        for p in list { if let s = byID[p.id] { out[p.number] = s } }
+        return out
+    }
+
+    // auction2sell: no Deployment, only a `Vercel` status on the merge commit.
+    check("Deployment 없이 status Vercel PENDING → 배포중",
+          judged([merged(1, minutesAgo: 1, [status(minutesAgo: 1, .waiting)])]) == [1: .deploying])
+    check("status Vercel SUCCESS → 빠짐",
+          judged([merged(1, minutesAgo: 1, [status(minutesAgo: 1, .finished)])]).isEmpty)
+    check("status FAILURE → 배포 실패",
+          judged([merged(1, minutesAgo: 5, [status(minutesAgo: 5, .failed)])]) == [1: .failed])
+    check("61분 된 status PENDING → 빠짐 (대기 상한 그대로)",
+          judged([merged(1, minutesAgo: 61, [status(minutesAgo: 61, .waiting)])]).isEmpty)
+    check("더 새 머지의 status SUCCESS 가 이전 PENDING 을 대체",
+          judged([merged(2, minutesAgo: 5, [status(minutesAgo: 5, .finished)]),
+                  merged(1, minutesAgo: 30, [status(minutesAgo: 30, .waiting)])]).isEmpty)
+    check("배포 전 유예: status 만 남기는 레포도 배포하는 레포로 본다",
+          judged([merged(2, minutesAgo: 1),
+                  merged(1, minutesAgo: 120, [status(minutesAgo: 120, .finished)])]) == [2: .deploying])
+    // m2sell: a Deployment that finished and a status still pending.
+    check("Deployment 끝남 + status 대기 → 배포중",
+          judged([merged(3, in: "mongshell-io/m2sell", minutesAgo: 2,
+                         [deployment("Production", minutesAgo: 2, .finished), status(minutesAgo: 2, .waiting)])])
+              == [3: .deploying])
+    // Same name, different source: a deployment environment "Vercel" says
+    // nothing about the status context "Vercel".
+    check("같은 이름의 Deployment 환경은 status 를 대체하지 않는다",
+          judged([merged(2, minutesAgo: 5, [deployment("Vercel", minutesAgo: 5, .finished)]),
+                  merged(1, minutesAgo: 30, [status(minutesAgo: 30, .waiting)])]) == [1: .deploying])
+    check("다른 context 의 성공은 대체하지 않는다 (sellcaddie - worker / - sellcaddie)",
+          judged([merged(2, minutesAgo: 5, [status("sellcaddie - worker", minutesAgo: 5, .finished)]),
+                  merged(1, minutesAgo: 30, [status("sellcaddie - sellcaddie", minutesAgo: 30, .waiting)])])
+              == [1: .deploying])
+}
+
+print("▸ commit status 디코딩 (#169)")
+do {
+    func withMergeCommit(_ json: String) -> String { String(node().dropLast()) + ",\"mergeCommit\":\(json)}" }
+    func signals(_ json: String) -> [PRDeploySignal]? {
+        parsed(body(merged: [withMergeCommit(json)]))?.recentlyMerged.first?.deploySignals
+    }
+    let both = signals(#"""
+    {"deployments":{"nodes":[
+      {"environment":"Production","createdAt":"2026-11-13T01:00:05Z","latestStatus":{"state":"SUCCESS"}}]},
+     "status":{"contexts":[
+      {"context":"Vercel","state":"PENDING","createdAt":"2026-11-13T01:00:01Z"},
+      {"context":"sellcaddie - worker","state":"SUCCESS","createdAt":"2026-11-13T01:03:00Z"},
+      {"context":"Next","state":"SOMETHING_NEW","createdAt":"2026-11-13T01:03:00Z"},
+      {"state":"FAILURE","createdAt":"2026-11-13T01:03:00Z"},
+      {"context":"NoTime","state":"FAILURE"},
+      {"context":"NoState","createdAt":"2026-11-13T01:03:00Z"}]}}
+    """#)
+    check("Deployment 와 status 를 함께 읽고, 이름·시각·상태 없는 context 는 건너뜀",
+          both?.map(\.source) == [.deployment(environment: "Production"), .commitStatus(context: "Vercel"),
+                                  .commitStatus(context: "sellcaddie - worker"), .commitStatus(context: "Next")]
+              && both?.map(\.state) == [.finished, .waiting, .finished, .unknown], "\(String(describing: both))")
+    check("status null → 신호 없음", signals(#"{"deployments":{"nodes":[]},"status":null}"#)?.isEmpty == true)
+    check("status 누락 → 신호 없음", signals(#"{"deployments":{"nodes":[]}}"#)?.isEmpty == true)
+    check("contexts 모양이 다름 → 신호 없음, PR 은 남는다",
+          signals(#"{"status":{"contexts":"x"}}"#)?.isEmpty == true)
+    let states: [(String?, PRDeploySignalState)] = [
+        ("PENDING", .waiting), ("EXPECTED", .waiting), ("SUCCESS", .finished),
+        ("FAILURE", .failed), ("ERROR", .failed), ("INACTIVE", .unknown), (nil, .unknown),
+    ]
+    check("status 상태값 매핑", states.allSatisfy { GitHubAPIClient.commitStatusState($0.0) == $0.1 })
+    let q = GitHubAPIClient.query(mergedSince: now)
+    check("query 에 머지 커밋 status contexts",
+          q.contains("status { contexts { context state createdAt } } }"), q)
+}
+
 print("")
 if failures.isEmpty {
     print("✓ \(caseCount) cases passed")

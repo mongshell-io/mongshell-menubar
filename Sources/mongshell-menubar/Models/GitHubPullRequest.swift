@@ -56,10 +56,11 @@ enum PRChecksRollup: Equatable, Sendable {
 /// How one deploy signal stands, folded to what the deploy watch (#167)
 /// tells apart. `.unknown` is also what an unfamiliar value becomes.
 enum PRDeploySignalState: Equatable, Sendable {
-    /// PENDING, QUEUED, IN_PROGRESS, WAITING.
+    /// Deployment PENDING, QUEUED, IN_PROGRESS, WAITING; commit status
+    /// PENDING, EXPECTED.
     case waiting
-    /// SUCCESS, or INACTIVE — a deployment that was live until a newer one
-    /// took over.
+    /// SUCCESS, or a deployment's INACTIVE — live until a newer one took
+    /// over.
     case finished
     /// FAILURE, ERROR.
     case failed
@@ -76,6 +77,11 @@ struct PRDeploySignal: Equatable, Sendable {
         /// A GitHub Deployment, by its environment ("Production",
         /// "sellcaddie / production").
         case deployment(environment: String)
+        /// A commit status, by its context ("Vercel", "sellcaddie - worker")
+        /// — what a host that makes no Deployment leaves on the merge
+        /// commit (#169). Its own case, so a context never meets an
+        /// environment of the same name.
+        case commitStatus(context: String)
     }
 
     let source: Source
@@ -271,9 +277,10 @@ enum PRDeployWatch {
     private static func status(of pr: GitHubPullRequest, byKey: [Key: [PRDeploySignal]],
                                deployingRepos: Set<String>, now: Date) -> PRDeployStatus? {
         if pr.deploySignals.isEmpty {
-            // The deployment lands seconds after the merge; until it does, a
-            // repository seen deploying is taken to deploy this one too, so
-            // the row doesn't drop out and come back on the next poll.
+            // The signal lands seconds after the merge; until it does, a
+            // repository seen deploying — by a Deployment or a commit status —
+            // is taken to deploy this one too, so the row doesn't drop out
+            // and come back on the next poll.
             guard let mergedAt = pr.mergedAt, deployingRepos.contains(pr.repository.lowercased()),
                   isWithin(mergedAt, Config.githubDeployPendingGrace, of: now) else { return nil }
             return .deploying

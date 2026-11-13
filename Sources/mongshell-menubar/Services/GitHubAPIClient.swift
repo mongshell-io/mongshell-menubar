@@ -106,7 +106,7 @@ struct GitHubAPIClient: Sendable {
     /// Deployments read per merge commit (#167). One environment usually
     /// has one; five covers a repo with a few environments and a redeploy.
     /// Measured 2026-11-13: adding them to both searches left
-    /// `rateLimit.cost` at 1.
+    /// `rateLimit.cost` at 1, and so did the merge commit's `status` (#169).
     static let deploymentsPageSize = 5
 
     /// The query text. `mergedSince` becomes `merged:>=YYYY-MM-DD` in the
@@ -137,7 +137,8 @@ struct GitHubAPIClient: Sendable {
                 checkSuite { workflowRun { runNumber event workflow { databaseId name } } app { slug } } }
               ... on StatusContext { context state createdAt targetUrl } } } } } } }
           mergeCommit { deployments(last: \(deploymentsPageSize)) { nodes { environment createdAt
-            latestStatus { state } } } }
+            latestStatus { state } } }
+            status { contexts { context state createdAt } } }
         }
         """
     }
@@ -424,8 +425,45 @@ struct GitHubAPIClient: Sendable {
             mergedAt: ResponseDate.parse(node["mergedAt"]),
             nodeID: nonEmptyString(node["id"]),
             headSHA: nonEmptyString(node["headRefOid"]),
-            deploySignals: deployments(node["mergeCommit"])
+            deploySignals: deploySignals(node["mergeCommit"])
         )
+    }
+
+    /// What the merge commit says about its deploy: its Deployments (#167),
+    /// then its commit statuses (#169) — a host that makes no Deployment
+    /// (auction2sell's Vercel) still leaves a status. The merge commit's own
+    /// CI reports as CheckRuns, which `status` doesn't list.
+    private static func deploySignals(_ mergeCommit: Any?) -> [PRDeploySignal] {
+        deployments(mergeCommit) + commitStatuses(mergeCommit)
+    }
+
+    /// The merge commit's combined status: the latest state of each context.
+    /// A null or malformed `status` is no signal; a context without a name,
+    /// a creation time or a state is skipped.
+    private static func commitStatuses(_ mergeCommit: Any?) -> [PRDeploySignal] {
+        guard let contexts = ((mergeCommit as? [String: Any])?["status"] as? [String: Any])?["contexts"]
+                as? [Any] else { return [] }
+        return contexts.compactMap { any in
+            guard let node = any as? [String: Any],
+                  let context = nonEmptyString(node["context"]),
+                  let createdAt = ResponseDate.parse(node["createdAt"]),
+                  let state = node["state"] as? String
+            else { return nil }
+            return PRDeploySignal(source: .commitStatus(context: context), createdAt: createdAt,
+                                  state: commitStatusState(state))
+        }
+    }
+
+    /// Commit status `state` → what the watch tells apart. EXPECTED (a
+    /// required status not reported yet) is still to come; anything
+    /// unfamiliar is `.unknown`.
+    static func commitStatusState(_ state: String?) -> PRDeploySignalState {
+        switch state {
+        case "PENDING", "EXPECTED": return .waiting
+        case "SUCCESS":             return .finished
+        case "FAILURE", "ERROR":    return .failed
+        default:                    return .unknown
+        }
     }
 
     /// The merge commit's deployments (#167). An open PR's `mergeCommit` is
