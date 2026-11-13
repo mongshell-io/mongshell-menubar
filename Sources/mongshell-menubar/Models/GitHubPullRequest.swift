@@ -287,9 +287,14 @@ enum PRDeployWatch {
                     return .deploying
                 }
             case .failed:
-                // Only the environment's latest word: a newer attempt, still
-                // going or failed itself, speaks for it instead.
-                if newer.isEmpty, let mergedAt = pr.mergedAt,
+                // Only the environment's latest word: a newer attempt that
+                // failed itself, or is still believably going, speaks for it
+                // instead. A newer wait past the cap or a state we don't
+                // know does not — a retry stuck in IN_PROGRESS (sellcaddie#976)
+                // would otherwise take this row down with it after an hour,
+                // and nothing would say production never got the change.
+                if !newer.contains(where: { speaksOverFailure($0, now: now) }),
+                   let mergedAt = pr.mergedAt,
                    isWithin(mergedAt, Config.githubDeployFailureWindow, of: now) {
                     failed = true
                 }
@@ -304,6 +309,16 @@ enum PRDeployWatch {
             }
         }
         return failed ? .failed : nil
+    }
+
+    /// A newer deployment of the same environment that hides an older
+    /// failure: finished, failed, or waiting within the cap.
+    private static func speaksOverFailure(_ newer: PRDeployment, now: Date) -> Bool {
+        switch newer.state {
+        case .finished, .failed: return true
+        case .waiting:           return isWithin(newer.createdAt, Config.githubDeployMaxWaitingAge, of: now)
+        case .unknown:           return false
+        }
     }
 
     private static func key(_ pr: GitHubPullRequest, _ deployment: PRDeployment) -> Key {

@@ -1702,6 +1702,14 @@ do {
           judged([merged(985, minutesAgo: 2, [dep(minutesAgo: 2, .waiting)]), fail984]) == [985: .deploying])
     check("실패 뒤 다음 머지도 실패 → 최신만 배포 실패",
           judged([merged(985, minutesAgo: 20, [dep(minutesAgo: 20, .failed)]), fail984]) == [985: .failed])
+    // sellcaddie#976 shape: the retry after a failure stuck in IN_PROGRESS.
+    let olderFail = merged(984, minutesAgo: 120, [dep(minutesAgo: 120, .failed)])
+    check("실패 뒤 다음 머지가 61분 된 대기 → 실패가 다시 보임 (멈춘 재시도가 가리지 않음)",
+          judged([merged(985, minutesAgo: 61, [dep(minutesAgo: 61, .waiting)]), olderFail]) == [984: .failed])
+    check("실패 뒤 상한 안의 대기 → 대기가 가림 (배포중)",
+          judged([merged(985, minutesAgo: 59, [dep(minutesAgo: 59, .waiting)]), fail984]) == [985: .deploying])
+    check("실패 뒤 같은 키 unknown → 실패 유지",
+          judged([merged(985, minutesAgo: 20, [dep(minutesAgo: 20, .unknown)]), fail984]) == [984: .failed])
     check("같은 커밋의 재배포가 성공 → 이전 실패는 대체됨",
           judged([merged(7, minutesAgo: 30, [dep(minutesAgo: 30, .failed), dep(minutesAgo: 5, .finished)])]).isEmpty)
 
