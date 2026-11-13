@@ -629,7 +629,7 @@ private extension GitHubSnapshot {
         var snapshot = sample(now: now)
         snapshot.mine.removeLast(2)
         func merged(_ repo: String, _ number: Int, _ title: String, minutesAgo: Double,
-                    _ state: PRDeploymentState) -> GitHubPullRequest {
+                    _ state: PRDeploySignalState) -> GitHubPullRequest {
             let at = now.addingTimeInterval(-minutesAgo * 60)
             var pr = GitHubPullRequest(repository: repo, number: number, title: title,
                                        url: URL(string: "https://github.com/\(repo)/pull/\(number)"),
@@ -637,8 +637,8 @@ private extension GitHubSnapshot {
                                        mergeState: .unknown, checksRollup: .success, checks: [],
                                        checksListComplete: true, updatedAt: at, mergedAt: at,
                                        nodeID: nil, headSHA: nil)
-            pr.deployments = [PRDeployment(environment: "Production", createdAt: at.addingTimeInterval(5),
-                                           state: state)]
+            pr.deploySignals = [PRDeploySignal(source: .deployment(environment: "Production"),
+                                               createdAt: at.addingTimeInterval(5), state: state)]
             return pr
         }
         snapshot.recentlyMerged.insert(contentsOf: [

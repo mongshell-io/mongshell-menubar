@@ -53,28 +53,40 @@ enum PRChecksRollup: Equatable, Sendable {
     case none
 }
 
-/// `latestStatus.state` of one deployment, folded to what the deploy watch
-/// (#167) tells apart. `.unknown` is also what an unfamiliar value becomes.
-enum PRDeploymentState: Equatable, Sendable {
-    /// PENDING, QUEUED, IN_PROGRESS, WAITING.
+/// How one deploy signal stands, folded to what the deploy watch (#167)
+/// tells apart. `.unknown` is also what an unfamiliar value becomes.
+enum PRDeploySignalState: Equatable, Sendable {
+    /// Deployment PENDING, QUEUED, IN_PROGRESS, WAITING; commit status
+    /// PENDING, EXPECTED.
     case waiting
-    /// SUCCESS, or INACTIVE — a deployment that was live until a newer one
-    /// took over.
+    /// SUCCESS, or a deployment's INACTIVE — live until a newer one took
+    /// over.
     case finished
     /// FAILURE, ERROR.
     case failed
     case unknown
 }
 
-/// One GitHub Deployment of a merged PR's merge commit (#167). Only
-/// deployments that came back with an environment, a creation time and a
-/// latest status are kept — a partial one says nothing the watch can use.
-struct PRDeployment: Equatable, Sendable {
-    /// The raw environment name ("Production", "sellcaddie / production"):
-    /// part of the key, never shown.
-    let environment: String
+/// One thing a merged PR's merge commit says about its deploy (#167). Only
+/// signals that came back with a name, a creation time and a state are
+/// kept — a partial one says nothing the watch can use.
+struct PRDeploySignal: Equatable, Sendable {
+    /// Where the signal came from and under which name — with the
+    /// repository, what a newer signal is compared by. Raw, never shown.
+    enum Source: Hashable, Sendable {
+        /// A GitHub Deployment, by its environment ("Production",
+        /// "sellcaddie / production").
+        case deployment(environment: String)
+        /// A commit status, by its context ("Vercel", "sellcaddie - worker")
+        /// — what a host that makes no Deployment leaves on the merge
+        /// commit (#169). Its own case, so a context never meets an
+        /// environment of the same name.
+        case commitStatus(context: String)
+    }
+
+    let source: Source
     let createdAt: Date
-    let state: PRDeploymentState
+    let state: PRDeploySignalState
 }
 
 struct GitHubPullRequest: Equatable, Identifiable, Sendable {
@@ -102,10 +114,10 @@ struct GitHubPullRequest: Equatable, Identifiable, Sendable {
     /// `headRefOid`, the commit the row shows. A merge is sent with it as
     /// `expectedHeadOid` so GitHub refuses one whose head moved meanwhile.
     let headSHA: String?
-    /// The merge commit's latest deployments, oldest first as GitHub lists
-    /// them (#167). Empty for an open PR (no merge commit) and for a
-    /// repository that doesn't deploy through GitHub Deployments.
-    var deployments: [PRDeployment] = []
+    /// What the merge commit says about its deploy (#167). Empty for an
+    /// open PR (no merge commit) and for a repository that reports no
+    /// deploy on its commits.
+    var deploySignals: [PRDeploySignal] = []
 
     var id: String { url?.absoluteString ?? "\(repository)#\(number)" }
 
@@ -229,26 +241,26 @@ struct GitHubDeployRow: Equatable, Sendable {
 }
 
 /// Which of my merged PRs are still deploying or failed to (#167), from the
-/// GitHub Deployments of their merge commits. Every deployment is read
-/// against the others of its repository and environment across the whole
-/// merged list, because a newer deploy of the same environment carries the
-/// older change with it.
+/// deploy signals of their merge commits. Every signal is read against the
+/// others of its repository and source across the whole merged list,
+/// because a newer deploy of the same target carries the older change with
+/// it.
 enum PRDeployWatch {
     private struct Key: Hashable {
         let repository: String
-        let environment: String
+        let source: PRDeploySignal.Source
     }
 
     /// By `GitHubPullRequest.id`. `now` is when the list was fetched: the
     /// windows are judged as of the answer, so the glance and the popover,
     /// which both read the same snapshot, can't part.
     static func statuses(of merged: [GitHubPullRequest], now: Date) -> [String: PRDeployStatus] {
-        var byKey: [Key: [PRDeployment]] = [:]
+        var byKey: [Key: [PRDeploySignal]] = [:]
         var deployingRepos: Set<String> = []
-        for pr in merged where !pr.deployments.isEmpty {
+        for pr in merged where !pr.deploySignals.isEmpty {
             deployingRepos.insert(pr.repository.lowercased())
-            for deployment in pr.deployments {
-                byKey[key(pr, deployment), default: []].append(deployment)
+            for signal in pr.deploySignals {
+                byKey[key(pr, signal), default: []].append(signal)
             }
         }
         var out: [String: PRDeployStatus] = [:]
@@ -260,34 +272,35 @@ enum PRDeployWatch {
         return out
     }
 
-    /// Deploying wins over failed across the PR's environments: something
+    /// Deploying wins over failed across the PR's signals: something
     /// is still on its way, and the 30-second cadence follows it.
-    private static func status(of pr: GitHubPullRequest, byKey: [Key: [PRDeployment]],
+    private static func status(of pr: GitHubPullRequest, byKey: [Key: [PRDeploySignal]],
                                deployingRepos: Set<String>, now: Date) -> PRDeployStatus? {
-        if pr.deployments.isEmpty {
-            // The deployment lands seconds after the merge; until it does, a
-            // repository seen deploying is taken to deploy this one too, so
-            // the row doesn't drop out and come back on the next poll.
+        if pr.deploySignals.isEmpty {
+            // The signal lands seconds after the merge; until it does, a
+            // repository seen deploying — by a Deployment or a commit status —
+            // is taken to deploy this one too, so the row doesn't drop out
+            // and come back on the next poll.
             guard let mergedAt = pr.mergedAt, deployingRepos.contains(pr.repository.lowercased()),
                   isWithin(mergedAt, Config.githubDeployPendingGrace, of: now) else { return nil }
             return .deploying
         }
         var failed = false
-        for deployment in pr.deployments {
-            let others = byKey[key(pr, deployment)] ?? []
-            let newer = others.filter { $0.createdAt > deployment.createdAt }
-            // A newer deploy of the same environment that went live has this
+        for signal in pr.deploySignals {
+            let others = byKey[key(pr, signal)] ?? []
+            let newer = others.filter { $0.createdAt > signal.createdAt }
+            // A newer signal of the same key (source + name) that went live has this
             // change in it — whatever this one's own state was left at.
             if newer.contains(where: { $0.state == .finished }) { continue }
-            switch deployment.state {
+            switch signal.state {
             case .waiting:
                 // Past the cap a wait is no longer believed: one stuck for
                 // days would hold the row and the fast cadence forever.
-                if isWithin(deployment.createdAt, Config.githubDeployMaxWaitingAge, of: now) {
+                if isWithin(signal.createdAt, Config.githubDeployMaxWaitingAge, of: now) {
                     return .deploying
                 }
             case .failed:
-                // Only the environment's latest word: a newer attempt that
+                // Only the key's latest word: a newer attempt that
                 // failed itself, or is still believably going, speaks for it
                 // instead. A newer wait past the cap or a state we don't
                 // know does not — a retry stuck in IN_PROGRESS (sellcaddie#976)
@@ -311,9 +324,9 @@ enum PRDeployWatch {
         return failed ? .failed : nil
     }
 
-    /// A newer deployment of the same environment that hides an older
-    /// failure: finished, failed, or waiting within the cap.
-    private static func speaksOverFailure(_ newer: PRDeployment, now: Date) -> Bool {
+    /// A newer signal from the same source that hides an older failure:
+    /// finished, failed, or waiting within the cap.
+    private static func speaksOverFailure(_ newer: PRDeploySignal, now: Date) -> Bool {
         switch newer.state {
         case .finished, .failed: return true
         case .waiting:           return isWithin(newer.createdAt, Config.githubDeployMaxWaitingAge, of: now)
@@ -321,8 +334,8 @@ enum PRDeployWatch {
         }
     }
 
-    private static func key(_ pr: GitHubPullRequest, _ deployment: PRDeployment) -> Key {
-        Key(repository: pr.repository.lowercased(), environment: deployment.environment)
+    private static func key(_ pr: GitHubPullRequest, _ signal: PRDeploySignal) -> Key {
+        Key(repository: pr.repository.lowercased(), source: signal.source)
     }
 
     /// `date` lies within `limit` before `now` — or up to the clock-skew

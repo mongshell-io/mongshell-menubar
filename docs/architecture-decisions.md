@@ -41,7 +41,7 @@
 | #156-2 | 잠자기에서 깬 직후 실패한 폴링은 짧게 다시 묻는다 — 잠은 두 시계의 차이로 폴링 반복 한 번에서 잰다 | active |
 | #162 | API 크레딧 추정 잔액을 Admin API 비용 보고서(legacy, 끝난 UTC 날만 반영)로 팝오버에 보인다 — 키 없으면 비가시 (메뉴바 링은 #165) | active |
 | #165 | API 크레딧을 메뉴바에 링으로 — 원칙 1 · Admission 4 의 옵트인 예외 (기본 꺼짐, 주간 게이지 옆 `$` + 링, 약 27pt) | active |
-| #167 | 머지된 내 PR 을 배포가 끝날 때까지 "내 PR" 에 남긴다 — 머지 커밋의 GitHub Deployments 를 기존 폴링 쿼리에 싣고, 새 배포가 이전 것을 대체 · 대기 60분 · 실패 24시간 · 배포 전 10분 | active |
+| #167 | 머지된 내 PR 을 배포가 끝날 때까지 "내 PR" 에 남긴다 — 머지 커밋의 GitHub Deployments 를 기존 폴링 쿼리에 싣고, 새 배포가 이전 것을 대체 · 대기 60분 · 실패 24시간 · 배포 전 10분 | active (commit status 도 신호로 읽는 것은 후속 #169) |
 
 ---
 
@@ -565,3 +565,4 @@
 - **결과**: 판정은 스냅샷을 받은 시각(`fetchedAt`)으로 하므로 glance·팝오버·주기가 같은 답을 읽고, 창이 끝난 행은 다음 갱신에서 빠진다(최대 한 주기 늦음). 같은 이유로 갱신이 막힌 동안(`.rateLimited`·`.loading` 으로 지난 스냅샷을 유지하는 동안) 마지막 답의 판정 — 배포중 행·주황 점 — 이 그대로 남는다. CI 진행중 표시가 지난 스냅샷의 running 칩을 그대로 보이는 것과 같은 성격이다. 숨긴 레포는 다른 판정과 같이 `hiding(_:)` 뒤에 읽는다. 배포가 없는 저장소는 아무것도 바뀌지 않는다. 대상은 "최근 머지" 검색(내가 쓴 PR, 7일, 20건)에 든 PR 뿐이라, 다른 사람의 머지가 같은 환경에 새 배포를 올려도 대체 판정에는 쓰이지 않는다 — 그 경우 내 실패 행은 24시간 창까지 남을 수 있다.
 - **트레이드오프**: GitHub Deployments 를 쓰지 않는 배포(자체 스크립트·Actions 만)는 보이지 않는다. latestStatus 가 아직 없는 deployment(생성 직후)는 정보 없음으로 건너뛰므로, 그 PR 에 다른 deployment 가 없으면 "배포 전 10분" 규칙이 대신 배포중으로 잡는다. 같은 커밋의 재배포가 실패를 덮으면 그것도 대체로 읽는다. 배포하는 레포에서 배포를 일으키지 않는 머지(Vercel 의 Ignored Build Step, 경로 필터, 기본 브랜치가 아닌 base)는 "배포 전 10분" 규칙으로 10분 동안 배포중·30초 주기가 된다 — 상한이 있어 받아들인다.
 - **폐기 조건**: 배포 신호가 GitHub Deployments 에서 사라지거나(호스팅 이전), 배포중 행이 실제로 확인에 쓰이지 않으면 fragment 와 판정을 걷어낸다.
+- **후속 (#169)**: Deployment 를 만들지 않고 머지 커밋에 commit status 만 남기는 배포가 있었다 — auction2sell 은 Vercel 로 배포하는데 deployments 0, status `Vercel` 이 PENDING("Vercel is deploying your app") → 약 30초 뒤 SUCCESS 였다(2026-11-13 실측, 최근 머지 4건). m2sell(`Vercel`)·gambau(`gambau - gambau`)·sellcaddie(`sellcaddie - sellcaddie`·`sellcaddie - worker`)도 Deployments 와 함께 status 를 남긴다. 머지 커밋의 combined status(`status { contexts { context state createdAt } }` — context 별 최신만 주는 리스트)를 같은 fragment 에 더하고(`rateLimit.cost` 1 그대로, 실측), Deployment 와 같은 배포 신호(`PRDeploySignal`)로 같은 규칙에 넣는다. 키는 (레포, 출처 + 이름)이라 환경과 context 가 이름이 같아도 서로를 대체하지 않는다. 상태는 PENDING·EXPECTED → 대기, SUCCESS → 끝남, FAILURE·ERROR → 실패, 그 밖 → 모름. "배포 전 10분" 의 '배포하는 레포' 에도 status 만 남기는 레포가 든다. 머지 커밋의 CI(verify 워크플로)는 CheckRun 이라 `status` 에 오지 않아 배포 신호와 겹치지 않는다. 포기한 것: 머지 커밋에 status 를 남기는 배포 아닌 연동(커버리지·외부 CI 의 StatusContext)도 배포 신호로 읽힌다 — 그 레포의 머지는 그 status 가 끝날 때까지(최대 60분) 배포중으로 보이고, 실패하면 배포 실패로 남는다. 실측한 레포들의 머지 커밋 status 는 모두 배포 호스트의 것이었다(이슈 #169 의 목록). 그런 연동이 생겨 오판이 보이면 context 허용 목록을 둔다.
