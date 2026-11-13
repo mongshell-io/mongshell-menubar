@@ -134,6 +134,23 @@ enum Config {
     /// to keep working on the same token.
     static let githubRateLimitReserve = 200
 
+    // Deploy watch on my merged PRs (#167). Measured 2026-11-13: Vercel
+    // creates the merge commit's deployment about 5 s after the merge and
+    // finishes it in 3–4 minutes.
+    /// A waiting deployment older than this is no longer read as deploying,
+    /// for the same reason as `githubFastPollMaxRunningAge`: one stuck in
+    /// IN_PROGRESS for days was measured (sellcaddie#976).
+    static let githubDeployMaxWaitingAge: TimeInterval = 3600
+    /// How long after its merge a failed deploy keeps its PR in "내 PR".
+    /// Long enough to be seen the next working day's morning, short enough
+    /// that a deploy nobody will retry doesn't sit there all week.
+    static let githubDeployFailureWindow: TimeInterval = 86_400
+    /// A PR merged this recently in a repository that deploys, whose merge
+    /// commit has no deployment yet, is read as deploying: the deployment
+    /// lands a few seconds after the merge, and the refresh right after an
+    /// in-app merge can beat it. Two base intervals at the default cadence.
+    static let githubDeployPendingGrace: TimeInterval = 600
+
     /// Rows shown per popover section; past these a trailing "외 N건" row.
     static let githubSectionCaps = (mine: 8, merged: 3)
     /// How far back "recently merged" looks.

@@ -31,12 +31,12 @@ struct GitHubPopoverView: View {
                               tint: Palette.amber)
             }
             if let snapshot = listedSnapshot, let lines = model.glance.lines {
-                prSection(title: "내 PR", prs: snapshot.mine,
+                prSection(title: "내 PR", rows: Self.mineRows(snapshot),
                           cap: Config.githubSectionCaps.mine,
                           countText: mineCountText(lines),
                           section: .mine)
                 hairline
-                mergedSection(snapshot.recentlyMerged)
+                mergedSection(snapshot.mergedOutsideDeployRows)
                 hairline
                 footer(snapshot)
             }
@@ -168,25 +168,43 @@ struct GitHubPopoverView: View {
         lines.blocked > 0 ? "\(lines.mine)건 · 막힘 \(lines.blocked)" : "\(lines.mine)건"
     }
 
+    /// One row of "내 PR": an open PR, or a merged one the deploy watch
+    /// keeps there (#167) with its deploy status.
+    private struct MineRow: Identifiable {
+        let pr: GitHubPullRequest
+        let deploy: PRDeployStatus?
+        var id: String { pr.id }
+    }
+
+    /// The open PRs, then the merged ones still deploying or failed to — the
+    /// same list, in the same order, the glance counts.
+    private static func mineRows(_ snapshot: GitHubSnapshot) -> [MineRow] {
+        snapshot.mine.map { MineRow(pr: $0, deploy: nil) }
+            + snapshot.deployRows.map { MineRow(pr: $0.pr, deploy: $0.status) }
+    }
+
     /// One list: header with its count, then up to `cap` rows and a trailing
     /// "외 N건". An empty list still shows the section, with "없음" — the
     /// section being there says it was checked.
-    private func prSection(title: String, prs: [GitHubPullRequest], cap: Int,
+    private func prSection(title: String, rows: [MineRow], cap: Int,
                            countText: String, section: PRSection) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader(title, trailing: countText)
-            if prs.isEmpty {
+            if rows.isEmpty {
                 emptyRow
             }
-            ForEach(prs.prefix(cap)) { pr in
-                PRRow(pr: pr, verdict: PRVerdict.of(pr),
+            ForEach(rows.prefix(cap)) { row in
+                let pr = row.pr
+                // A merged PR has nothing left to merge: no button, whatever
+                // its merge state still reads.
+                PRRow(pr: pr, verdict: PRVerdict.of(pr), deploy: row.deploy,
                       frozenNow: model.frozenNow,
-                      offersMerge: GitHubMergePolicy.canOffer(pr, section: section),
-                      mergeActivity: model.mergeActivity[pr.id],
+                      offersMerge: row.deploy == nil && GitHubMergePolicy.canOffer(pr, section: section),
+                      mergeActivity: row.deploy == nil ? model.mergeActivity[pr.id] : nil,
                       onMerge: { head in Task { await model.merge(pr.id, expectedHead: head) } })
             }
-            if prs.count > cap {
-                Text("외 \(prs.count - cap)건")
+            if rows.count > cap {
+                Text("외 \(rows.count - cap)건")
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.textTertiary)
             }
@@ -310,10 +328,14 @@ struct GitHubPopoverView: View {
 /// lights up under the cursor to say so; a row without a URL is dimmed
 /// instead, as a disabled button is (`RowLink`). A mergeable PR of mine also gets the
 /// squash merge control at the end of the badge line (Decision #49), and a
-/// failed merge a red line at the bottom.
+/// failed merge a red line at the bottom. A merged PR the deploy watch keeps
+/// in the list (#167) shows its deploy badge alone: the checks it merged
+/// with have nothing left to say.
 private struct PRRow: View {
     let pr: GitHubPullRequest
     let verdict: PRVerdict
+    /// Set for a merged PR still deploying or whose deploy failed.
+    let deploy: PRDeployStatus?
     /// Snapshot clock; nil means the live one.
     let frozenNow: Date?
     /// `GitHubMergePolicy.canOffer` for this row's section.
@@ -330,19 +352,20 @@ private struct PRRow: View {
         nonmutating set { _hovering.wrappedValue = newValue }
     }
 
-    init(pr: GitHubPullRequest, verdict: PRVerdict, frozenNow: Date?,
+    init(pr: GitHubPullRequest, verdict: PRVerdict, deploy: PRDeployStatus?, frozenNow: Date?,
          offersMerge: Bool, mergeActivity: PRMergeActivity?,
          onMerge: @escaping (_ expectedHead: String) -> Void) {
         self.pr = pr
         self.verdict = verdict
+        self.deploy = deploy
         self.frozenNow = frozenNow
         self.offersMerge = offersMerge
         self.mergeActivity = mergeActivity
         self.onMerge = onMerge
     }
 
-    private var checksLine: ChecksLine { ChecksLine.fold(pr.checks) }
-    private var hasRunningCheck: Bool { pr.checks.contains { $0.outcome == .running } }
+    private var checksLine: ChecksLine { deploy == nil ? ChecksLine.fold(pr.checks) : .none }
+    private var hasRunningCheck: Bool { deploy == nil && pr.checks.contains { $0.outcome == .running } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -413,7 +436,22 @@ private struct PRRow: View {
 
     // MARK: Badges (mockup § D)
 
-    private var badges: some View {
+    @ViewBuilder private var badges: some View {
+        if let deploy {
+            HStack(spacing: 5) {
+                switch deploy {
+                case .deploying:
+                    Badge(glyph: "arrow.up.circle", text: deploy.label, style: .fill(.amber))
+                case .failed:
+                    Badge(glyph: "xmark", text: deploy.label, style: .fill(.red))
+                }
+            }
+        } else {
+            openBadges
+        }
+    }
+
+    private var openBadges: some View {
         HStack(spacing: 5) {
             Badge(glyph: verdictGlyph, text: verdict.label, style: .fill(verdictTint))
             ForEach(PRSecondaryBadge.of(pr, verdict: verdict), id: \.self) { badge in

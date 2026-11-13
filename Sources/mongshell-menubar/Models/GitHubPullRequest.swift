@@ -53,6 +53,30 @@ enum PRChecksRollup: Equatable, Sendable {
     case none
 }
 
+/// `latestStatus.state` of one deployment, folded to what the deploy watch
+/// (#167) tells apart. `.unknown` is also what an unfamiliar value becomes.
+enum PRDeploymentState: Equatable, Sendable {
+    /// PENDING, QUEUED, IN_PROGRESS, WAITING.
+    case waiting
+    /// SUCCESS, or INACTIVE — a deployment that was live until a newer one
+    /// took over.
+    case finished
+    /// FAILURE, ERROR.
+    case failed
+    case unknown
+}
+
+/// One GitHub Deployment of a merged PR's merge commit (#167). Only
+/// deployments that came back with an environment, a creation time and a
+/// latest status are kept — a partial one says nothing the watch can use.
+struct PRDeployment: Equatable, Sendable {
+    /// The raw environment name ("Production", "sellcaddie / production"):
+    /// part of the key, never shown.
+    let environment: String
+    let createdAt: Date
+    let state: PRDeploymentState
+}
+
 struct GitHubPullRequest: Equatable, Identifiable, Sendable {
     /// "owner/name".
     let repository: String
@@ -78,6 +102,10 @@ struct GitHubPullRequest: Equatable, Identifiable, Sendable {
     /// `headRefOid`, the commit the row shows. A merge is sent with it as
     /// `expectedHeadOid` so GitHub refuses one whose head moved meanwhile.
     let headSHA: String?
+    /// The merge commit's latest deployments, oldest first as GitHub lists
+    /// them (#167). Empty for an open PR (no merge commit) and for a
+    /// repository that doesn't deploy through GitHub Deployments.
+    var deployments: [PRDeployment] = []
 
     var id: String { url?.absoluteString ?? "\(repository)#\(number)" }
 
@@ -172,6 +200,136 @@ enum PRSecondaryBadge: Equatable, Sendable {
             badges.append(.approved)
         }
         return badges
+    }
+}
+
+// MARK: - Deploy watch (#167)
+
+/// What a merged PR of mine shows in "내 PR" while its merge commit deploys,
+/// or after that deploy failed. No status means the PR has left the list.
+enum PRDeployStatus: Equatable, Sendable {
+    case deploying, failed
+
+    var label: String {
+        switch self {
+        case .deploying: return "배포중"
+        case .failed:    return "배포 실패"
+        }
+    }
+
+    /// A failed deploy is something to act on, as a failed check is — it
+    /// counts toward the menu-bar number and turns the dot red.
+    var isBlocking: Bool { self == .failed }
+}
+
+/// One merged PR the deploy watch keeps in "내 PR".
+struct GitHubDeployRow: Equatable, Sendable {
+    let pr: GitHubPullRequest
+    let status: PRDeployStatus
+}
+
+/// Which of my merged PRs are still deploying or failed to (#167), from the
+/// GitHub Deployments of their merge commits. Every deployment is read
+/// against the others of its repository and environment across the whole
+/// merged list, because a newer deploy of the same environment carries the
+/// older change with it.
+enum PRDeployWatch {
+    private struct Key: Hashable {
+        let repository: String
+        let environment: String
+    }
+
+    /// By `GitHubPullRequest.id`. `now` is when the list was fetched: the
+    /// windows are judged as of the answer, so the glance and the popover,
+    /// which both read the same snapshot, can't part.
+    static func statuses(of merged: [GitHubPullRequest], now: Date) -> [String: PRDeployStatus] {
+        var byKey: [Key: [PRDeployment]] = [:]
+        var deployingRepos: Set<String> = []
+        for pr in merged where !pr.deployments.isEmpty {
+            deployingRepos.insert(pr.repository.lowercased())
+            for deployment in pr.deployments {
+                byKey[key(pr, deployment), default: []].append(deployment)
+            }
+        }
+        var out: [String: PRDeployStatus] = [:]
+        for pr in merged {
+            if let status = status(of: pr, byKey: byKey, deployingRepos: deployingRepos, now: now) {
+                out[pr.id] = status
+            }
+        }
+        return out
+    }
+
+    /// Deploying wins over failed across the PR's environments: something
+    /// is still on its way, and the 30-second cadence follows it.
+    private static func status(of pr: GitHubPullRequest, byKey: [Key: [PRDeployment]],
+                               deployingRepos: Set<String>, now: Date) -> PRDeployStatus? {
+        if pr.deployments.isEmpty {
+            // The deployment lands seconds after the merge; until it does, a
+            // repository seen deploying is taken to deploy this one too, so
+            // the row doesn't drop out and come back on the next poll.
+            guard let mergedAt = pr.mergedAt, deployingRepos.contains(pr.repository.lowercased()),
+                  isWithin(mergedAt, Config.githubDeployPendingGrace, of: now) else { return nil }
+            return .deploying
+        }
+        var failed = false
+        for deployment in pr.deployments {
+            let others = byKey[key(pr, deployment)] ?? []
+            let newer = others.filter { $0.createdAt > deployment.createdAt }
+            // A newer deploy of the same environment that went live has this
+            // change in it — whatever this one's own state was left at.
+            if newer.contains(where: { $0.state == .finished }) { continue }
+            switch deployment.state {
+            case .waiting:
+                // Past the cap a wait is no longer believed: one stuck for
+                // days would hold the row and the fast cadence forever.
+                if isWithin(deployment.createdAt, Config.githubDeployMaxWaitingAge, of: now) {
+                    return .deploying
+                }
+            case .failed:
+                // Only the environment's latest word: a newer attempt that
+                // failed itself, or is still believably going, speaks for it
+                // instead. A newer wait past the cap or a state we don't
+                // know does not — a retry stuck in IN_PROGRESS (sellcaddie#976)
+                // would otherwise take this row down with it after an hour,
+                // and nothing would say production never got the change.
+                if !newer.contains(where: { speaksOverFailure($0, now: now) }),
+                   let mergedAt = pr.mergedAt,
+                   isWithin(mergedAt, Config.githubDeployFailureWindow, of: now) {
+                    failed = true
+                }
+            case .finished:
+                break
+            case .unknown:
+                // Not read as waiting: a state we don't know might never
+                // change, and would hold the 30-second cadence for an hour
+                // on every merge. Not read as failed either — nothing says
+                // it did. The row leaves, as a finished deploy's does.
+                break
+            }
+        }
+        return failed ? .failed : nil
+    }
+
+    /// A newer deployment of the same environment that hides an older
+    /// failure: finished, failed, or waiting within the cap.
+    private static func speaksOverFailure(_ newer: PRDeployment, now: Date) -> Bool {
+        switch newer.state {
+        case .finished, .failed: return true
+        case .waiting:           return isWithin(newer.createdAt, Config.githubDeployMaxWaitingAge, of: now)
+        case .unknown:           return false
+        }
+    }
+
+    private static func key(_ pr: GitHubPullRequest, _ deployment: PRDeployment) -> Key {
+        Key(repository: pr.repository.lowercased(), environment: deployment.environment)
+    }
+
+    /// `date` lies within `limit` before `now` — or up to the clock-skew
+    /// allowance after it, as for a check's start.
+    private static func isWithin(_ date: Date, _ limit: TimeInterval, of now: Date) -> Bool {
+        let age = now.timeIntervalSince(date)
+        return age >= -Config.githubFastPollClockSkew && age <= limit
     }
 }
 
@@ -332,9 +490,13 @@ struct GitHubGlance: Equatable, Sendable {
         let mergeable: Int
         /// After the mergeable count: "bookdam #57 외 1", or empty.
         let mergeableRest: String
+        /// My merged PRs still deploying (#167); the row is left out at 0.
+        var deploying: Int = 0
+        /// After the deploying count: "sellcaddie #985 외 1", or empty.
+        var deployingRest: String = ""
     }
 
-    /// My PRs that are blocked.
+    /// My PRs that are blocked — a failed deploy among them (#167).
     let count: Int
     let dot: GitHubDot
     /// nil when no snapshot speaks for the region (token missing, refused,
@@ -362,6 +524,13 @@ struct GitHubGlance: Equatable, Sendable {
         return "내 PR \(lines.mine) · \(lines.mineRest)"
     }
 
+    /// "배포 2 · sellcaddie #985 외 1", or empty when nothing deploys (#167) —
+    /// the hover then leaves the row out.
+    var hoverDeployLine: String {
+        guard let lines, lines.deploying > 0 else { return "" }
+        return "배포 \(lines.deploying) · \(lines.deployingRest)"
+    }
+
     /// "머지 가능 2 · bookdam #57 외 1", "머지 가능 0", or empty without lines.
     var hoverMergeableLine: String {
         guard let lines else { return "" }
@@ -387,13 +556,21 @@ struct GitHubGlance: Equatable, Sendable {
     }
 
     private static func of(_ s: GitHubSnapshot, mergeActivity: [String: PRMergeActivity]) -> GitHubGlance {
-        let blocked = s.mine.filter { PRVerdict.of($0).isBlocking }
+        // The open PRs' reasons first, then the failed deploys, in the
+        // order the popover lists them.
+        let deployRows = s.deployRows
+        let blockedReasons = s.mine.filter { PRVerdict.of($0).isBlocking }.map(blockedReason)
+            + deployRows.filter { $0.status.isBlocking }.map { "#\($0.pr.number) \($0.status.label)" }
+        let deploying = deployRows.filter { $0.status == .deploying }.map(\.pr)
         let ci = GitHubCILine.of(s.mine)
-        let dot: GitHubDot = !blocked.isEmpty ? .red : (ci.isGoing ? .amber : .green)
+        // A deploy on its way is amber as a running check is: nothing to do,
+        // something still moving.
+        let dot: GitHubDot = !blockedReasons.isEmpty ? .red
+            : (ci.isGoing || !deploying.isEmpty ? .amber : .green)
 
-        var mineRest = "막힘 \(blocked.count)"
-        if let first = blocked.first {
-            mineRest += " · " + blockedReason(first)
+        var mineRest = "막힘 \(blockedReasons.count)"
+        if let first = blockedReasons.first {
+            mineRest += " · " + first
         }
         // Only the rows the popover draws (the rest fold into "외 N건" with
         // no button), so the glyph never says yes to a merge the popover
@@ -405,9 +582,15 @@ struct GitHubGlance: Equatable, Sendable {
             mergeableRest = "\(first.repositoryName) #\(first.number)"
             if mergeable.count > 1 { mergeableRest += " 외 \(mergeable.count - 1)" }
         }
-        let lines = Lines(ci: ci, mine: s.mine.count, blocked: blocked.count, mineRest: mineRest,
-                          mergeable: mergeable.count, mergeableRest: mergeableRest)
-        return GitHubGlance(count: blocked.count, dot: dot, lines: lines, stateLabel: "")
+        var deployingRest = ""
+        if let first = deploying.first {
+            deployingRest = "\(first.repositoryName) #\(first.number)"
+            if deploying.count > 1 { deployingRest += " 외 \(deploying.count - 1)" }
+        }
+        let lines = Lines(ci: ci, mine: s.mine.count + deployRows.count, blocked: blockedReasons.count,
+                          mineRest: mineRest, mergeable: mergeable.count, mergeableRest: mergeableRest,
+                          deploying: deploying.count, deployingRest: deployingRest)
+        return GitHubGlance(count: blockedReasons.count, dot: dot, lines: lines, stateLabel: "")
     }
 
     /// The popover's merge button would be drawn on its row (Decision #52): the
