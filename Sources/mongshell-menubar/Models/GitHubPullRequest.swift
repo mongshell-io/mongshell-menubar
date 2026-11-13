@@ -272,7 +272,7 @@ enum PRDeployWatch {
         return out
     }
 
-    /// Deploying wins over failed across the PR's environments: something
+    /// Deploying wins over failed across the PR's signals: something
     /// is still on its way, and the 30-second cadence follows it.
     private static func status(of pr: GitHubPullRequest, byKey: [Key: [PRDeploySignal]],
                                deployingRepos: Set<String>, now: Date) -> PRDeployStatus? {
@@ -289,7 +289,7 @@ enum PRDeployWatch {
         for signal in pr.deploySignals {
             let others = byKey[key(pr, signal)] ?? []
             let newer = others.filter { $0.createdAt > signal.createdAt }
-            // A newer deploy of the same environment that went live has this
+            // A newer signal of the same key (source + name) that went live has this
             // change in it — whatever this one's own state was left at.
             if newer.contains(where: { $0.state == .finished }) { continue }
             switch signal.state {
@@ -300,7 +300,7 @@ enum PRDeployWatch {
                     return .deploying
                 }
             case .failed:
-                // Only the environment's latest word: a newer attempt that
+                // Only the key's latest word: a newer attempt that
                 // failed itself, or is still believably going, speaks for it
                 // instead. A newer wait past the cap or a state we don't
                 // know does not — a retry stuck in IN_PROGRESS (sellcaddie#976)
