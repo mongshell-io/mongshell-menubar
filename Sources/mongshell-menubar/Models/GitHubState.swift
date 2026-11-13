@@ -91,6 +91,33 @@ struct GitHubSnapshot: Equatable, Sendable {
         }
     }
 
+    /// My merged PRs the deploy watch keeps in "내 PR" (#167), in the merged
+    /// list's order, judged as of `fetchedAt`. A PR search still lists as
+    /// open keeps its open row instead.
+    var deployRows: [GitHubDeployRow] {
+        let statuses = PRDeployWatch.statuses(of: recentlyMerged, now: fetchedAt)
+        guard !statuses.isEmpty else { return [] }
+        let open = Set(mine.map(\.id))
+        return recentlyMerged.compactMap { pr in
+            guard !open.contains(pr.id), let status = statuses[pr.id] else { return nil }
+            return GitHubDeployRow(pr: pr, status: status)
+        }
+    }
+
+    /// The "최근 머지" list without the PRs `deployRows` moved up into "내 PR".
+    var mergedOutsideDeployRows: [GitHubPullRequest] {
+        let moved = Set(deployRows.map(\.pr.id))
+        return moved.isEmpty ? recentlyMerged : recentlyMerged.filter { !moved.contains($0.id) }
+    }
+
+    /// Grounds for the fast cadence: a fresh running check, or a merged PR of
+    /// mine still deploying (#167) — its row should leave soon after the
+    /// deploy ends, not a base interval later. The deploy's own caps
+    /// (`PRDeployWatch`) end it as `githubFastPollMaxRunningAge` ends a check.
+    func hasFastPollGrounds(now: Date) -> Bool {
+        hasFreshRunningChecks(now: now) || deployRows.contains { $0.status == .deploying }
+    }
+
     /// The same snapshot without the repositories the user hid ("owner/name",
     /// lowercased). Every consumer — glance, hover, popover — reads through
     /// this so a hidden repo shows up nowhere.
@@ -124,8 +151,8 @@ enum GitHubPollPolicy {
     /// running check must not undo backing off; a loaded state — a snapshot
     /// left over from before a missing token, a refused Keychain or an error
     /// speaks for no current answer, and polling fast would only repeat the
-    /// failure; and `hasFreshRunningChecks` (`GitHubSnapshot`, read through
-    /// the hidden repos). The popover need not be open: the hover's CI row
+    /// failure; and `hasFastPollGrounds` (`GitHubSnapshot`, read through
+    /// the hidden repos — a fresh running check or a deploy on its way, #167). The popover need not be open: the hover's CI row
     /// should not lag a whole base interval behind the checks it shows.
     ///
     /// While rate-limited the wait never ends before `retryAt` (#154): the
@@ -133,9 +160,9 @@ enum GitHubPollPolicy {
     /// earns another refusal — on a token gh shares, so on the user's
     /// account. The usage loop keeps the same floor.
     static func nextAutoWait(after state: GitHubLoadState, base: Int, backoff: Int,
-                             hasFreshRunningChecks: Bool, now: Date) -> Int? {
+                             hasFastPollGrounds: Bool, now: Date) -> Int? {
         if waitsForUser(state) { return nil }
-        if backoff == 0, case .loaded = state, hasFreshRunningChecks {
+        if backoff == 0, case .loaded = state, hasFastPollGrounds {
             return Config.githubFastPollSeconds
         }
         let wait = nextWait(base: base, backoff: backoff)

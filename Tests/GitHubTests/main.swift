@@ -619,7 +619,7 @@ print("▸ GitHubPollPolicy.nextAutoWait")
 do {
     func auto(_ state: GitHubLoadState, base: Int = 180, backoff: Int = 0, running: Bool = false) -> Int? {
         GitHubPollPolicy.nextAutoWait(after: state, base: base, backoff: backoff,
-                                      hasFreshRunningChecks: running, now: now)
+                                      hasFastPollGrounds: running, now: now)
     }
     check("401 이후 자동 대기 없음 (무효 토큰 재전송 정지)", auto(.unauthorized) == nil)
     check("401 이후엔 진행중이어도 자동 대기 없음", auto(.unauthorized, running: true) == nil)
@@ -673,7 +673,7 @@ do {
             statusCode: code, headers: headers, data: Data(), now: now) else { return nil }
         let state = GitHubLoadState.rateLimited(retryAt: at(server))
         return GitHubPollPolicy.nextAutoWait(after: state, base: 180, backoff: 1,
-                                             hasFreshRunningChecks: false, now: now)
+                                             hasFastPollGrounds: false, now: now)
     }
     check("1차 한도 403 (remaining 0, reset 50분 뒤) → 3000초 대기",
           waitAfter(403, ["x-ratelimit-remaining": "0", "x-ratelimit-reset": "1790003000"]) == 3000)
@@ -746,7 +746,7 @@ do {
     let state403 = GitHubLoadState.error(GitHubAPIError.http(403).detail)
     check("헤더 없는 403 뒤 → base·2 대기 (최소 1분 넘김, 진행중이어도 30 아님)",
           GitHubPollPolicy.nextAutoWait(after: state403, base: 60, backoff: after403,
-                                        hasFreshRunningChecks: true, now: now) == 120)
+                                        hasFastPollGrounds: true, now: now) == 120)
     check("헤더 없는 403 뒤 → 팝오버를 열어도 요청 안 함 (머지 성공 뒤 갱신도 같은 판정)",
           !GitHubPollPolicy.refreshesOnOpen(after: state403, backoff: after403))
 }
@@ -1638,6 +1638,206 @@ do {
     check("차단 아님 → 시작 항목 하나뿐", idle == [0], "\(idle)")
     let over = entries(HeaderClockSchedule(until: now.addingTimeInterval(-5)), from: now)
     check("이미 지난 해제 시각 → 시작 항목 하나뿐", over == [0], "\(over)")
+}
+
+// MARK: #167 머지된 PR 의 배포 감시
+
+print("▸ 배포 감시 판정 (#167)")
+do {
+    func dep(_ env: String = "Production", minutesAgo: Double, _ state: PRDeploymentState) -> PRDeployment {
+        PRDeployment(environment: env, createdAt: now.addingTimeInterval(-minutesAgo * 60), state: state)
+    }
+    func merged(_ number: Int, in repo: String = "mongshell/sellcaddie", minutesAgo: Double,
+                _ deployments: [PRDeployment] = []) -> GitHubPullRequest {
+        var p = GitHubPullRequest(repository: repo, number: number, title: "t",
+                                  url: URL(string: "https://github.com/\(repo)/pull/\(number)"),
+                                  isDraft: false, reviewDecision: .none, mergeable: .unknown,
+                                  mergeState: .unknown, checksRollup: .success, checks: [],
+                                  checksListComplete: true, updatedAt: now,
+                                  mergedAt: now.addingTimeInterval(-minutesAgo * 60),
+                                  nodeID: nil, headSHA: nil)
+        p.deployments = deployments
+        return p
+    }
+    func judged(_ list: [GitHubPullRequest]) -> [Int: PRDeployStatus] {
+        let byID = PRDeployWatch.statuses(of: list, now: now)
+        var out: [Int: PRDeployStatus] = [:]
+        for p in list { if let s = byID[p.id] { out[p.number] = s } }
+        return out
+    }
+
+    check("IN_PROGRESS 2분 → 배포중",
+          judged([merged(1, minutesAgo: 2, [dep(minutesAgo: 2, .waiting)])]) == [1: .deploying])
+    check("SUCCESS → 빠짐", judged([merged(1, minutesAgo: 5, [dep(minutesAgo: 5, .finished)])]).isEmpty)
+    check("정확히 60분 된 대기 → 배포중 (상한 포함)",
+          judged([merged(1, minutesAgo: 60, [dep(minutesAgo: 60, .waiting)])]) == [1: .deploying])
+    check("61분 된 대기 → 빠짐 (끝나지 않는 IN_PROGRESS, sellcaddie#976)",
+          judged([merged(1, minutesAgo: 61, [dep(minutesAgo: 61, .waiting)])]).isEmpty)
+    check("10분 뒤로 보고된 대기 → 빠짐 (시계 오차 밖)",
+          judged([merged(1, minutesAgo: 0, [dep(minutesAgo: -10, .waiting)])]).isEmpty)
+    check("모르는 상태 → 대기로 읽지 않음 (빠짐)",
+          judged([merged(1, minutesAgo: 2, [dep(minutesAgo: 2, .unknown)])]).isEmpty)
+
+    // A newer deploy that went live carries the older change.
+    let stuck = merged(1, minutesAgo: 30, [dep(minutesAgo: 30, .waiting)])
+    let live = merged(2, minutesAgo: 10, [dep(minutesAgo: 10, .finished)])
+    check("같은 환경에서 더 새 배포가 SUCCESS → 이전 대기는 대체됨", judged([live, stuck]).isEmpty)
+    let otherEnv = merged(2, minutesAgo: 10, [dep("Preview", minutesAgo: 10, .finished)])
+    check("다른 환경의 성공은 대체하지 않음", judged([otherEnv, stuck]) == [1: .deploying])
+    let otherRepo = merged(2, in: "mongshell/m2sell", minutesAgo: 10, [dep(minutesAgo: 10, .finished)])
+    check("다른 저장소의 같은 이름 환경은 대체하지 않음", judged([otherRepo, stuck]) == [1: .deploying])
+    let olderLive = merged(2, minutesAgo: 40, [dep(minutesAgo: 40, .finished)])
+    check("더 오래된 성공은 대체하지 않음", judged([stuck, olderLive]) == [1: .deploying])
+
+    // sellcaddie#984 FAILURE → #985 SUCCESS.
+    let fail984 = merged(984, minutesAgo: 60, [dep(minutesAgo: 60, .failed)])
+    check("최신 실패, 머지 1시간 → 배포 실패", judged([fail984]) == [984: .failed])
+    check("머지 24시간 정각 → 배포 실패 (포함)",
+          judged([merged(9, minutesAgo: 1440, [dep(minutesAgo: 1440, .failed)])]) == [9: .failed])
+    check("머지 24시간 넘음 → 빠짐",
+          judged([merged(9, minutesAgo: 1441, [dep(minutesAgo: 1441, .failed)])]).isEmpty)
+    check("실패 뒤 다음 머지가 성공 → 둘 다 빠짐 (#984 → #985)",
+          judged([merged(985, minutesAgo: 20, [dep(minutesAgo: 20, .finished)]), fail984]).isEmpty)
+    check("실패 뒤 다음 머지가 배포중 → 실패는 빠지고 새 것만 배포중",
+          judged([merged(985, minutesAgo: 2, [dep(minutesAgo: 2, .waiting)]), fail984]) == [985: .deploying])
+    check("실패 뒤 다음 머지도 실패 → 최신만 배포 실패",
+          judged([merged(985, minutesAgo: 20, [dep(minutesAgo: 20, .failed)]), fail984]) == [985: .failed])
+    check("같은 커밋의 재배포가 성공 → 이전 실패는 대체됨",
+          judged([merged(7, minutesAgo: 30, [dep(minutesAgo: 30, .failed), dep(minutesAgo: 5, .finished)])]).isEmpty)
+
+    // Several environments on one commit (sellcaddie / production + Production).
+    check("환경 둘: 성공 + 진행중 → 배포중",
+          judged([merged(1, minutesAgo: 3, [dep("sellcaddie / production", minutesAgo: 3, .finished),
+                                             dep(minutesAgo: 3, .waiting)])]) == [1: .deploying])
+    check("환경 둘: 실패 + 진행중 → 배포중 (진행이 이김)",
+          judged([merged(1, minutesAgo: 3, [dep("sellcaddie / production", minutesAgo: 3, .failed),
+                                             dep(minutesAgo: 3, .waiting)])]) == [1: .deploying])
+    check("환경 둘: 실패 + 성공 → 배포 실패",
+          judged([merged(1, minutesAgo: 3, [dep("sellcaddie / production", minutesAgo: 3, .failed),
+                                             dep(minutesAgo: 3, .finished)])]) == [1: .failed])
+
+    // No deployment yet on a fresh merge.
+    let earlier = merged(1, minutesAgo: 120, [dep(minutesAgo: 120, .finished)])
+    check("배포 없음 + 배포하는 저장소 + 머지 3분 → 배포중",
+          judged([merged(2, minutesAgo: 3), earlier]) == [2: .deploying])
+    check("배포 없음 + 머지 10분 정각 → 배포중 (포함)",
+          judged([merged(2, minutesAgo: 10), earlier]) == [2: .deploying])
+    check("배포 없음 + 머지 11분 → 빠짐", judged([merged(2, minutesAgo: 11), earlier]).isEmpty)
+    check("배포 없음 + 저장소가 배포하지 않음 (auction2sell) → 아무것도 바뀌지 않음",
+          judged([merged(2, in: "mongshell/auction2sell", minutesAgo: 1),
+                  merged(3, in: "mongshell/auction2sell", minutesAgo: 30)]).isEmpty)
+    check("배포 없음 + 다른 저장소만 배포 → 빠짐",
+          judged([merged(2, in: "mongshell/auction2sell", minutesAgo: 1), earlier]).isEmpty)
+    check("저장소 비교는 대소문자 무시",
+          judged([merged(2, in: "Mongshell/Sellcaddie", minutesAgo: 1), earlier]) == [2: .deploying])
+}
+
+print("▸ 배포 감시 — 스냅샷·glance·주기 (#167)")
+do {
+    func dep(_ env: String = "Production", minutesAgo: Double, _ state: PRDeploymentState) -> PRDeployment {
+        PRDeployment(environment: env, createdAt: now.addingTimeInterval(-minutesAgo * 60), state: state)
+    }
+    func merged(_ number: Int, in repo: String = "mongshell/sellcaddie", minutesAgo: Double,
+                _ deployments: [PRDeployment] = []) -> GitHubPullRequest {
+        var p = GitHubPullRequest(repository: repo, number: number, title: "t",
+                                  url: URL(string: "https://github.com/\(repo)/pull/\(number)"),
+                                  isDraft: false, reviewDecision: .none, mergeable: .unknown,
+                                  mergeState: .clean, checksRollup: .success, checks: [],
+                                  checksListComplete: true, updatedAt: now,
+                                  mergedAt: now.addingTimeInterval(-minutesAgo * 60),
+                                  nodeID: "N\(number)", headSHA: "abc")
+        p.deployments = deployments
+        return p
+    }
+    let deploying = merged(985, minutesAgo: 2, [dep(minutesAgo: 2, .waiting)])
+    let failed = merged(40, in: "mongshell/m2sell", minutesAgo: 30, [dep(minutesAgo: 30, .failed)])
+    let done = merged(980, minutesAgo: 120, [dep("Preview", minutesAgo: 120, .finished)])
+    let open = pr("mongshell/bookdam", 7)
+    let s = snap(mine: [open], merged: [deploying, done, failed])
+
+    check("deployRows: 머지 목록 순서, 끝난 것은 빠짐",
+          s.deployRows.map(\.pr.number) == [985, 40] && s.deployRows.map(\.status) == [.deploying, .failed])
+    check("최근 머지 목록에서는 내 PR 로 옮긴 것을 뺀다",
+          s.mergedOutsideDeployRows.map(\.number) == [980])
+    check("배포 감시 대상 없으면 최근 머지 그대로",
+          snap(merged: [done]).mergedOutsideDeployRows.map(\.number) == [980])
+    check("검색이 아직 열린 PR 로 보이는 것은 열린 행이 맡는다",
+          snap(mine: [deploying], merged: [deploying, done]).deployRows.isEmpty)
+    check("판정 시각은 스냅샷의 fetchedAt",
+          GitHubSnapshot(mine: [], recentlyMerged: [deploying], rateLimit: nil,
+                         fetchedAt: now.addingTimeInterval(3600), tokenScopesLackRepo: nil).deployRows.isEmpty)
+
+    let g = GitHubGlance.of(snap(mine: [open], merged: [deploying, done]), state: .loaded(.pat),
+                            hidden: [], mergeActivity: [:])
+    check("배포중만 → 주황·숫자 없음, 내 PR 에 셈",
+          g.count == 0 && g.dot == .amber && g.lines?.mine == 2 && g.lines?.blocked == 0, "\(g)")
+    check("hover 배포 줄", g.hoverDeployLine == "배포 1 · sellcaddie #985", g.hoverDeployLine)
+    check("배포중은 머지 가능에 세지 않음 (CLEAN 이어도)", g.lines?.mergeable == 0)
+    let two = GitHubGlance.of(snap(merged: [deploying, merged(41, in: "mongshell/m2sell", minutesAgo: 1,
+                                                            [dep(minutesAgo: 1, .waiting)])]),
+                              state: .loaded(.pat), hidden: [], mergeActivity: [:])
+    check("hover 배포 줄 둘 → 외 1", two.hoverDeployLine == "배포 2 · sellcaddie #985 외 1", two.hoverDeployLine)
+    check("배포중 없으면 hover 배포 줄 없음",
+          GitHubGlance.of(snap(mine: [open]), state: .loaded(.pat), hidden: [], mergeActivity: [:])
+              .hoverDeployLine.isEmpty)
+
+    let red = GitHubGlance.of(snap(mine: [open], merged: [failed]), state: .loaded(.pat),
+                              hidden: [], mergeActivity: [:])
+    check("배포 실패 → 막힘으로 세어 빨강·숫자",
+          red.count == 1 && red.dot == .red && red.hoverMineLine == "내 PR 2 · 막힘 1 · #40 배포 실패",
+          red.hoverMineLine)
+    let both = GitHubGlance.of(snap(mine: [pr("mongshell/bookdam", 8, mergeable: .conflicting)], merged: [failed]),
+                               state: .loaded(.pat), hidden: [], mergeActivity: [:])
+    check("열린 PR 의 막힘이 먼저 이름이 불린다",
+          both.count == 2 && both.hoverMineLine == "내 PR 2 · 막힘 2 · #8 충돌", both.hoverMineLine)
+    let hidden = GitHubGlance.of(snap(mine: [open], merged: [failed, deploying]), state: .loaded(.pat),
+                                 hidden: ["mongshell/m2sell", "mongshell/sellcaddie"], mergeActivity: [:])
+    check("숨긴 레포의 배포 → 어디에도 없음",
+          hidden.count == 0 && hidden.dot == .green && hidden.lines?.mine == 1 && hidden.hoverDeployLine.isEmpty,
+          "\(hidden)")
+
+    check("배포중 → 빠른 주기 근거", snap(merged: [deploying]).hasFastPollGrounds(now: now))
+    check("배포 실패만 → 빠른 주기 아님", !snap(merged: [failed]).hasFastPollGrounds(now: now))
+    check("숨긴 레포의 배포중 → 빠른 주기 아님",
+          !snap(merged: [deploying]).hiding(["mongshell/sellcaddie"]).hasFastPollGrounds(now: now))
+    check("running 검사 → 여전히 빠른 주기 근거",
+          snap(mine: [pr(checks: [chk("b", .running, start: -60, end: nil)], complete: true)])
+              .hasFastPollGrounds(now: now))
+}
+
+print("▸ 배포 정보 디코딩 (#167)")
+do {
+    func withMergeCommit(_ json: String) -> String { String(node().dropLast()) + ",\"mergeCommit\":\(json)}" }
+    let full = withMergeCommit(#"""
+    {"deployments":{"nodes":[
+      {"environment":"sellcaddie / production","createdAt":"2026-11-13T01:00:00Z","latestStatus":{"state":"SUCCESS","createdAt":"2026-11-13T01:04:00Z"}},
+      {"environment":"Production","createdAt":"2026-11-13T01:00:05Z","latestStatus":{"state":"IN_PROGRESS"}},
+      {"environment":"Preview","createdAt":"2026-11-13T01:00:06Z","latestStatus":null},
+      {"createdAt":"2026-11-13T01:00:07Z","latestStatus":{"state":"FAILURE"}},
+      {"environment":"Staging","latestStatus":{"state":"FAILURE"}},
+      {"environment":"Next","createdAt":"2026-11-13T01:00:08Z","latestStatus":{"state":"SOMETHING_NEW"}}
+    ]}}
+    """#)
+    let deps = parsed(body(merged: [full]))?.recentlyMerged.first?.deployments
+    check("환경·생성 시각·상태가 있는 배포만 읽는다 (latestStatus null·환경·시각 누락은 건너뜀)",
+          deps?.map(\.environment) == ["sellcaddie / production", "Production", "Next"]
+              && deps?.map(\.state) == [.finished, .waiting, .unknown], "\(String(describing: deps))")
+    check("mergeCommit 없음 → 배포 없음",
+          parsed(body(mine: [node()]))?.mine.first?.deployments.isEmpty == true)
+    check("mergeCommit null → 배포 없음",
+          parsed(body(mine: [withMergeCommit("null")]))?.mine.first?.deployments.isEmpty == true)
+    check("deployments 모양이 다름 → 배포 없음, PR 은 남는다",
+          parsed(body(mine: [withMergeCommit(#"{"deployments":"x"}"#)]))?.mine.first?.deployments.isEmpty == true)
+    let states: [(String?, PRDeploymentState)] = [
+        ("PENDING", .waiting), ("QUEUED", .waiting), ("IN_PROGRESS", .waiting), ("WAITING", .waiting),
+        ("SUCCESS", .finished), ("INACTIVE", .finished), ("FAILURE", .failed), ("ERROR", .failed),
+        ("ACTIVE?", .unknown), (nil, .unknown),
+    ]
+    check("상태값 매핑", states.allSatisfy { GitHubAPIClient.deploymentState($0.0) == $0.1 })
+    let q = GitHubAPIClient.query(mergedSince: now)
+    check("query 에 머지 커밋 배포 5개",
+          q.contains("mergeCommit { deployments(last: 5) { nodes { environment createdAt")
+              && q.contains("latestStatus { state }"), q)
 }
 
 print("")

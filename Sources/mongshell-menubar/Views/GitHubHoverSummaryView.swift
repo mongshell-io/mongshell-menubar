@@ -27,6 +27,15 @@ struct GitHubHoverSummaryView: View {
                         numberCell(lines.mine, color: lines.blocked > 0 ? Palette.red : nil)
                         restCell(lines.mineRest, separated: true)
                     }
+                    // Merged PRs still deploying (#167): amber like a running
+                    // check, and only while there is one.
+                    if lines.deploying > 0 {
+                        GridRow {
+                            labelCell("배포")
+                            numberCell(lines.deploying, color: GitHubDot.amber.color)
+                            restCell(lines.deployingRest, separated: true)
+                        }
+                    }
                     // Mergeable now (Decision #52): green whenever there is
                     // any, and "0" said outright rather than left out.
                     GridRow {

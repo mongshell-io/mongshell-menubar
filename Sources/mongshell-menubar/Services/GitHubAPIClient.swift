@@ -103,6 +103,11 @@ struct GitHubAPIClient: Sendable {
     /// Check contexts read per PR. Beyond this the chips are incomplete, and
     /// the badge falls back to `statusCheckRollup.state`, which covers all.
     static let contextsPageSize = 30
+    /// Deployments read per merge commit (#167). One environment usually
+    /// has one; five covers a repo with a few environments and a redeploy.
+    /// Measured 2026-11-13: adding them to both searches left
+    /// `rateLimit.cost` at 1.
+    static let deploymentsPageSize = 5
 
     /// The query text. `mergedSince` becomes `merged:>=YYYY-MM-DD` in the
     /// given calendar — GitHub's search dates are whole days.
@@ -131,6 +136,8 @@ struct GitHubAPIClient: Sendable {
               ... on CheckRun { name status conclusion startedAt completedAt detailsUrl
                 checkSuite { workflowRun { runNumber event workflow { databaseId name } } app { slug } } }
               ... on StatusContext { context state createdAt targetUrl } } } } } } }
+          mergeCommit { deployments(last: \(deploymentsPageSize)) { nodes { environment createdAt
+            latestStatus { state } } } }
         }
         """
     }
@@ -416,8 +423,39 @@ struct GitHubAPIClient: Sendable {
             updatedAt: ResponseDate.parse(node["updatedAt"]),
             mergedAt: ResponseDate.parse(node["mergedAt"]),
             nodeID: nonEmptyString(node["id"]),
-            headSHA: nonEmptyString(node["headRefOid"])
+            headSHA: nonEmptyString(node["headRefOid"]),
+            deployments: deployments(node["mergeCommit"])
         )
+    }
+
+    /// The merge commit's deployments (#167). An open PR's `mergeCommit` is
+    /// null, and a missing or malformed list is no deployment information —
+    /// empty, never a failure of the PR. A node without an environment, a
+    /// creation time or a latest status is skipped: a deployment GitHub has
+    /// no status for yet says nothing about how it stands.
+    private static func deployments(_ mergeCommit: Any?) -> [PRDeployment] {
+        guard let nodes = (((mergeCommit as? [String: Any])?["deployments"] as? [String: Any])?["nodes"]
+                           as? [Any]) else { return [] }
+        return nodes.compactMap { any in
+            guard let node = any as? [String: Any],
+                  let environment = nonEmptyString(node["environment"]),
+                  let createdAt = ResponseDate.parse(node["createdAt"]),
+                  let latest = node["latestStatus"] as? [String: Any]
+            else { return nil }
+            return PRDeployment(environment: environment, createdAt: createdAt,
+                                state: deploymentState(latest["state"] as? String))
+        }
+    }
+
+    /// Deployment status `state` → what the watch tells apart. Anything
+    /// unfamiliar is `.unknown` — neither still going nor failed.
+    static func deploymentState(_ state: String?) -> PRDeploymentState {
+        switch state {
+        case "PENDING", "QUEUED", "IN_PROGRESS", "WAITING": return .waiting
+        case "SUCCESS", "INACTIVE":                          return .finished
+        case "FAILURE", "ERROR":                             return .failed
+        default:                                             return .unknown
+        }
     }
 
     /// null and anything unfamiliar are `.none` — neither is "approved".

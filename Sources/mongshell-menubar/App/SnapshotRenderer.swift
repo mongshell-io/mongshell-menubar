@@ -221,6 +221,11 @@ enum SnapshotRenderer {
         } else {
             report("github_popover_merge_failed: no mergeable row in the sample")
         }
+        // #167: a merged PR still deploying and one whose deploy failed sit
+        // after the open ones in "내 PR", and leave "최근 머지".
+        github.presentForSnapshot(.sampleDeploys(now: now), state: .loaded(.ghCLI(account: "mongshellio")), now: now)
+        write(GitHubPopoverPreview(github: github), to: base, "github_popover_deploy", scale: 2)
+        write(GitHubHoverPreview(github: github), to: base, "github_hover_deploy", scale: 2)
         github.presentForSnapshot(.sampleOverflow(now: now), state: .loaded(.pat), now: now)
         write(GitHubPopoverPreview(github: github), to: base, "github_popover_overflow", scale: 2)
         github.presentForSnapshot(nil, state: .noToken, now: now)
@@ -615,6 +620,34 @@ private extension GitHubSnapshot {
                                        resetAt: now.addingTimeInterval(hour)),
             fetchedAt: now,
             tokenScopesLackRepo: nil)
+    }
+
+    /// The sample plus two merged PRs the deploy watch keeps in "내 PR"
+    /// (#167): one deploying for two minutes, one whose deploy failed. The
+    /// open rows are trimmed to three, so the section shows five.
+    static func sampleDeploys(now: Date) -> GitHubSnapshot {
+        var snapshot = sample(now: now)
+        snapshot.mine.removeLast(2)
+        func merged(_ repo: String, _ number: Int, _ title: String, minutesAgo: Double,
+                    _ state: PRDeploymentState) -> GitHubPullRequest {
+            let at = now.addingTimeInterval(-minutesAgo * 60)
+            var pr = GitHubPullRequest(repository: repo, number: number, title: title,
+                                       url: URL(string: "https://github.com/\(repo)/pull/\(number)"),
+                                       isDraft: false, reviewDecision: .none, mergeable: .unknown,
+                                       mergeState: .unknown, checksRollup: .success, checks: [],
+                                       checksListComplete: true, updatedAt: at, mergedAt: at,
+                                       nodeID: nil, headSHA: nil)
+            pr.deployments = [PRDeployment(environment: "Production", createdAt: at.addingTimeInterval(5),
+                                           state: state)]
+            return pr
+        }
+        snapshot.recentlyMerged.insert(contentsOf: [
+            merged("mongshell/growdle", 122, "feat: 주간 리포트에 지난주 대비 증감을 보인다",
+                   minutesAgo: 2, .waiting),
+            merged("mongshell/bookdam", 58, "fix: 대화 내보내기에서 첨부 이미지가 빠지던 문제",
+                   minutesAgo: 40, .failed),
+        ], at: 0)
+        return snapshot
     }
 
     /// Past the section caps: ten of my PRs (eight rows + "외 2건"), four
