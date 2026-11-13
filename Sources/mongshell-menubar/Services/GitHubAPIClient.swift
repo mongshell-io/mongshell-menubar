@@ -424,7 +424,7 @@ struct GitHubAPIClient: Sendable {
             mergedAt: ResponseDate.parse(node["mergedAt"]),
             nodeID: nonEmptyString(node["id"]),
             headSHA: nonEmptyString(node["headRefOid"]),
-            deployments: deployments(node["mergeCommit"])
+            deploySignals: deployments(node["mergeCommit"])
         )
     }
 
@@ -433,7 +433,7 @@ struct GitHubAPIClient: Sendable {
     /// empty, never a failure of the PR. A node without an environment, a
     /// creation time or a latest status is skipped: a deployment GitHub has
     /// no status for yet says nothing about how it stands.
-    private static func deployments(_ mergeCommit: Any?) -> [PRDeployment] {
+    private static func deployments(_ mergeCommit: Any?) -> [PRDeploySignal] {
         guard let nodes = (((mergeCommit as? [String: Any])?["deployments"] as? [String: Any])?["nodes"]
                            as? [Any]) else { return [] }
         return nodes.compactMap { any in
@@ -442,14 +442,14 @@ struct GitHubAPIClient: Sendable {
                   let createdAt = ResponseDate.parse(node["createdAt"]),
                   let latest = node["latestStatus"] as? [String: Any]
             else { return nil }
-            return PRDeployment(environment: environment, createdAt: createdAt,
-                                state: deploymentState(latest["state"] as? String))
+            return PRDeploySignal(source: .deployment(environment: environment), createdAt: createdAt,
+                                  state: deploymentState(latest["state"] as? String))
         }
     }
 
     /// Deployment status `state` → what the watch tells apart. Anything
     /// unfamiliar is `.unknown` — neither still going nor failed.
-    static func deploymentState(_ state: String?) -> PRDeploymentState {
+    static func deploymentState(_ state: String?) -> PRDeploySignalState {
         switch state {
         case "PENDING", "QUEUED", "IN_PROGRESS", "WAITING": return .waiting
         case "SUCCESS", "INACTIVE":                          return .finished

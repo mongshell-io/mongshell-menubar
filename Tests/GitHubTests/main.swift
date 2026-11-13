@@ -1644,11 +1644,11 @@ do {
 
 print("▸ 배포 감시 판정 (#167)")
 do {
-    func dep(_ env: String = "Production", minutesAgo: Double, _ state: PRDeploymentState) -> PRDeployment {
-        PRDeployment(environment: env, createdAt: now.addingTimeInterval(-minutesAgo * 60), state: state)
+    func dep(_ env: String = "Production", minutesAgo: Double, _ state: PRDeploySignalState) -> PRDeploySignal {
+        PRDeploySignal(source: .deployment(environment: env), createdAt: now.addingTimeInterval(-minutesAgo * 60), state: state)
     }
     func merged(_ number: Int, in repo: String = "mongshell/sellcaddie", minutesAgo: Double,
-                _ deployments: [PRDeployment] = []) -> GitHubPullRequest {
+                _ deployments: [PRDeploySignal] = []) -> GitHubPullRequest {
         var p = GitHubPullRequest(repository: repo, number: number, title: "t",
                                   url: URL(string: "https://github.com/\(repo)/pull/\(number)"),
                                   isDraft: false, reviewDecision: .none, mergeable: .unknown,
@@ -1656,7 +1656,7 @@ do {
                                   checksListComplete: true, updatedAt: now,
                                   mergedAt: now.addingTimeInterval(-minutesAgo * 60),
                                   nodeID: nil, headSHA: nil)
-        p.deployments = deployments
+        p.deploySignals = deployments
         return p
     }
     func judged(_ list: [GitHubPullRequest]) -> [Int: PRDeployStatus] {
@@ -1742,11 +1742,11 @@ do {
 
 print("▸ 배포 감시 — 스냅샷·glance·주기 (#167)")
 do {
-    func dep(_ env: String = "Production", minutesAgo: Double, _ state: PRDeploymentState) -> PRDeployment {
-        PRDeployment(environment: env, createdAt: now.addingTimeInterval(-minutesAgo * 60), state: state)
+    func dep(_ env: String = "Production", minutesAgo: Double, _ state: PRDeploySignalState) -> PRDeploySignal {
+        PRDeploySignal(source: .deployment(environment: env), createdAt: now.addingTimeInterval(-minutesAgo * 60), state: state)
     }
     func merged(_ number: Int, in repo: String = "mongshell/sellcaddie", minutesAgo: Double,
-                _ deployments: [PRDeployment] = []) -> GitHubPullRequest {
+                _ deployments: [PRDeploySignal] = []) -> GitHubPullRequest {
         var p = GitHubPullRequest(repository: repo, number: number, title: "t",
                                   url: URL(string: "https://github.com/\(repo)/pull/\(number)"),
                                   isDraft: false, reviewDecision: .none, mergeable: .unknown,
@@ -1754,7 +1754,7 @@ do {
                                   checksListComplete: true, updatedAt: now,
                                   mergedAt: now.addingTimeInterval(-minutesAgo * 60),
                                   nodeID: "N\(number)", headSHA: "abc")
-        p.deployments = deployments
+        p.deploySignals = deployments
         return p
     }
     let deploying = merged(985, minutesAgo: 2, [dep(minutesAgo: 2, .waiting)])
@@ -1826,17 +1826,17 @@ do {
       {"environment":"Next","createdAt":"2026-11-13T01:00:08Z","latestStatus":{"state":"SOMETHING_NEW"}}
     ]}}
     """#)
-    let deps = parsed(body(merged: [full]))?.recentlyMerged.first?.deployments
+    let deps = parsed(body(merged: [full]))?.recentlyMerged.first?.deploySignals
     check("환경·생성 시각·상태가 있는 배포만 읽는다 (latestStatus null·환경·시각 누락은 건너뜀)",
-          deps?.map(\.environment) == ["sellcaddie / production", "Production", "Next"]
+          deps?.map(\.source) == ["sellcaddie / production", "Production", "Next"].map { .deployment(environment: $0) }
               && deps?.map(\.state) == [.finished, .waiting, .unknown], "\(String(describing: deps))")
     check("mergeCommit 없음 → 배포 없음",
-          parsed(body(mine: [node()]))?.mine.first?.deployments.isEmpty == true)
+          parsed(body(mine: [node()]))?.mine.first?.deploySignals.isEmpty == true)
     check("mergeCommit null → 배포 없음",
-          parsed(body(mine: [withMergeCommit("null")]))?.mine.first?.deployments.isEmpty == true)
+          parsed(body(mine: [withMergeCommit("null")]))?.mine.first?.deploySignals.isEmpty == true)
     check("deployments 모양이 다름 → 배포 없음, PR 은 남는다",
-          parsed(body(mine: [withMergeCommit(#"{"deployments":"x"}"#)]))?.mine.first?.deployments.isEmpty == true)
-    let states: [(String?, PRDeploymentState)] = [
+          parsed(body(mine: [withMergeCommit(#"{"deployments":"x"}"#)]))?.mine.first?.deploySignals.isEmpty == true)
+    let states: [(String?, PRDeploySignalState)] = [
         ("PENDING", .waiting), ("QUEUED", .waiting), ("IN_PROGRESS", .waiting), ("WAITING", .waiting),
         ("SUCCESS", .finished), ("INACTIVE", .finished), ("FAILURE", .failed), ("ERROR", .failed),
         ("ACTIVE?", .unknown), (nil, .unknown),
